@@ -497,6 +497,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
         $ImportsMigrated = [System.Collections.Concurrent.ConcurrentBag[int]]::new()
 
             $CompaniesToMigrate | ForEach-Object -Parallel {
+                $Company=$_
                 param ($company, $MatchedWebsites, $ImportOption, $DisableWebsiteMonitoring)
 
                 Write-Host "Migrating $($company.CompanyName)" -ForegroundColor Green
