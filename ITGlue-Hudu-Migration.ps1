@@ -160,6 +160,7 @@ if (Test-Path -Path "$MigrationLogs") {
 # Setup some variables
 
 $ManualActions = [System.Collections.ArrayList]@()
+# if running multithreaded, instantiate this table with hashtable::synchronized(@) instead
 $MatchedCompaniesByITGID = @{}
 $MatchedAssetsByITGID = @{}
 $MatchedWebsitesByITGID = @{}
@@ -463,8 +464,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
     #Preindex Websites
     foreach ($website in $MatchedWebsites) {
-        $MatchedWebsitesByITGID[$website.ITGID] = $website
+        if (-not $website.Matched) {
+            $orgId = $website.ITGObject.attributes."organization-id"
+
+            if (-not $UnmatchedWebsitesByOrgId.ContainsKey($orgId)) {
+                $UnmatchedWebsitesByOrgId[$orgId] = @()
+            }
+
+            $UnmatchedWebsitesByOrgId[$orgId] += $website
+        }
     }
+
 
     $MatchedWebsites = foreach ($itgdomain in $ITGDomains ) {
         $HuduWebsite = $HuduWebsites | where-object -filter { ($_.name -eq "https://$($itgdomain.attributes.name)" -and $_.company_name -eq $itgdomain.attributes."organization-name") }
@@ -511,8 +521,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
             foreach ($company in $CompaniesToMigrate) {
                 Write-Host "Migrating $($company.CompanyName)" -ForegroundColor Green
 
-                foreach ($unmatchedWebsite in ($MatchedWebsites | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
-				
+				$orgId = $company.ITGCompanyObject.id
+                if ($UnmatchedWebsitesByOrgId.ContainsKey($orgId)) {
+                    foreach ($unmatchedWebsite in $UnmatchedWebsitesByOrgId[$orgId]) {		
 
                     Confirm-Import -ImportObjectName "$($unmatchedWebsite.Name)" -ImportObject $unmatchedWebsite -ImportSetting $ImportOption
 
@@ -529,6 +540,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
                     $ImportsMigrated = $ImportsMigrated + 1
 
                     Write-host "$($unmatchedWebsite.Name) Has been created in Hudu"
+                    }
                 }
             }
         }
