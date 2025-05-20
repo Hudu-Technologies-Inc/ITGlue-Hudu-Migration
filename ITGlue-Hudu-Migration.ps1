@@ -160,7 +160,10 @@ if (Test-Path -Path "$MigrationLogs") {
 # Setup some variables
 
 $ManualActions = [System.Collections.ArrayList]@()
-
+$MatchedCompaniesByITGID = @{}
+$MatchedAssetsByITGID = @{}
+$MatchedWebsitesByITGID = @{}
+$MatchedLocationsByITGID = @{}
 
 ############################### Companies ###############################
 
@@ -180,8 +183,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     $ITGCompaniesFromCSV = Import-CSV (Join-Path -Path $ITGlueExportPath -ChildPath "organizations.csv")
 
     Write-Host "$($ITGCompanies.count) ITG Glue Companies Found" 
-	
-	
+    
+    # Preindex Companies
+	foreach ($company in $MatchedCompanies) {
+        $MatchedCompaniesByITGID[$company.ITGID] = $company
+    }
 	
 
     $MatchedCompanies = foreach ($itgcompany in $ITGCompanies ) {
@@ -334,6 +340,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
             -or ($itgimport.attributes.primary -eq $true -and $HuduPrimaryLocationNames -contains $_.name -and $_.company_name -eq $itgimport.attributes."organization-name") }
 
     $LocImportEnabled = $ImportLocations
+    # Preindex Locations
+    foreach ($location in $MatchedLocations) {
+        $MatchedLocationsByITGID[$location.ITGID] = $location
+    }
 
     $LocMigrationName = "Locations"
 
@@ -450,6 +460,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
     $ITGDomains = Import-ITGlueItems -ItemSelect $DomainSelect
 
     Write-Host "$($ITGDomains.count) ITG Glue Domains Found" 
+
+    #Preindex Websites
+    foreach ($website in $MatchedWebsites) {
+        $MatchedWebsitesByITGID[$website.ITGID] = $website
+    }
 
     $MatchedWebsites = foreach ($itgdomain in $ITGDomains ) {
         $HuduWebsite = $HuduWebsites | where-object -filter { ($_.name -eq "https://$($itgdomain.attributes.name)" -and $_.company_name -eq $itgdomain.attributes."organization-name") }
@@ -1254,7 +1269,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
             Write-Host "Creating base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
-                $HuduCompanyID = ($MatchedCompanies | where-object -filter { $_.ITGID -eq $ITGAsset.attributes.'organization-id' }).HuduID
+                $HuduCompanyID = ($MatchedCompaniesByITGID[$ITGAsset.attributes.'organization-id']).HuduID
 
                 $AssetFields = @{ 
                     'imported_from_itglue' = Get-Date -Format "o"
@@ -1288,6 +1303,12 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
             $AssetFields = @{ 
                 'imported_from_itglue' = Get-Date -Format "o"
             }
+
+            # Preindex Assets 
+            foreach ($asset in $MatchedAssets) {
+                $MatchedAssetsByITGID[$asset.ITGID] = $asset
+            }
+
 
             $traits = $UpdateAsset.ITGObject.attributes.traits
             $traits.PSObject.Properties | ForEach-Object {
