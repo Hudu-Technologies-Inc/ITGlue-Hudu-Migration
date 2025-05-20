@@ -23,7 +23,7 @@ function Repair-Base64ImagesFromArticle {
     $imgCnt = 1
     $b64imgCnt = 1
 
-    foreach ($Img in $ImageTags[1..$ImageTags.length]) {
+    foreach ($Img in $ImageTags[1..$ImageTags.length]) -Parallel {
         if ($Img -like '*data:image/*;base64*') {
             #$ImgMetadata = (($Img -split ' ')[1] -split '"')[1]
             $base64string = (($img -split 'base64,')[1] -split '"')[0].trim()
@@ -39,7 +39,7 @@ function Repair-Base64ImagesFromArticle {
 
         }
         $imgCnt++
-    }
+    } -ThrottleLimit $SafeThreadCount
 
     if ($b64imgCnt -eq $ImageTags.count) { Write-Host "All images were accounted for as Base64."}
 

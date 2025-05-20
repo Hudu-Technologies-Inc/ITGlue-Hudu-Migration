@@ -59,7 +59,7 @@ param(
         # $CurrentAssetAttachments = $UploadedAttachments | Where-Object {$_.id -eq $FoundAsset.HuduID}
         
         $FilesToUpload = Get-ChildItem -path "$AttachmentsPath\*\$($FoundAsset.ITGID)\*" -Recurse
-        foreach ($FoundFile in $FilesToUpload) {
+        foreach ($FoundFile in $FilesToUpload) -Parallel {
             if ($FoundFile.PSIsContainer -ne $True) {
                 <# if ($FoundFile.name -in $CurrentAssetAttachments.file) {
                     Write-Host "Skipping $($FoundFile.name) because its already uploaded as an attachment" -ForegroundColor Yellow
@@ -86,7 +86,7 @@ param(
                     }
                 }
             }
-        }
+        } -ThrottleLimit $SafeThreadCount
     }
     
     $Results |ConvertTo-Json -Compress -Depth 10 |Out-File "$($MigrationLogs)\$($UploadType)-attachments-upload.json"
@@ -196,14 +196,14 @@ if ($CSVMapping) {
         $CSVAttachmentsToUpload = $CSV | Where-Object {$_.$CSVHeader}
         foreach ($record in $CSVAttachmentsToUpload) {
             $FileReferences = $record.$CSVHeader.split(',').trim()
-            foreach ($fr in $FileReferences) {
+            foreach ($fr in $FileReferences) -Parallel {
                 $FileToUpload = Get-Item -path (Join-Path -Path $ITGlueExportPath -ChildPath "$($n.foldername)\$($fr)")
                 $HuduAssetID = $ITGlueAssets |Where-Object {$_.itgid -eq $record.id}  |Select-Object -ExpandProperty HuduID
                 $HuduAssetName = $ITGlueAssets |Where-Object {$_.itgid -eq $record.id}  |Select-Object -ExpandProperty Name
                 Write-Host "Uploading $($FileToUpload.fullname) to Hudu Asset $($HuduAssetName) - $($HuduAssetID)" -ForegroundColor Blue
                 $HuduUpload = New-HuduUpload -FilePath $FileToUpload.fullname -uploadable_id $HuduAssetID -uploadable_type 'Asset'
 
-            }
+            } -ThrottleLimit $SafeThreadCount
         }
     }
 }

@@ -43,7 +43,8 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Add-HuduRelation.ps1
 
 ############################### End of Functions ###############################
-
+# Determine level of safe parallelization
+$SafeThreadCount = [Math]::Max(4, [System.Environment]::ProcessorCount - 1)
 
 ###################### Initial Setup and Confirmations ###############################
 Write-Host "#######################################################" -ForegroundColor Green
@@ -493,7 +494,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
         if (($importOption -eq "A") -or ($importOption -eq "S") ) {		
 
-            foreach ($company in $CompaniesToMigrate) {
+            foreach ($company in $CompaniesToMigrate) -Parallel {
                 Write-Host "Migrating $($company.CompanyName)" -ForegroundColor Green
 
                 foreach ($unmatchedWebsite in ($MatchedWebsites | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
@@ -515,7 +516,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
                     Write-host "$($unmatchedWebsite.Name) Has been created in Hudu"
                 }
-            }
+            } -ThrottleLimit $SafeThreadCount
         }
 
 
@@ -1250,7 +1251,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
 
         #We need to do a first pass creating empty assets with just the ITG migrated data. This builds an array we need to use to lookup relations when populating the entire assets
 
-        Foreach ($Layout in $MatchedLayouts) {
+        Foreach ($Layout in $MatchedLayouts) -Parallel {
             Write-Host "Creating base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
@@ -1277,8 +1278,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
                 $null = $MatchedAssets.add($AssetDetails)
 
             }
-		
-        }
+        } -ThrottleLimit $SafeThreadCount
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
