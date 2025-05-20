@@ -494,7 +494,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
         if (($importOption -eq "A") -or ($importOption -eq "S") ) {		
 
-            foreach ($company in $CompaniesToMigrate) -Parallel {
+            $CompaniesToMigrate | ForEach-Object -Parallel {
                 Write-Host "Migrating $($company.CompanyName)" -ForegroundColor Green
 
                 foreach ($unmatchedWebsite in ($MatchedWebsites | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
@@ -1251,7 +1251,8 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
 
         #We need to do a first pass creating empty assets with just the ITG migrated data. This builds an array we need to use to lookup relations when populating the entire assets
 
-        Foreach ($Layout in $MatchedLayouts) -Parallel {
+        $MatchedLayouts | ForEach-Object -Parallel {
+            $layout=$_
             Write-Host "Creating base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
