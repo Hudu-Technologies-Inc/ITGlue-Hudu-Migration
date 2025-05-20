@@ -494,29 +494,37 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
         if (($importOption -eq "A") -or ($importOption -eq "S") ) {		
 
+        $ImportsMigrated = [System.Collections.Concurrent.ConcurrentBag[int]]::new()
+
             $CompaniesToMigrate | ForEach-Object -Parallel {
+                param ($company, $MatchedWebsites, $ImportOption, $DisableWebsiteMonitoring)
+
                 Write-Host "Migrating $($company.CompanyName)" -ForegroundColor Green
 
-                foreach ($unmatchedWebsite in ($MatchedWebsites | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
-				
+                foreach ($unmatchedWebsite in ($MatchedWebsites | Where-Object {
+                    $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id"
+                })) {
 
                     Confirm-Import -ImportObjectName "$($unmatchedWebsite.Name)" -ImportObject $unmatchedWebsite -ImportSetting $ImportOption
-
                     Write-Host "Starting $($unmatchedWebsite.Name)"
 
-                    $HuduNewWebsite = New-HuduWebsite -name "https://$($unmatchedWebsite.ITGObject.attributes.name)" -notes $unmatchedWebsite.ITGObject.attributes.notes -paused $DisableWebsiteMonitoring -companyid $company.HuduCompanyObject.ID -disabledns $DisableWebsiteMonitoring -disablessl $DisableWebsiteMonitoring -disablewhois $DisableWebsiteMonitoring
+                    $HuduNewWebsite = New-HuduWebsite -name "https://$($unmatchedWebsite.ITGObject.attributes.name)" `
+                        -notes $unmatchedWebsite.ITGObject.attributes.notes `
+                        -paused $DisableWebsiteMonitoring `
+                        -companyid $company.HuduCompanyObject.ID `
+                        -disabledns $DisableWebsiteMonitoring `
+                        -disablessl $DisableWebsiteMonitoring `
+                        -disablewhois $DisableWebsiteMonitoring
 
+                    $unmatchedWebsite.matched     = $true
+                    $unmatchedWebsite.HuduID      = $HuduNewWebsite.id
+                    $unmatchedWebsite.HuduObject  = $HuduNewWebsite
+                    $unmatchedWebsite.Imported    = "Created-By-Script"
 
-                    $unmatchedWebsite.matched = $true
-                    $unmatchedWebsite.HuduID = $HuduNewWebsite.id
-                    $unmatchedWebsite."HuduObject" = $HuduNewWebsite
-                    $unmatchedWebsite.Imported = "Created-By-Script"
-
-                    $ImportsMigrated = $ImportsMigrated + 1
-
-                    Write-host "$($unmatchedWebsite.Name) Has been created in Hudu"
+                    Write-Host "$($unmatchedWebsite.Name) Has been created in Hudu"
                 }
-            } -ThrottleLimit $SafeThreadCount
+
+            } -ArgumentList $MatchedWebsites, $ImportOption, $DisableWebsiteMonitoring -ThrottleLimit $SafeThreadCount
         }
 
 

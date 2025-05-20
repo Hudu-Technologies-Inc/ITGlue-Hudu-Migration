@@ -59,34 +59,44 @@ param(
         # $CurrentAssetAttachments = $UploadedAttachments | Where-Object {$_.id -eq $FoundAsset.HuduID}
         
         $FilesToUpload = Get-ChildItem -path "$AttachmentsPath\*\$($FoundAsset.ITGID)\*" -Recurse
-        foreach ($FoundFile in $FilesToUpload) -Parallel {
-            if ($FoundFile.PSIsContainer -ne $True) {
-                <# if ($FoundFile.name -in $CurrentAssetAttachments.file) {
-                    Write-Host "Skipping $($FoundFile.name) because its already uploaded as an attachment" -ForegroundColor Yellow
-                    continue
-                } #>
-                Write-Host "Pushing $($FoundFile.name) to Hudu $($UploadType) $($FoundAsset.name) - $($FoundAsset.HuduID)" -ForegroundColor Blue
+        $FilesToUpload | ForEach-Object -Parallel {
+            param (
+                $FoundFile,
+                $FoundAsset,
+                $UploadType,
+                $ArticleId,
+                $UploadIndex,
+                $UploadData
+            )
+
+            if ($FoundFile.PSIsContainer -ne $true) {
+
+                Write-Host "Pushing $($FoundFile.Name) to Hudu $UploadType $($FoundAsset.name) - $($FoundAsset.HuduID)" -ForegroundColor Blue
+
                 try {
-                    $HuduUpload = New-HuduUpload -FilePath $FoundFile.fullname -uploadable_id $FoundAsset.HuduID -uploadable_type $UploadType
+                    $HuduUpload = New-HuduUpload -FilePath $FoundFile.FullName -uploadable_id $FoundAsset.HuduID -uploadable_type $UploadType
+
                     [PSCustomObject]@{
-                        URL  = $HuduUpload.url
-                        Uploadable_ID = $FoundAsset.HuduID
+                        URL            = $HuduUpload.url
+                        Uploadable_ID  = $FoundAsset.HuduID
                         Uploadable_Type = $UploadType
-                        FilePath  = $FoundFile.fullname
-                        status  = "Uploaded Successfully"
+                        FilePath       = $FoundFile.FullName
+                        Status         = "Uploaded Successfully"
                     }
                 }
                 catch {
-                Write-Error ('Insert exception: {0}' -f $_.Exception.Message)
-                [PSCustomObject]@{
-                    FileHref  = "/file/$UploadIndex"
-                    ArticleId = $ArticleId
-                    FileData  = $UploadData
-                    status  = "FAILED: $($_.Exception.Message)"
+                    Write-Error "Insert exception: $($_.Exception.Message)"
+                    [PSCustomObject]@{
+                        FileHref  = "/file/$UploadIndex"
+                        ArticleId = $ArticleId
+                        FileData  = $UploadData
+                        Status    = "FAILED: $($_.Exception.Message)"
                     }
                 }
             }
-        } -ThrottleLimit $SafeThreadCount
+
+        } -ArgumentList $FoundAsset, $UploadType, $ArticleId, $UploadIndex, $UploadData -ThrottleLimit $SafeThreadCount
+
     }
     
     $Results |ConvertTo-Json -Compress -Depth 10 |Out-File "$($MigrationLogs)\$($UploadType)-attachments-upload.json"
@@ -196,14 +206,26 @@ if ($CSVMapping) {
         $CSVAttachmentsToUpload = $CSV | Where-Object {$_.$CSVHeader}
         foreach ($record in $CSVAttachmentsToUpload) {
             $FileReferences = $record.$CSVHeader.split(',').trim()
-            foreach ($fr in $FileReferences) -Parallel {
-                $FileToUpload = Get-Item -path (Join-Path -Path $ITGlueExportPath -ChildPath "$($n.foldername)\$($fr)")
-                $HuduAssetID = $ITGlueAssets |Where-Object {$_.itgid -eq $record.id}  |Select-Object -ExpandProperty HuduID
-                $HuduAssetName = $ITGlueAssets |Where-Object {$_.itgid -eq $record.id}  |Select-Object -ExpandProperty Name
-                Write-Host "Uploading $($FileToUpload.fullname) to Hudu Asset $($HuduAssetName) - $($HuduAssetID)" -ForegroundColor Blue
-                $HuduUpload = New-HuduUpload -FilePath $FileToUpload.fullname -uploadable_id $HuduAssetID -uploadable_type 'Asset'
+                $FileReferences | ForEach-Object -Parallel {
+                    param (
+                        $fr,
+                        $ITGlueAssets,
+                        $ITGlueExportPath,
+                        $record,
+                        $n
+                    )
 
-            } -ThrottleLimit $SafeThreadCount
+                    $FileToUpload = Get-Item -Path (Join-Path -Path $ITGlueExportPath -ChildPath "$($n.foldername)\$fr")
+
+                    $HuduAssetID = $ITGlueAssets | Where-Object { $_.itgid -eq $record.id } | Select-Object -ExpandProperty HuduID
+                    $HuduAssetName = $ITGlueAssets | Where-Object { $_.itgid -eq $record.id } | Select-Object -ExpandProperty Name
+
+                    Write-Host "Uploading $($FileToUpload.FullName) to Hudu Asset $HuduAssetName - $HuduAssetID" -ForegroundColor Blue
+
+                    $HuduUpload = New-HuduUpload -FilePath $FileToUpload.FullName -uploadable_id $HuduAssetID -uploadable_type 'Asset'
+
+                } -ArgumentList $ITGlueAssets, $ITGlueExportPath, $record, $n -ThrottleLimit $SafeThreadCount
+
         }
     }
 }
