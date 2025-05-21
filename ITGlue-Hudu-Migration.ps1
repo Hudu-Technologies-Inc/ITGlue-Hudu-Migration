@@ -160,11 +160,12 @@ if (Test-Path -Path "$MigrationLogs") {
 # Setup some variables
 
 $ManualActions = [System.Collections.ArrayList]@()
-# if running multithreaded, instantiate this table with hashtable::synchronized(@) instead
+# if running multithreaded, instantiate this table with hashtable::synchronized{@} instead
 $MatchedCompaniesByITGID = @{}
 $MatchedAssetsByITGID = @{}
 $MatchedWebsitesByITGID = @{}
 $MatchedLocationsByITGID = @{}
+$MatchedPasswordsByITGID = @{}
 
 ############################### Companies ###############################
 
@@ -185,7 +186,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 
     Write-Host "$($ITGCompanies.count) ITG Glue Companies Found" 
     
-    # Preindex Companies
+    # Preindex Companies By ID
 	foreach ($company in $MatchedCompanies) {
         $MatchedCompaniesByITGID[$company.ITGID] = $company
     }
@@ -521,9 +522,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
             foreach ($company in $CompaniesToMigrate) {
                 Write-Host "Migrating $($company.CompanyName)" -ForegroundColor Green
 
-				$orgId = $company.ITGCompanyObject.id
-                if ($UnmatchedWebsitesByOrgId.ContainsKey($orgId)) {
-                    foreach ($unmatchedWebsite in $UnmatchedWebsitesByOrgId[$orgId]) {		
+			    foreach ($unmatchedWebsite in ($MatchedWebsites | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
 
                     Confirm-Import -ImportObjectName "$($unmatchedWebsite.Name)" -ImportObject $unmatchedWebsite -ImportSetting $ImportOption
 
@@ -540,17 +539,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
                     $ImportsMigrated = $ImportsMigrated + 1
 
                     Write-host "$($unmatchedWebsite.Name) Has been created in Hudu"
-                    }
                 }
             }
         }
-
-
     } else {
         if ($UnmappedWebsiteCount -eq 0) {
             Write-Host "All $MigrationName matched, no migration required" -foregroundcolor green
         } else {
-            Write-Host "Warning Import Websites is set to disabled so the above unmatched Websites will not have data migrated" -foregroundcolor red
+            Write-Host "Warning Import Websites is set to disabled so Athe above unmatched Websites will not have data migrated" -foregroundcolor red
             Read-Host -Prompt "Press any key to continue or CTRL+C to quit" 
         }
     }

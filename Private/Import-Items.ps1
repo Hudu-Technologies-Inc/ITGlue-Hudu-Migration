@@ -15,7 +15,11 @@ function Import-Items {
     $ImportsMigrated = 0
 
     $ImportLayout = $null
-	
+
+
+
+
+
     Write-Host "Processing $ImportAssetLayoutName"
 
     # Lets try to match Asset Layouts
@@ -71,7 +75,14 @@ function Import-Items {
         }
 
     }
-	
+    $MatchedImportsByOrgId = @{}
+    foreach ($import in $MatchedImports) {
+        $orgId = $import.ITGObject.attributes.'organization-id'
+        if (-not $MatchedImportsByOrgId.ContainsKey($orgId)) {
+            $MatchedImportsByOrgId[$orgId] = @()
+        }
+        $MatchedImportsByOrgId[$orgId] += $import
+    }
     Write-Host "Matched $MigrationName (Already exist so will not be migrated)"
     Write-Host $($MatchedImports | Sort-Object CompanyName | Where-Object { $_.Matched -eq $true } | Select-Object CompanyName, Name | Format-Table | Out-String)
 	
@@ -97,39 +108,42 @@ function Import-Items {
 	
             foreach ($company in $CompaniesToMigrate) {
                 Write-Host "Migrating $($company.CompanyName) $MigrationName"
-	
-                foreach ($unmatchedImport in ($MatchedImports | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
-	
+
+                $orgId = $company.ITGCompanyObject.id
+                if (-not $MatchedImportsByOrgId.ContainsKey($orgId)) { continue }
+
+                $orgImports = $MatchedImportsByOrgId[$orgId]
+
+                foreach ($unmatchedImport in $orgImports) {
+                    if ($unmatchedImport.Matched -eq $true) { continue }
+
                     $AssetFields = & $AssetFieldsMap
 
-					
-
                     Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($AssetFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
-	
+
                     Write-Host "Starting $($unmatchedImport.Name)"
-	
-                    $HuduAssetName = $($unmatchedImport.Name)
-					
-                    $HuduNewImport = (New-HuduAsset -name $HuduAssetName -company_id $company.HuduCompanyObject.ID -asset_layout_id $ImportLayout.id -fields $AssetFields).asset
-		    if ($itgimport.attributes.archived) {
-      			Write-Host "WARNING: $($HuduAssetName) is archived in ITGlue and is being archived in Hudu" -ForegroundColor Magenta
-      			$Null = Set-HuduAssetArchive -Id $HuduNewImport.id -CompanyId $HuduNewImport.company_id -Archive $false
-	 	 	}
-	
-                    $unmatchedImport.matched = $true
+
+                    $HuduAssetName = $unmatchedImport.Name
+             A       $HuduNewImport = (New-HuduAsset -name $HuduAssetName -company_id $company.HuduCompanyObject.ID -asset_layout_id $ImportLayout.id -fields $AssetFields).asset
+
+                    if ($unmatchedImport.ITGObject.attributes.archived) {
+                        Write-Host "WARNING: $($HuduAssetName) is archived in ITGlue and is being archived in Hudu" -ForegroundColor Magenta
+                        $null = Set-HuduAssetArchive -Id $HuduNewImport.id -CompanyId $HuduNewImport.company_id -Archive $false
+                    }
+
+                    $unmatchedImport.Matched = $true
                     $unmatchedImport.HuduID = $HuduNewImport.id
-                    $unmatchedImport."HuduObject" = $HuduNewImport
+                    $unmatchedImport.HuduObject = $HuduNewImport
                     $unmatchedImport.Imported = "Created-By-Script"
-	
-                    $ImportsMigrated = $ImportsMigrated + 1
-	
-                    Write-host "$($unmatchedImport.Name) Has been created in Hudu"
+
+                    $ImportsMigrated++
+
+                    Write-Host "$($unmatchedImport.Name) Has been created in Hudu"
                     Write-Host ""
                 }
             }
+
         }
-			
-	
     } else {
         if ($UnmappedImportCount -eq 0) {
             Write-Host "All $MigrationName matched, no migration required" -foregroundcolor green
