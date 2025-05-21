@@ -1277,7 +1277,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
             Write-Host "Creating base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
-                $HuduCompanyID = ($MatchedCompaniesByITGID[$ITGAsset.attributes.'organization-id']).HuduID
+                $HuduCompanyID = ($MatchedCompanies | where-object -filter { $_.ITGID -eq $ITGAsset.attributes.'organization-id' }).HuduID
 
                 $AssetFields = @{ 
                     'imported_from_itglue' = Get-Date -Format "o"
