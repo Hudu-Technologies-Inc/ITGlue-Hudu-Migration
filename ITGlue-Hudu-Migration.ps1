@@ -1417,13 +1417,12 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
                             }
                             $null = $ManualActions.add($ManualLog)
                         } else {
-
                             if ($field.FieldType -eq "Password") {
                                 $ITGPassword = (Get-ITGluePasswords -id $ITGValues -include related_items).data
-				$ITGPasswordValue = ($ITGPasswordsRaw |Where-Object {$_.id -eq $ITGPassword.id}).password
-                                try {
-					if ($ITGPasswordValue) {
-						$NewPasswordObject = [pscustomobject]@{
+				                $ITGPasswordValue = ($ITGPasswordsRaw |Where-Object {$_.id -eq $ITGPassword.id}).password
+                    try {
+					    if ($ITGPasswordValue) {
+						    $NewPasswordObject = [pscustomobject]@{
 							Name =  "$($UpdateAsset.name) $($Field.fieldname) $($ITGPassword.Username) Password"
 							Username = $ITGPassword.Username
 							URL = $ITGPassword.url
