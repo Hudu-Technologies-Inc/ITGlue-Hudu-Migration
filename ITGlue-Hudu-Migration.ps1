@@ -187,13 +187,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     $ITGCompaniesFromCSV = Import-CSV (Join-Path -Path $ITGlueExportPath -ChildPath "organizations.csv")
 
     Write-Host "$($ITGCompanies.count) ITG Glue Companies Found" 
+
+	
+	
+
 	$RelativeProgressIndicator=[ProgressItem]::new("Processing Companies", 0, $($ITGCompanies.count), 2)
-
-	
-	
-
     $MatchedCompanies = foreach ($itgcompany in $ITGCompanies ) {
-    $HuduCompany = $HuduCompanies | where-object -filter { $_.name -eq $itgcompany.attributes.name }
+        $RelativeProgressIndicator.numerator++
+        $RelativeProgressIndicator.descriptor="Checking: $($itgcompany.attributes.name)"
+        $HuduCompany = $HuduCompanies | where-object -filter { $_.name -eq $itgcompany.attributes.name }
 
 
         if ($InternalCompany -eq $itgcompany.attributes.name) {
@@ -226,8 +228,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
                 "Imported"          = ""
             }
         }
-        $RelativeProgressIndicator.numerator++
-        $RelativeProgressIndicator.descriptor="Checking: $($itgcompany.attributes.name)"
+
         Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 
     }
@@ -268,7 +269,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 	
         $importCOption = Get-ImportMode -ImportName "Companies"
         $RelativeProgressIndicator=[ProgressItem]::new("Creating Company", 0, $($MatchedCompanies.count), 2)
-	
         if (($importCOption -eq "A") -or ($importCOption -eq "S") ) {		
             foreach ($unmatchedcompany in ($MatchedCompanies | Where-Object { $_.Matched -eq $false })) {
                 $RelativeProgressIndicator++
@@ -319,6 +319,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 			
                 Write-host "$($unmatchedcompany.CompanyName) Has been created in Hudu"
                 Write-Host ""
+                Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
+
             }
 		
         }
@@ -473,13 +475,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
     $DomainSelect = { (Get-ITGlueDomains -page_size 1000 -page_number $i).data }
     $ITGDomains = Import-ITGlueItems -ItemSelect $DomainSelect
 
-    $RelativeProgressIndicator=[ProgressItem]::new("Matching Website", 0, $($ITGDomains.count), 2)
     Write-Host "$($ITGDomains.count) ITG Glue Domains Found" 
 
+    $RelativeProgressIndicator=[ProgressItem]::new("Matching Website", 0, $($ITGDomains.count), 2)
     $MatchedWebsites = foreach ($itgdomain in $ITGDomains ) {
-        $HuduWebsite = $HuduWebsites | where-object -filter { ($_.name -eq "https://$($itgdomain.attributes.name)" -and $_.company_name -eq $itgdomain.attributes."organization-name") }
         $RelativeProgressIndicator++
         $RelativeProgressIndicator.descriptor="Matching Website $($itgdomain.attributes.name)"
+        $HuduWebsite = $HuduWebsites | where-object -filter { ($_.name -eq "https://$($itgdomain.attributes.name)" -and $_.company_name -eq $itgdomain.attributes."organization-name") }
         if ($HuduWebsite) {
             [PSCustomObject]@{
                 "Name"       = $itgdomain.attributes.name
@@ -502,6 +504,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
                 "Imported"   = ""
             }
         }
+        Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
     }
 
 
@@ -548,6 +551,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
                     Write-host "$($unmatchedWebsite.Name) Has been created in Hudu"
                 }
+            Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
             }
         }
 
@@ -833,12 +837,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
         $MatchedConfigurations = New-Object System.Collections.ArrayList
         $RelativeProgressIndicator=[ProgressItem]::new("Processing Configuration", 0, $($ITGConfigTypes.count), 2)
-
         foreach ($ConfigType in $ITGConfigTypes) {
+            $RelativeProgressIndicator++
+            $RelativeProgressIndicator.descriptor="Processing Configuration $ConfigType"  
             Write-Host ""
             Write-Host "Processing $ConfigType"
-            $RelativeProgressIndicator++
-            $RelativeProgressIndicator.descriptor="Processing Configuration $ConfigType"            
+          
             Write-Host "Please provide the Asset Layout name for $ConfigType in Hudu." -foregroundcolor green
             $ConfigImportAssetLayoutName = $(Write-TimedMessage -Timeout 12 -Message "Please enter layout name" -DefaultResponse $ConfigType)
 		
@@ -865,6 +869,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             } else {
                 $MatchedConfigurations.add($ReturnedConfigurations)
             }
+            Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         }
 
 
@@ -1058,6 +1063,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 "Imported"   = ""
             }
         }
+        Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
     }
 
 
@@ -1124,14 +1130,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             $UnmatchedLayout.Imported = "Created-By-Script"
 
 
-
+            Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         }
 
         $RelativeProgressIndicator=[ProgressItem]::new("Adding Fields", 0, $($MatchedLayouts.count), 2)
         foreach ($UpdateLayout in $MatchedLayouts) {
-            Write-Host "Starting $($UpdateLayout.Name)" -ForegroundColor Green
             $RelativeProgressIndicator++
-            $RelativeProgressIndicator.descriptor="Adding Fields for Layout $($UpdateLayout.Name)"                   
+            $RelativeProgressIndicator.descriptor="Adding Fields for Layout $($UpdateLayout.Name)"          
+            Write-Host "Starting $($UpdateLayout.Name)" -ForegroundColor Green
 
             # Grab the fields for the layout
             Write-Host "Fetching Flexible Asset Fields from IT Glue"
@@ -1265,6 +1271,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             $UpdateLayout.ITGAssets = $FlexAssets
             $UpdateLayout.Matched = $true
 
+            Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         }
 
 
@@ -1328,7 +1335,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
                 $null = $MatchedAssets.add($AssetDetails)
 
             }
-		
+            Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         }
 	
 	
@@ -1502,6 +1509,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
 
             $UpdateAsset.HuduObject = $UpdatedHuduAsset
             $UpdateAsset.Imported = "Created-By-Script"
+            Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         }
 
 
@@ -1638,8 +1646,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
                 "Company"    = $company
             }
 
-	
-
+        Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         }
         $MatchedArticles | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ArticleBase.json"
         $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
@@ -1881,8 +1888,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
             $null = Set-HuduArticle @ArticleSplat
             Write-Host "$($Article.name) completed" -ForegroundColor Green
 		
-            $Article.Imported = "Created-By-Script"
-			
+            $Article.Imported = "Created-By-Script"		
+            Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         } 
 
         $MatchedArticles | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Articles.json"
@@ -1945,6 +1952,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
             "ITGObject"  = $itgpassword
             "Imported"   = ""
         }
+        Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
     }
 
 
@@ -2125,6 +2133,7 @@ foreach ($articleFound in $UpdateArticles) {
         Write-Warning "Article $articleFound.id found ITGlue URL but didn't match"
         $articlesUpdated = $articlesUpdated + @{"status" = "clean"; "original_article" = $articleFound}
     }
+    Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 }
 
 $articlesUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedArticlesURL.json"
@@ -2153,7 +2162,7 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
         $AssetPost = Set-HuduAsset -asset_layout_id $assetFound.asset_layout_id -Name $assetFound.name -AssetId $assetFound.id -CompanyId $assetFound.company_id -Fields $assetFound.fields
     }
     $assetsUpdated = $assetsUpdated + @{"status" = $replacedStatus; "original_asset" = $originalAsset; "updated_asset" = $AssetPost.asset}
-
+    Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 }
 
 $assetsUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedAssetsURL.json"
@@ -2186,7 +2195,7 @@ foreach ($passwordFound in $UpdateAssetPasswords) {
         Write-Host "Updating Asset Password $($passwordFound.name) with updated description" -ForegroundColor 'Green'
         $assetPasswordsUpdated = $assetPasswordsUpdated + @{"original_password" = $passwordFound; "updated_password" = (Set-HuduPassword -Id $passwordFound.id -Description $NewContent).asset_password}
     }
-    
+    Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 }
 $assetPasswordsUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedAssetPasswordsURL.json"
 Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Asset Passwords URLs Replaced. Continue?"  -DefaultResponse "continue to Company Notes, please."
@@ -2202,7 +2211,7 @@ foreach ($companyFound in $UpdateCompanyNotes.HuduCompanyObject) {
         Write-Host "Updating Company $($companyFound.name) with updated notes" -ForegroundColor 'Green'
         $companyNotesUpdated = $companyNotesUpdated + @{"original_company" = $companyFound; "updated_company" = (Set-HuduCompany -id $companyFound.id -Notes $NewContent).company}
     }
-
+    Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 }
 $companyNotesUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedCompaniesURL.json"
 Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Company Notes URLs Replaced. Continue?"  -DefaultResponse "continue to Manual Actions, please."
@@ -2214,6 +2223,7 @@ $ManualActions | ForEach-Object {
     if ($_.Hudu_URL -notmatch "http:" -and $_.Hudu_URL -notmatch "https:") {
         $_.Hudu_URL = "$HuduBaseDomain$($_.Hudu_URL)"
     }
+    Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 }
 
 
@@ -2308,7 +2318,7 @@ $ManualActionsReport = foreach ($item in $UniqueItems) {
     $OutHTML = "$Header $Actions <hr>"
 
     $OutHTML
-
+    Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 }
 
 $FinalHtml = "$Head $MigrationReport $ManualActionsReport $footer"
@@ -2319,6 +2329,7 @@ $FinalHtml | Out-File ManualActions.html
 ############################### End ###############################
 $TotalProgressIndicator.descriptor="Manual Actions"
 $TotalProgressIndicator.numerator++
+Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
 
 Write-Host "#######################################################" -ForegroundColor Green
 Write-Host "#                                                     #" -ForegroundColor Green
