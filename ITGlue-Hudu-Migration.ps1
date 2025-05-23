@@ -46,7 +46,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Write-TimedMessage.ps1
 
 # Add Progress Indicators Helper
-. $PSScriptRoot\Public\Write-TimedMessage.ps1
+. $PSScriptRoot\Public\Show-AllProgress.ps1
 
 ############################### End of Functions ###############################
 
