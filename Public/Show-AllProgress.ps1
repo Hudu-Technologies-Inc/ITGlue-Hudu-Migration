@@ -26,6 +26,13 @@ class ProgressItem {
         $this.denominator = $denominator
         $this.indicator_index = $indicator_index
     }
+
+    [void]Reset([string]$withDescriptor, [int]$objectCount) {
+        $this.numerator = 0
+        $this.denominator = $objectCount
+        $this.descriptor = $withDescriptor
+    }
+
 }
 
 function Show-AllProgress {

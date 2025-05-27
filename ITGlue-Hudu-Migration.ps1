@@ -167,6 +167,7 @@ if (Test-Path -Path "$MigrationLogs") {
 
 $ManualActions = [System.Collections.ArrayList]@()
 $TotalProgressIndicator=[ProgressItem]::new("Matching ITGlue Companies", 1, 13, 1)
+$RelativeProgressIndicator=[ProgressItem]::new("Starting Companies", 2, 1, 1)
 
 
 ############################### Companies ###############################
@@ -185,7 +186,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     $CompanySelect = { (Get-ITGlueOrganizations -page_size 1000 -page_number $i).data }
     $ITGCompanies = Import-ITGlueItems -ItemSelect $CompanySelect
     $ITGCompaniesFromCSV = Import-CSV (Join-Path -Path $ITGlueExportPath -ChildPath "organizations.csv")
-
     $MatchedCompanies = foreach ($itgcompany in $ITGCompanies ) {
         $HuduCompany = $HuduCompanies | where-object -filter { $_.name -eq $itgcompany.attributes.name }
 
@@ -258,7 +258,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 	
         $importCOption = Get-ImportMode -ImportName "Companies"
         if (($importCOption -eq "A") -or ($importCOption -eq "S") ) {		
-            $RelativeProgressIndicator=[ProgressItem]::new("Creating Location...", 1, $(($MatchedCompanies | Where-Object { $_.Matched -eq $false }).count), 2)
+            $RelativeProgressIndicator.Reset("Creating Location...",$(($MatchedCompanies | Where-Object { $_.Matched -eq $false }).count))
             foreach ($unmatchedcompany in ($MatchedCompanies | Where-Object { $_.Matched -eq $false })) {
                 $RelativeProgressIndicator.numerator++
                 $RelativeProgressIndicator.descriptor = "Creating Location $($unmatchedcompany.CompanyName)"
@@ -463,7 +463,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
     Write-Host "$($ITGDomains.count) ITG Glue Domains Found" 
 
-    $RelativeProgressIndicator=[ProgressItem]::new("Matching Website...", 1, $(($ITGDomains).count), 2)
+    $RelativeProgressIndicator.Reset("Matching Website...",$($ITGDomains.count))
     $MatchedWebsites = foreach ($itgdomain in $ITGDomains ) {
         $RelativeProgressIndicator.numerator++
         $RelativeProgressIndicator.descriptor = "Matching Website $($unmatchedcompany.CompanyName)"
@@ -507,7 +507,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
         $importOption = Get-ImportMode -ImportName "Websites / Domains"
 
         if (($importOption -eq "A") -or ($importOption -eq "S") ) {		
-            $RelativeProgressIndicator=[ProgressItem]::new("Creating Website(s) for", 1, $(($CompaniesToMigrate).count), 2)
+            $RelativeProgressIndicator.Reset("Creating Website(s) for...",$($CompaniesToMigrate.count))
             foreach ($company in $CompaniesToMigrate) {
                 $RelativeProgressIndicator.numerator++
                 $RelativeProgressIndicator.descriptor="Creating Website(s) for $($company.HuduCompanyObject.name)"
@@ -786,7 +786,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     } elseif ($ConfigurationOption -eq 2) {
         $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
         $MatchedConfigurations = New-Object System.Collections.ArrayList
-        $RelativeProgressIndicator=[ProgressItem]::new("Processing Config(s) for...", 1, $(($ITGConfigTypes).count), 2)
+        $RelativeProgressIndicator.Reset("Processing Config(s) for...",$($ITGConfigTypes.count))
 
         foreach ($ConfigType in $ITGConfigTypes) {
             $RelativeProgressIndicator.numerator++
@@ -824,7 +824,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     } elseif ($ConfigurationOption -eq 3) {
         $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
         $MatchedConfigurations = New-Object System.Collections.ArrayList
-        $RelativeProgressIndicator=[ProgressItem]::new("Processing Configuration Type...", 1, $(($ITGConfigTypes).count), 2)
+        $RelativeProgressIndicator.Reset("Processing Configuration",$($ITGConfigTypes.count))
         foreach ($ConfigType in $ITGConfigTypes) {
             $RelativeProgressIndicator.numerator++
             $RelativeProgressIndicator.descriptor="Processing Configuration Type $ConfigType"  
@@ -1021,7 +1021,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     $AllFields = [System.Collections.ArrayList]@()
 
     # Match to existing layouts
-    $RelativeProgressIndicator=[ProgressItem]::new("Processing Layout", 1, $($FlexLayouts.count), 2)
+    $RelativeProgressIndicator.Reset("Processing Layout",$($FlexLayouts.count))
     $MatchedLayouts = foreach ($ITGLayout in $FlexLayouts) {
         $RelativeProgressIndicator.numerator++
         $RelativeProgressIndicator.descriptor="Processing Layout $($ITGLayout.attributes.name)"       
@@ -1064,7 +1064,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
 
     if ($ImportFlexibleAssetLayouts -eq $true) {
-        $RelativeProgressIndicator=[ProgressItem]::new("Adding Layout", 1, $(($MatchedLayouts | Where-Object { $_.Matched -eq $false }).count), 2)
+        $RelativeProgressIndicator.Reset("Adding Layout",$(($MatchedLayouts | Where-Object { $_.Matched -eq $false }).count))
         foreach ($UnmatchedLayout in $MatchedLayouts | Where-Object { $_.Matched -eq $false }) {
             $RelativeProgressIndicator.numerator++
             $RelativeProgressIndicator.descriptor="Adding Layout $($UnmatchedLayout.ITGObject.attributes.name)"                   
@@ -1121,7 +1121,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
         }
 
-        $RelativeProgressIndicator=[ProgressItem]::new("Adding Fields", 1, $($MatchedLayouts.count), 2)
+        $RelativeProgressIndicator.Reset("Adding Fields",$MatchedLayouts.count)
         foreach ($UpdateLayout in $MatchedLayouts) {
             $RelativeProgressIndicator.numerator++
             $RelativeProgressIndicator.descriptor="Adding Fields for Layout $($UpdateLayout.Name)"          
@@ -1293,7 +1293,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
         $MatchedAssetPasswords = [System.Collections.ArrayList]@()
 
         #We need to do a first pass creating empty assets with just the ITG migrated data. This builds an array we need to use to lookup relations when populating the entire assets
-        $RelativeProgressIndicator=[ProgressItem]::new("Adding Asset for layout ", 1, $($MatchedLayouts.count), 2)
+        $RelativeProgressIndicator.Reset("Adding Asset for layout",$MatchedLayouts.count)
         Foreach ($Layout in $MatchedLayouts) {
             $RelativeProgressIndicator.numerator++
             $RelativeProgressIndicator.descriptor="Adding Assets for $ConfigType"       
@@ -1328,7 +1328,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
-        $RelativeProgressIndicator=[ProgressItem]::new("Finalizing Asset", 1, $($MatchedAssets.count), 2)
+        $RelativeProgressIndicator.Reset("Finalizing Asset",$MatchedAssets.count)
         foreach ($UpdateAsset in $MatchedAssets) {
             $RelativeProgressIndicator.numerator++
             $RelativeProgressIndicator.descriptor="Finalizing $($UpdateAsset.Name)"       
@@ -1537,7 +1537,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
         $files = Get-ChildItem -Path $ITGDocumentsPath -recurse
 
         # First lets find each article in the file system and then create blank stubs for them all so we can match relations later
-        $RelativeProgressIndicator=[ProgressItem]::new("Processing Document", 1, $($ITGDocuments.count), 2)
+        $RelativeProgressIndicator.Reset("Processing Document",$ITGDocuments.count)
         $MatchedArticles = Foreach ($doc in $ITGDocuments) {
             $RelativeProgressIndicator.numerator++
             $RelativeProgressIndicator.descriptor="Processing Document $($doc.name)"       
@@ -1656,7 +1656,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
         $Attachfiles = Get-ChildItem (Join-Path -Path $ITGLueExportPath -ChildPath "attachments\documents") -recurse
 
         # Now do the actual work of populating the content of articles
-        $RelativeProgressIndicator=[ProgressItem]::new("Parsing Article", 1, $($MatchedArticles.count), 2)
+        $RelativeProgressIndicator.Reset("Parsing Article",$MatchedArticles.count)
         $ArticleErrors = foreach ($Article in $MatchedArticles) {
             $RelativeProgressIndicator.numerator++
             $RelativeProgressIndicator.descriptor="Processing Article $($Article.Name)"       
@@ -1919,7 +1919,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
 
     Write-Host "$($ITGPasswords.count) ITG Glue Passwords Found" 
-    $RelativeProgressIndicator=[ProgressItem]::new("Processing Password", 1, $($ITGPasswords.count), 2)
+    $RelativeProgressIndicator.Reset("Processing Password",$ITGPasswords.count)
     $MatchedPasswords = foreach ($itgpassword in $ITGPasswords ) {
         $RelativeProgressIndicator.numerator++
         if ($ITGPasswordsRaw) {
@@ -2103,7 +2103,7 @@ $UpdateCompanyNotes = $MatchedCompanies | Where-Object {$_.HuduCompanyObject.not
 
 # Articles
 $articlesUpdated = @()
-$RelativeProgressIndicator=[ProgressItem]::new("Updating Article", 1, $($UpdateArticles.count), 2)
+$RelativeProgressIndicator.Reset("Updating Article",$UpdateArticles.count)
 foreach ($articleFound in $UpdateArticles) {
     $RelativeProgressIndicator.numerator++
     $RelativeProgressIndicator.descriptor="Updating Article $($articleFound.name)"           
@@ -2129,7 +2129,7 @@ Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Article URLs Replaced. C
 
 # Assets
 $assetsUpdated = @()
-$RelativeProgressIndicator=[ProgressItem]::new("Updating Asset", 1, $($UpdateAssets.count), 2)
+$RelativeProgressIndicator.Reset("Finalizing Asset Password",$UpdateAssetPasswords.count)
 foreach ($assetFound in $UpdateAssets.HuduObject) {
     $RelativeProgressIndicator.numerator++
     $RelativeProgressIndicator.descriptor="Updating Asset $($assetFound.name)"       
@@ -2158,7 +2158,7 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Assets URLs Replaced. C
 
 # Passwords
 $passwordsUpdated = @()
-$RelativeProgressIndicator=[ProgressItem]::new("Finalizing Password", 1, $($UpdatePasswords.HuduObject.count), 2)
+$RelativeProgressIndicator.Reset("Finalizing Password...",$($UpdatePasswords.HuduObject.count))
 foreach ($passwordFound in $UpdatePasswords.HuduObject) {
     $RelativeProgressIndicator.numerator++
     $NewContent = Update-StringWithCaptureGroups -inputString $passwordFound.description -pattern $TextRegexPatternToMatchSansAssets -type "plain"
@@ -2174,7 +2174,9 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Password URLs Replaced.
 
 # Asset Passwords
 $assetPasswordsUpdated = @()
-$RelativeProgressIndicator=[ProgressItem]::new("Finalizing Asset Password", 1, $($UpdateAssetPasswords.count), 2)
+$RelativeProgressIndicator.descriptor="Finalizing Asset Password"
+$RelativeProgressIndicator.numerator=0
+$RelativeProgressIndicator.denominator=$($UpdateAssetPasswords.count)
 foreach ($passwordFound in $UpdateAssetPasswords) {
     $RelativeProgressIndicator.numerator++
     $passwordFound = Get-HuduPasswords -id $passwordFound.HuduID
@@ -2191,7 +2193,7 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Asset Passwords URLs Re
 
 # Company Notes
 $companyNotesUpdated = @()
-$RelativeProgressIndicator=[ProgressItem]::new("Finalizing Company Notes", 1, $($UpdateCompanyNotes.HuduCompanyObject.count), 2)
+$RelativeProgressIndicator.Reset("Finalizing Company Notes...",$($UpdateCompanyNotes.HuduCompanyObject.count))
 foreach ($companyFound in $UpdateCompanyNotes.HuduCompanyObject) {
     $RelativeProgressIndicator.numerator++
     $NewContent = Update-StringWithCaptureGroups -inputString $companyFound.notes -pattern $RichRegexPatternToMatchSansAssets -type "rich"
@@ -2288,7 +2290,7 @@ $footer = "</div></body></html>"
 
 $UniqueItems = $ManualActions | Select-Object huduid, hudu_url -unique
 
-$RelativeProgressIndicator=[ProgressItem]::new("Generating Report", 0, $($UniqueItems.count), 2)
+$RelativeProgressIndicator.Reset("Generating Report...",$($UniqueItems).count)
 $ManualActionsReport = foreach ($item in $UniqueItems) {
     $RelativeProgressIndicator.numerator++
     $items = $ManualActions | where-object { $_.huduid -eq $item.huduid -and $_.hudu_url -eq $item.Hudu_url }
