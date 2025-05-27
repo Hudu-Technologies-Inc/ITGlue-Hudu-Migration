@@ -37,7 +37,7 @@ function Show-AllProgress {
     foreach ($item in $ProgressItems) {
         Write-Progress `
             -Id $item.indicator_index `
-            -Activity $item.descriptor `
+            -Activity $(($item.descriptor).Substring(0, [Math]::Min(30, $item.descriptor.Length)).PadRight(30)) `
             -Status "$($item.numerator) of $($item.denominator)" `
             -PercentComplete $(Get-PercentDone -Current $item.numerator -Total $item.denominator)
     }

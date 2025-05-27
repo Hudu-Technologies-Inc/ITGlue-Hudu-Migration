@@ -188,13 +188,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 
     Write-Host "$($ITGCompanies.count) ITG Glue Companies Found" 
 
-	
-	
-
-	$RelativeProgressIndicator=[ProgressItem]::new("Processing Companies", 0, $($ITGCompanies.count), 2)
     $MatchedCompanies = foreach ($itgcompany in $ITGCompanies ) {
-        $RelativeProgressIndicator.numerator++
-        $RelativeProgressIndicator.descriptor="Checking: $($itgcompany.attributes.name)"
         $HuduCompany = $HuduCompanies | where-object -filter { $_.name -eq $itgcompany.attributes.name }
 
 
@@ -228,9 +222,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
                 "Imported"          = ""
             }
         }
-
-        Show-AllProgress -ProgressItems @($TotalProgressIndicator,$RelativeProgressIndicator)
-
     }
 
     # Check if the internal company was found and that there was only 1 of them
