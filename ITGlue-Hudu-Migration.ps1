@@ -186,8 +186,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     $ITGCompanies = Import-ITGlueItems -ItemSelect $CompanySelect
     $ITGCompaniesFromCSV = Import-CSV (Join-Path -Path $ITGlueExportPath -ChildPath "organizations.csv")
 
-    Write-Host "$($ITGCompanies.count) ITG Glue Companies Found" 
-
     $MatchedCompanies = foreach ($itgcompany in $ITGCompanies ) {
         $HuduCompany = $HuduCompanies | where-object -filter { $_.name -eq $itgcompany.attributes.name }
 
@@ -259,18 +257,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     if ($ImportCompanies -eq $true -and $UnmappedCompanyCount -gt 0) {
 	
         $importCOption = Get-ImportMode -ImportName "Companies"
-        $RelativeProgressIndicator=[ProgressItem]::new("Creating Company", 0, $($MatchedCompanies.count), 2)
+        $RelativeProgressIndicator=[ProgressItem]::new("Creating Company...", 0, $($MatchedCompanies.count), 2)
         if (($importCOption -eq "A") -or ($importCOption -eq "S") ) {		
             foreach ($unmatchedcompany in ($MatchedCompanies | Where-Object { $_.Matched -eq $false })) {
                 $RelativeProgressIndicator.numerator++
                 $RelativeProgressIndicator.descriptor = "Creating Company- $($unmatchedcompany.CompanyName)"
-                Write-Host "$($ITGCompanies.count) ITG Glue Companies Found" 
 
                 $unmatchedcompany.ITGCompanyObject.attributes.'quick-notes' = ($ITGCompaniesFromCSV | Where-Object {$_.id -eq $unmatchedcompany.ITGID}).quick_notes
                 $unmatchedcompany.ITGCompanyObject.attributes.alert = ($ITGCompaniesFromCSV | Where-Object {$_.id -eq $unmatchedcompany.ITGID}).alert
                 Confirm-Import -ImportObjectName $unmatchedcompany.CompanyName -ImportObject $unmatchedcompany -ImportSetting $importCOption
-						
-                Write-Host "Starting $($unmatchedcompany.CompanyName)"
                 $PrimaryLocation = $ITGLocations | Where-Object { $unmatchedcompany.ITGID -eq $_.attributes."organization-id" -and $_.attributes.primary -eq $true }
                 
                 #Check for alerts in ITGlue on the organization
@@ -468,7 +463,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 
     Write-Host "$($ITGDomains.count) ITG Glue Domains Found" 
 
-    $RelativeProgressIndicator=[ProgressItem]::new("Matching Website", 0, $($ITGDomains.count), 2)
+    $RelativeProgressIndicator=[ProgressItem]::new("Matching Website...", 0, $($ITGDomains.count), 2)
     $MatchedWebsites = foreach ($itgdomain in $ITGDomains ) {
         $RelativeProgressIndicator.numerator++
         $RelativeProgressIndicator.descriptor="Matching Website $($itgdomain.attributes.name)"
