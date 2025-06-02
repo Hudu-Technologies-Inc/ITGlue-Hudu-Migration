@@ -91,3 +91,13 @@ $RelatedPasswords = $FreshPasswords |? {$_.data.relationships.'related-items'.da
 
 $ConfigurationRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedConfigurations
 $AssetRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedAssets
+
+$GroupedRelations = $AssetRelationsToCreate | Group-Object -Property FromableID
+
+foreach ($group in $GroupedRelations) {
+    $fromId = $group.Name
+    $toIds = $group.Group | ForEach-Object { $_.ToableID }
+
+    Write-Host "Applying related assets to Hudu asset ID $fromId → [$($toIds -join ', ')]" -ForegroundColor Green
+    $null = Set-HuduAsset -Id $fromId -Fields @{ related_assets = $toIds }
+}

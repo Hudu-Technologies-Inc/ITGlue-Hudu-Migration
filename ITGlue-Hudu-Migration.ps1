@@ -708,6 +708,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     $ConfigHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_name -eq $itgimport.attributes."organization-name") }
 	
     $ConfigImportEnabled = $ImportConfigurations
+    $matchedLocation = $MatchedLocations | Where-Object { $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id' }
 
 	
     $ConfigAssetFieldsMap = { @{ 
@@ -732,7 +733,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'configuration_type_kind'   = $unmatchedImport."ITGObject".attributes."configuration-type-kind"
             'configuration_status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating_system_name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
-            'location_name'             = $unmatchedImport."ITGObject".attributes."location-name"
+            'location_name' = ($MatchedLocations | Where-Object {
+                $_.ITGObject.attributes.name -eq $unmatchedImport."ITGObject".attributes."location-name" -and
+                $_.HuduObject.company_id -eq $company.HuduCompanyObject.id
+            }).HuduObject.id
             'model_name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact_name'              = $unmatchedImport."ITGObject".attributes."contact-name"	
         } }
@@ -933,20 +937,21 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     )
 
 
-# $matchedLocation = $MatchedLocations | Where-Object { $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id' }
+    $matchedLocation = $MatchedLocations | Where-Object { $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id' }
 
     $ConAssetFieldsMap = { @{ 
-            'first_name'   = $unmatchedImport."ITGObject".attributes."first-name"
-            'last_name'    = $unmatchedImport."ITGObject".attributes."last-name"
-            'title'        = $unmatchedImport."ITGObject".attributes."title"
-            'contact_type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            # 'location' = @($matchedLocation.HuduID)
-            'location'     = "[$($MatchedLocations | where-object -filter {$_.ITGID -eq $unmatchedImport."ITGObject".attributes."location-id"} | Select-Object @{N='id';E={$_.HuduID}}, @{N='name';E={$_.Name}} | convertto-json -compress | out-string)]" -replace "`r`n", ""
-            'important'    = $unmatchedImport."ITGObject".attributes."important"
-            'notes'        = $unmatchedImport."ITGObject".attributes."notes"
-            'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
-            'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones"	| convertto-html -fragment | out-string
-        } }
+        'first_name'   = $unmatchedImport."ITGObject".attributes."first-name"
+        'last_name'    = $unmatchedImport."ITGObject".attributes."last-name"
+        'title'        = $unmatchedImport."ITGObject".attributes."title"
+        'contact_type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
+        'location' = ($MatchedLocations | Where-Object {
+            $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id'
+        }).HuduID
+        'important'    = $unmatchedImport."ITGObject".attributes."important"
+        'notes'        = $unmatchedImport."ITGObject".attributes."notes"
+        'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
+        'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones" | convertto-html -fragment | out-string
+    } }
 
 
     $ConImportSplat = @{
@@ -961,7 +966,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
         ITGImports            = $ITGContacts
 
     }
-
     #Import Locations
     $MatchedContacts = Import-Items @ConImportSplat
 
