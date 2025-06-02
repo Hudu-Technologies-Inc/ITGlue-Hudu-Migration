@@ -933,12 +933,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     )
 
 
+# $matchedLocation = $MatchedLocations | Where-Object { $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id' }
 
     $ConAssetFieldsMap = { @{ 
             'first_name'   = $unmatchedImport."ITGObject".attributes."first-name"
             'last_name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact_type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
+            # 'location' = @($matchedLocation.HuduID)
             'location'     = "[$($MatchedLocations | where-object -filter {$_.ITGID -eq $unmatchedImport."ITGObject".attributes."location-id"} | Select-Object @{N='id';E={$_.HuduID}}, @{N='name';E={$_.Name}} | convertto-json -compress | out-string)]" -replace "`r`n", ""
             'important'    = $unmatchedImport."ITGObject".attributes."important"
             'notes'        = $unmatchedImport."ITGObject".attributes."notes"

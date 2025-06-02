@@ -1,3 +1,28 @@
+function Convert-ToHuduCustomFields {
+    param ([hashtable]$RawFields)
+
+    $fields = @()
+    foreach ($key in $RawFields.Keys) {
+        $value = $RawFields[$key]
+
+        if ($null -eq $value) { continue }
+
+        # Normalize types
+        if ($value -is [datetime]) {
+            $value = $value.ToString('MM/dd/yyyy')
+        } elseif ($value -is [bool]) {
+            $value = $value.ToString().ToLower()
+        } elseif ($value -is [array]) {
+            # Optional: convert array to comma-separated string if needed
+            $value = $value -join ', '
+        }
+
+        # Append as one-key object
+        $fields += @{ $key = $value }
+    }
+
+    return $fields
+}
 function Import-Items {
     Param(
         $AssetFieldsMap,
@@ -99,19 +124,21 @@ function Import-Items {
                 Write-Host "Migrating $($company.CompanyName) $MigrationName"
 	
                 foreach ($unmatchedImport in ($MatchedImports | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
-	
-                    $AssetFields = & $AssetFieldsMap
+                    # $AssetFieldsRaw = & $AssetFieldsMap
+                    $CustomFields = @()
+                    $AssetFieldsRaw = & $AssetFieldsMap
+                    $CustomFields = Convert-ToHuduCustomFields $AssetFieldsRaw
+                    Write-Host ($CustomFields | ConvertTo-Json -Depth 10)
+                    Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($CustomFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
 
-					
-
-                    Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($AssetFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
-	
                     Write-Host "Starting $($unmatchedImport.Name)"
-	
+
                     $HuduAssetName = $($unmatchedImport.Name)
-					
-                    $HuduNewImport = (New-HuduAsset -name $HuduAssetName -company_id $company.HuduCompanyObject.ID -asset_layout_id $ImportLayout.id -fields $AssetFields).asset
-		    if ($itgimport.attributes.archived) {
+                        $HuduNewImport = (New-HuduAsset -name $HuduAssetName `
+                        -company_id $company.HuduCompanyObject.ID `
+                        -asset_layout_id $ImportLayout.id `
+                        -fields $CustomFields).asset
+            if ($itgimport.attributes.archived) {
       			Write-Host "WARNING: $($HuduAssetName) is archived in ITGlue and is being archived in Hudu" -ForegroundColor Magenta
       			$Null = Set-HuduAssetArchive -Id $HuduNewImport.id -CompanyId $HuduNewImport.company_id -Archive $false
 	 	 	}
