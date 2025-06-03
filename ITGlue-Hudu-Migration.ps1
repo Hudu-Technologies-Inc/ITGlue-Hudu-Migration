@@ -708,7 +708,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     $ConfigHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_name -eq $itgimport.attributes."organization-name") }
 	
     $ConfigImportEnabled = $ImportConfigurations
-    $matchedLocation = $MatchedLocations | Where-Object { $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id' }
+    # $matchedLocation = $MatchedLocations | Where-Object { $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id' }
 
 	
     $ConfigAssetFieldsMap = { @{ 
@@ -736,10 +736,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'location_name' = ($MatchedLocations | Where-Object {
                 $_.ITGObject.attributes.name -eq $unmatchedImport."ITGObject".attributes."location-name" -and
                 $_.HuduObject.company_id -eq $company.HuduCompanyObject.id
-            }).HuduObject.id
+            }).HuduObject.name
             'model_name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact_name'              = $unmatchedImport."ITGObject".attributes."contact-name"	
-        } }
+            'related_assets' = @(($MatchedLocations | Where-Object {
+                $_.ITGObject.attributes.name -eq $unmatchedImport."ITGObject".attributes."location-name" -and
+                $_.HuduObject.company_id -eq $company.HuduCompanyObject.id
+            }).HuduObject.id)
+    } }
 
 
     # First we need to decide on if we are going to do one Asset type or many
@@ -903,36 +907,40 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             show_in_list = 'true'
             position     = 4
         },
-        @{
-            label        = 'Location'
-            field_type   = 'AssetTag'
-            show_in_list = 'false'
-            linkable_id  = $LocationLayout.ID
-            position     = 5
-        },
+        # @{
+        #     label        = 'Location'
+        #     field_type   = 'AssetTag'
+        #     show_in_list = 'false'
+        #     linkable_id  = $LocationLayout.ID
+        #     position     = 5
+        # },
         @{
             label        = 'Important'
             field_type   = 'Text'
             show_in_list = 'false'
-            position     = 6
+            position     = 5
+            # position     = 6
         },
         @{
             label        = 'Notes'
             field_type   = 'RichText'
             show_in_list = 'false'
-            position     = 7
+            position     = 6
+            # position     = 7
         },
         @{
             label        = 'Emails'
             field_type   = 'RichText'
             show_in_list = 'false'
-            position     = 8
+            position     = 7
+            # position     = 8
         },
         @{
             label        = 'Phones'
             field_type   = 'RichText'
             show_in_list = 'false'
-            position     = 9
+            position     = 8
+            # position     = 9
         }
     )
 
@@ -944,13 +952,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
         'last_name'    = $unmatchedImport."ITGObject".attributes."last-name"
         'title'        = $unmatchedImport."ITGObject".attributes."title"
         'contact_type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-        'location' = ($MatchedLocations | Where-Object {
-            $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id'
-        }).HuduID
         'important'    = $unmatchedImport."ITGObject".attributes."important"
         'notes'        = $unmatchedImport."ITGObject".attributes."notes"
         'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
         'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones" | convertto-html -fragment | out-string
+        'related_assets' = @(($MatchedLocations | Where-Object {
+        $_.ITGID -eq $unmatchedImport.ITGObject.attributes.'location-id'}).HuduID)
     } }
 
 
@@ -1088,11 +1095,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)" -icon "fas fa-$NewIcon" -color "00adef" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
             $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
     	    #activate asset layout
-            try {
-                $Null = Set-HuduAssetLayout -id $MatchedNewLayout.asset_layout.id -Active $true
-            } catch {
-                Write-Error "issue setting asset layout as active ($_) $($MatchedNewLayout | ConvertTo-Json -Depth 10)"
-            }
+            # try {
+            #     $Null = Set-HuduAssetLayout -id $MatchedNewLayout.asset_layout.id -Active $true
+            # } catch {
+            #     Write-Error "issue setting asset layout as active ($_) $($MatchedNewLayout | ConvertTo-Json -Depth 10)"
+            # }
             $UnmatchedLayout.HuduObject = $MatchedNewLayout
             $UnmatchedLayout.HuduID = $NewLayout.asset_layout.id
             $UnmatchedLayout.Imported = "Created-By-Script"
