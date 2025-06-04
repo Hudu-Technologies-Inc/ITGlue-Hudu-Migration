@@ -108,26 +108,27 @@ if ((get-host).version.major -ne 7) {
 }
 
 
-#Get the Hudu API Module if not installed
-if ((Get-Module -ListAvailable -Name HuduAPI).version -ge '2.4.4') {
-    Import-Module HuduAPI
-} else {
-    Install-Module HuduAPI -MinimumVersion 2.4.5 -Scope CurrentUser
-    Import-Module HuduAPI
-}
+# #Get the Hudu API Module if not installed
+# if ((Get-Module -ListAvailable -Name HuduAPI).version -ge '2.4.4') {
+#     Import-Module HuduAPI
+# } else {
+#     Install-Module HuduAPI -MinimumVersion 2.4.5 -Scope CurrentUser
+#     Import-Module HuduAPI
+# }
   
+Import-Module "C:\Users\Administrator\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
 
 #Login to Hudu
 New-HuduAPIKey $HuduAPIKey
 New-HuduBaseUrl $HuduBaseDomain
 
 # Check we have the correct version
-$RequiredHuduVersion = "2.1.5.9"
-$HuduAppInfo = Get-HuduAppInfo
-If ([version]$HuduAppInfo.version -lt [version]$RequiredHuduVersion) {
-    Write-Host "This script requires at least version $RequiredHuduVersion. Please update your version of Hudu and run the script again. Your version is $($HuduAppInfo.version)"
-    exit 1
-}
+# $RequiredHuduVersion = "2.1.5.9"
+# $HuduAppInfo = Get-HuduAppInfo
+# If ([version]$HuduAppInfo.version -lt [version]$RequiredHuduVersion) {
+#     Write-Host "This script requires at least version $RequiredHuduVersion. Please update your version of Hudu and run the script again. Your version is $($HuduAppInfo.version)"
+#     exit 1
+# }
 
 try {
     remove-module ITGlueAPI -ErrorAction SilentlyContinue
@@ -141,8 +142,6 @@ If (Get-Module -ListAvailable -Name "ITGlueAPIv2") {
     Import-Module ITGlueAPIv2
 }
 
-# override this method, since it's retry method fails
-. $PSScriptRoot\Public\Invoke-HuduRequest.ps1
 
 
 #Settings IT-Glue logon information
@@ -1296,7 +1295,6 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
-        . $PSScriptRoot\Public\Invoke-HuduRequest.ps1
         foreach ($UpdateAsset in $MatchedAssets) {
             Write-Host "Populating $($UpdateAsset.Name)"
 		
