@@ -1296,6 +1296,7 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
+        . $PSScriptRoot\Public\Invoke-HuduRequest.ps1
         foreach ($UpdateAsset in $MatchedAssets) {
             Write-Host "Populating $($UpdateAsset.Name)"
 		
@@ -1311,7 +1312,6 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
                 $field = $AllFields | where-object -filter { $_.IGLayoutID -eq $UpdateAsset.ITGObject.attributes.'flexible-asset-type-id' -and $_.ITGParsedName -eq $ITGParsed }
                 if ($field) {
                     $supported = $true
-                    try {
 
                     if ($field.FieldType -eq "Tag") {
 				
@@ -1451,21 +1451,6 @@ $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
                                 $null = $AssetFields.add("$($field.HuduParsedName)", ($_.value -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]'))
                             }
                         }
-                    }
-
-                    } catch {
-                        $ManualActions.add([PSCustomObject]@{
-                        Document_Name = $UpdateAsset.Name
-                        Asset_Type    = $UpdateAsset.HuduObject.asset_type
-                        Company_Name  = $UpdateAsset.HuduObject.company_name
-                        HuduID        = $UpdateAsset.HuduID
-                        Field_Name    = $($field.FieldName)
-                        Notes         = "Error associating $($field.FieldType)->$($field.FieldSubType): $_"
-                        Action        = "Manually tag /associate $ReturnData"
-                        Data          = $($UpdateAsset | ConvertTo-Json -deptjh 16).ToString()
-                        Hudu_URL      = $UpdateAsset.HuduObject.url
-                        ITG_URL       = $UpdateAsset.ITGObject.attributes."resource-url"
-                        })
                     }
 
                 } else {
