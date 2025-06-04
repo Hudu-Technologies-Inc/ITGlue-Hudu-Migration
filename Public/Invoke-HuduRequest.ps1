@@ -1,3 +1,41 @@
+function Invoke-WithRetry {
+    param (
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$ScriptBlock,
+
+        [scriptblock]$OnFail,
+
+        [int]$MaxRetries = 3,
+        [int]$DelaySeconds = 2,
+        [switch]$VerboseOutput
+    )
+
+    $attempt = 0
+    while ($attempt -lt $MaxRetries) {
+        try {
+            $attempt++
+            if ($VerboseOutput) {
+                Write-Host "Attempt $attempt..."
+            }
+            return & $ScriptBlock
+        }
+        catch {
+            if ($OnFail) {
+                & $OnFail.Invoke($_, $attempt)
+            }
+
+            if ($attempt -lt $MaxRetries) {
+                Write-Warning "Attempt $attempt failed: $_. Retrying in $DelaySeconds second(s)..."
+                Start-Sleep -Seconds $DelaySeconds
+            }
+            else {
+                Write-Error "All $MaxRetries attempts failed. Last error: $_"
+                return $null
+            }
+        }
+    }
+}
+
 function Invoke-HuduRequest {
     <#
     .SYNOPSIS
@@ -95,19 +133,11 @@ function Invoke-HuduRequest {
         $RestMethod.Form = $Form
         Write-Verbose ( $Form | Out-String )
     }
-
-    try {
-        $Results = Invoke-RestMethod @RestMethod
-    } catch {
-        if ("$_".trim() -eq 'Retry later' -or "$_".trim() -eq 'The remote server returned an error: (429) Too Many Requests.') {
-            Write-Information 'Hudu API Rate limited. Waiting 30 Seconds then trying again'
-            Start-Sleep 30
-            # Retry the original REST call, not the whole wrapper function
-            $Results = Invoke-RestMethod @RestMethod
-        } else {
-            Write-Error "'$_'"
-        }
-    }
-
+    $Results = Invoke-WithRetry -ScriptBlock {
+        $response = Invoke-RestMethod @RestMethod
+        return $response
+    } -OnFail {
+        Write-Error $($Body | ConvertTo-Json -depth 32).ToString()
+    } -MaxRetries 5 -DelaySeconds 2 -VerboseOutput
     $Results
 }
