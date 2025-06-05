@@ -1,5 +1,5 @@
 Import-Module ImportExcel
-Import-Module "C:\Users\Administrator\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
+Import-Module "C:\Users\$($env:USERNAME)\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
 
 # Import-Module HuduAPI
 # . $PSScriptRoot\Public\Invoke-HuduRequest.ps1

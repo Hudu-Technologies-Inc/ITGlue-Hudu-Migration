@@ -145,7 +145,7 @@ if ((get-host).version.major -ne 7) {
 # }
 # # override this method, since it's retry method fails
 # . .\Public\Invoke-HuduRequest.ps1
-Import-Module "C:\Users\Administrator\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
+Import-Module "C:\Users\$($env:USERNAME)\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
 
 
 #Login to Hudu

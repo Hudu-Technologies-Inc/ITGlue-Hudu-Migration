@@ -138,7 +138,7 @@ If (Get-Module -ListAvailable -Name "ITGlueAPIv2") {
     Import-Module ITGlueAPIv2
 }
 
-Import-Module "C:\Users\Administrator\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
+Import-Module "C:\Users\$($env:USERNAME)\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
 
 #Login to Hudu
 New-HuduAPIKey $HuduAPIKey

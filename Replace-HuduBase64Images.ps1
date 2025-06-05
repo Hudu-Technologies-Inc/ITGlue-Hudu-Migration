@@ -119,7 +119,7 @@ if ($InlineImageArticles) {
     ## SENSITIVE KEYS STORED HERE DO NOT SAVE OR SHARE
     # Import-Module HuduAPI
 
-    Import-Module "C:\Users\Administrator\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
+    Import-Module "C:\Users\$($env:USERNAME)\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
     #New-HuduAPIKey -ApiKey <APIKEY>
 
     New-HuduAPIKey -ApiKey (Read-Host "Enter your Hudu API Key")
