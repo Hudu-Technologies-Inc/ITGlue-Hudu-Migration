@@ -116,11 +116,6 @@ if ((get-host).version.major -ne 7) {
 #     Import-Module HuduAPI
 # }
   
-Import-Module "C:\Users\Administrator\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
-
-#Login to Hudu
-New-HuduAPIKey $HuduAPIKey
-New-HuduBaseUrl $HuduBaseDomain
 
 # Check we have the correct version
 # $RequiredHuduVersion = "2.1.5.9"
@@ -132,6 +127,7 @@ New-HuduBaseUrl $HuduBaseDomain
 
 try {
     remove-module ITGlueAPI -ErrorAction SilentlyContinue
+    remove-module HuduApi -ErrorAction SilentlyContinue    
 } catch {
 }
 #Grabbing ITGlue Module and installing.
@@ -142,6 +138,11 @@ If (Get-Module -ListAvailable -Name "ITGlueAPIv2") {
     Import-Module ITGlueAPIv2
 }
 
+Import-Module "C:\Users\Administrator\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1"
+
+#Login to Hudu
+New-HuduAPIKey $HuduAPIKey
+New-HuduBaseUrl $HuduBaseDomain
 
 
 #Settings IT-Glue logon information
