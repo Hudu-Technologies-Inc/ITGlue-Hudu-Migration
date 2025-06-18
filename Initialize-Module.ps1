@@ -29,7 +29,16 @@ param(
 )
 
 ############################### Settings ###############################
-# Define the path to the settings.json file in the user's AppData folder
+# Determine top part of settings path
+if($IsWindows){
+    $settingsTop = $env:APPDATA
+} else {
+    $settingsTop = Join-Path $env:HOME ".config"
+}
+
+# Define the path to the settings.json file in the detected platform's folder:
+# Running on Windows will save to the user's AppData
+# Running on Linux/macOS will save to `.config` in the user's HOME directory
   # Something awesome will be here soon.
 $settingsFiles = $settingsFiles ?? $(Get-Item "$env:APPDATA\HuduMigration\*\settings.json")
 $defaultSettingsPath = $defaultSettingsPath ?? "$env:APPDATA\HuduMigration\settings.json"
@@ -97,71 +106,21 @@ function CollectAndSaveSettings {
     	$settings.ITGCustomDomains = Read-Host -Prompt "Please enter comma separated list of URLs to check for, following the same format of the main domain URL. If only one, don't include the comma."
     }
 
-    # 2. User-Entry- Secrets
-    Write-Host "Settings- Secrets:" -ForegroundColor Yellow
-    $HuduAPIKey = $HuduAPIKey ?? ""
-    $ITGKey = $ITGKey ?? ""
-    while ($HuduAPIKey.Length -ne 24) {
-        $HuduAPIKey = (Read-Host -Prompt "Get a Hudu API Key from $($settings.HuduBaseDomain)/admin/api_keys").Trim()
-        if ($HuduAPIKey.Length -ne 24) {
-            Write-Host "This doesn't seem to be a valid Hudu API key. It is $($HuduAPIKey.Length) characters long, but should be 24." -ForegroundColor Red
-        }
-    }
-    while ($ITGKey.Length -ne 101) {
-        $ITGKey = (Read-Host -Prompt 'Enter your ITGlue API Key (must have password access). Should be 101 characters.').Trim()
-        if ($ITGKey.Length -ne 101) {
-            Write-Host "This doesn't seem to be a valid ITGlue API key. It is $($ITGKey.Length) characters long, but should be 101." -ForegroundColor Red
-        }
-    }
-    $settings.ITGKey = ConvertTo-SecureString -String $ITGKey -AsPlainText -Force | ConvertFrom-SecureString
-    $settings.HuduAPIKey = ConvertTo-SecureString -String $HuduAPIKey -AsPlainText -Force | ConvertFrom-SecureString
-
-    # 3. User-Entry Global KB Settings
-    Write-Host "Settings- Global KnowledgeBase:" -ForegroundColor Yellow
-    $settings.InternalCompany = $settings.InternalCompany ??
-        $(Read-Host 'Enter the exact name of the ITGlue Organization that represents your Internal Company ').ToString().Trim()
-    $settings.GlobalKBFolder = $settings.GlobalKBFolder ??
-        ""
-    while ($settings.GlobalKBFolder.Length -ne 1 -or $settings.GlobalKBFolder.ToLower() -notin @('y','n')) {
-        $settings.GlobalKBFolder = $(Read-Host -Prompt 'Do you want all documents in Global KB to be placed into a subfolder? (y/n)').ToString().Trim().ToLower()
-        if ($settings.GlobalKBFolder -notin @("y","n")){
-            Write-Host "Please re-enter, y or n"
-        }
-    }
-    Write-Host "The documents from the company $($settings.InternalCompany) will be migrated to Hudu's Global KB section " -ForegroundColor Cyan
-    $settings.ConPromptPrefix = $settings.ConPromptPrefix ?? 
-        $(Read-Host "Would you like a Prefix in front of ️Configuration names️ created in Hudu? This can make it easy to review and you can rename them later. Enter the prefix here, otherwise leave it blank. (e.g. ITGlue-)")
-    $settings.FAPromptPrefix = $settings.FAPromptPrefix ??
-        $(Read-Host "Would you like a Prefix in front of Asset Layout names created in Hudu? This can make it easy to review and you can rename them later. Enter the prefix here, otherwise leave it blank. (e.g. ITGlue-)")
-
-    
-    # 4. User-Entry Paths and Folders
-    Write-Host "️Settings- Paths and Folders:" -ForegroundColor Yellow
-    $settings.ITGLueExportPath = $settings.ITGLueExportPath ?? 
-        $(Read-Host 'Enter the path of the ITGLue Export. (e.g. C:\Temp\ITGlue\Export) ️')
-    $settings.MigrationLogs = $settings.MigrationLogs ??
-        $(Read-Host "Enter the path for the migration logs, or press enter to accept the Default path (%appdata%\HuduMigration\$instance\MigrationLogs)")
-    # Fallback for Migrationlogs setting
+    # Migration Log Settings
+    $settings.MigrationLogs = Read-Host "Enter the path for the migration logs, or press enter to accept the Default path (%appdata%\HuduMigration\$instance\MigrationLogs)"
     if (!($settings.MigrationLogs)) {
-        $settings.MigrationLogs = "$ENV:appdata\HuduMigration\$instance\MigrationLogs"
+        $settings.MigrationLogs = "$settingsTop\HuduMigration\$instance\MigrationLogs"
     }
-    # Ensure folder is created for settings file
+
+    $settings.ConPromptPrefix = Read-Host "Would you like a Prefix in front of Configuration names created in Hudu? This can make it easy to review and you can rename them later. Enter the prefix here, otherwise leave it blank. (e.g. ITGlue-)"
+    $settings.FAPromptPrefix = Read-Host "Would you like a Prefix in front of Asset Layout names created in Hudu? This can make it easy to review and you can rename them later. Enter the prefix here, otherwise leave it blank. (e.g. ITGlue-)"
+
+    # Convert the hash table to JSON
+    $json = $settings | ConvertTo-Json
+
+    # Save the JSON to the settings file
     if (!(Test-Path -Path "$env:APPDATA\HuduMigration\$instance")) { New-Item "$env:APPDATA\HuduMigration\$instance" -ItemType Directory }
-
-
-    # Verify settings, save or exit and retry
-    $reenterChoice = $reenterChoice ?? 
-        $(Select-ObjectFromList -message "Do these settings look alright? $(($settings | ConvertTo-Json -depth 4).ToString())\n-If you choose to re-enter, changes made will not be saved" -objects @("Continue", "Re-Enter"))
-    if ($reenterChoice -eq "Continue") {
-        Write-Host "Saving Settings to $defaultSettingsPath"
-        # Convert the hash table to JSON
-        $json = $settings | ConvertTo-Json
-        $json | Out-File -FilePath $defaultSettingsPath
-    } else {
-        Clear-Host
-        Write-Host "reinvoke script when you're ready!..." -ForegroundColor Yellow
-        exit
-    }
+    $json | Out-File -FilePath $defaultSettingsPath
 }
 
 function UpdateSavedSettings {
@@ -422,12 +381,6 @@ if ($InitType -eq 'Full') {
         "1" {$NonInteractive = $false}
         "2" {$NonInteractive = $true}
     }    
-    ############################### Unattended ###############################
-    while ($ScopedMigration -notin (1,2)) {$ScopedMigration = Read-Host "1) Run normally `n2) Perform migration scoped to certain companies `n(1/2)"}
-    switch ($ScopedMigration) {
-        "1" {$ScopedMigration = $false}
-        "2" {$ScopedMigration = $true}
-    }        
 }
 ############################ Migration Logs Path ##############################
 $MigrationLogs = $environmentSettings.MigrationLogs
