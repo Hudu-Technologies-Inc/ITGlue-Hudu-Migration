@@ -1,4 +1,4 @@
-[string]$WorkingDirectory = "c:\tmp\images"
+[string]$WorkingDirectory = $(join-path $(Split-Path $ITGLueExportPath -Parent) "images")
 
 function Get-ImageType {
     param (
