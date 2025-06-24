@@ -8,6 +8,5 @@ function Get-ImportMode {
         Write-Host "Please select A, N or S"
         $ImportOption = Get-ImportMode -ImportName $ImportName
     }
-		
     return $ImportOption
 }
