@@ -1732,113 +1732,23 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                             }
                             $null = $ManualActions.add($ManualLog)
                     }
-                    # Test the path to ensure that a file extension exists, if no file extension we get problems later on. We rename it if there's no ext.
-                    if ($imagePath -and (Test-Path $imagePath -ErrorAction SilentlyContinue)) {
-                        Write-Host "File present at purported image path: $imagePath... checking for image..." -ForegroundColor DarkRed
+                    $imageTest = Set-UploadedImage -FilePath $imagePath
+                    if ($true -ne $imageTest.Success){Write-ErrorObjectsToFile -name $imagepath -ErrorObject $imageTest; continue}
 
-                            $imageType = Invoke-ImageTest $imagePath
-                            if ($imageType) {
-                                Write-Host "$imagePath appears to contain image... normalizing..." -ForegroundColor DarkRed
-                                $imageInfo = Normalize-And-ConvertImage -InputPath $imagePath
-                                Write-Host "$imagePath => $($imageInfo.FinalPath)" -ForegroundColor DarkRed
-
-                                $imagePath = $imageInfo.FinalPath ?? $imagePath
-                                $OriginalFullImagePath = $imageInfo.Original
-
-                                Write-Host "Uploading new/copied ITGlue image $OriginalFullImagePath => $imagePath"
-                                try {
-                                    $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
-                                } catch {
-                    # issue during Upload
-                                    Write-ErrorObjectsToFile -ErrorObject @{
-                                        Err = $_
-                                        ImageObject = $imageObject
-                                        ImageLink=$ImgLink
-                                        UploadImage=$UploadImage
-                                        ImageInfo=$imageInfo
-                                        Article=$Article
-                                        Problem="image error during upload"
-                                    } -name "image-upload-err-$($imageInfo.basename)"
-                                }
-                                try {                                    
-                                    $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
-                                    
-                                    # Update the <img> tag src
-                                    $imageObject.src = [string]$NewImageURL
-                                    Write-Host "Setting <img>.src to: $NewImageURL"
-
-                                    # Try to find a matching <a> link around the image
-                                    $ImgLink = ($html.Links | Where-Object { $imageObject.innerHTML -eq $imgHTML }) | Select-Object -First 1
-                                    
-                                    if ($ImgLink) {
-                                        if ($ImgLink.PSObject.Properties.Match("href")) {
-                                            $ImgLink.href = [string]$NewImageURL
-                                        } else {
-                                            Write-Host "Image link object found but 'href' property is not present on it"
-                                        }
-                                    } else {
-                                        Write-Host "Image link object was not found for innerHTML: $imgHTML"
-                                    }
-                                } catch {
-                    # issue during HTML replace / parse
-                                    Write-ErrorObjectsToFile -ErrorObject @{
-                                        LogEntry        = $ManualLog
-                                        Err             = $_
-                                        ImageObject     = $imageObject
-                                        Problem         = "issue encountered during html image replace."
-                                        ImageLink       = $ImgLink
-                                        ImageInfo       = $imageInfo
-                                        NewImageURL     = $NewImageURL
-                                        Article         = $Article
-                                    } -name "image-err-$($imageInfo.basename)"
-
-                                    $null = $ManualActions.add($ManualLog)
-                                }
-                            } else {
-                    # image not detected by imagemagick
-                                $ManualLog = [PSCustomObject]@{
-                                    Document_Name = $Article.Name
-                                    Asset_Type    = "Article"
-                                    Company_Name  = $Article.Company.CompanyName
-                                    HuduID        = $Article.HuduID
-                                    Notes       = 'Image Not Detected'
-                                    Action         = "$imagePath not detected as image, validate the identified file is an image, or imagemagick modules are loaded"        
-                                    Data = "$InFile"
-                                    Hudu_URL = $Article.HuduObject.url
-				                    ITG_URL = "$ITGURL/$($Article.ITGLocator)"
-                                }
-                                Write-ErrorObjectsToFile -ErrorObject @{
-                                    LogEntry        = $ManualLog
-                                    Article         = $Article
-                                    ImageObject     = $imageObject
-                                    FileName        = $imagePath
-                                    Problem         = "image not detected at '$(Resolve-Path $imagePath)'"
-                                } -name "image-nd-$($imagePath)"
-                                $null = $ManualActions.add($ManualLog)
-
-                            }
+                    $replacedLinksResult = Set-ReplacedHTMLLinks -huduPhotoURL $imageTest.UploadImage.public_photo.url -imageObject $imageObject -html $html
+                    if ($true -ne $replacedLinksResult.Success){Write-ErrorObjectsToFile -name $imagepath -ErrorObject $replacedLinksResult; continue}
                         } else {
-                    # image not present
-                            Write-Warning "Image $tnImgUrl file is missing"
                             $ManualLog = [PSCustomObject]@{
                                 Document_Name = $Article.Name
-                                Asset_Type    = "Article"
-                                Company_Name  = $Article.Company.CompanyName
-                                Field_Name = 'N/A'
-                                HuduID        = $Article.HuduID
-                                Notes       = 'Image File Missing'
-                                Action         = "$tnImgUrl is not present in export,validate the image exists in ITGlue and manually replace in Hudu"   
-                                Data = "$InFile"
-                                Hudu_URL = $Article.HuduObject.url
-                                ITG_URL = "$ITGURL/$($Article.ITGLocator)"
+                                Asset_Type      = "Article"
+                                Company_Name    = $Article.Company.CompanyName
+                                HuduID          = $Article.HuduID
+                                Notes           = 'Image no longer in article'
+                                Action          = "$imagePath not detected as image, validate the identified file is an image, or imagemagick modules are loaded"        
+                                Data            = "$InFile"
+                                Hudu_URL        = $Article.HuduObject.url
+                                ITG_URL         = "$ITGURL/$($Article.ITGLocator)"
                             }
-                            Write-ErrorObjectsToFile -ErrorObject @{
-                                LogEntry=$ManualLog
-                                ImageLink=$ImgLink
-                                ImageInfo=$imageInfo
-                                Article=$Article
-                                Problem="image not found at '$(Resolve-Path $imagePath)'"
-                            } -name "image-missing-$($imageInfo.basename)"
                             $null = $ManualActions.add($ManualLog)
                         }
                     }

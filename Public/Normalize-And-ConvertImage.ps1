@@ -11,6 +11,103 @@ function Get-ImageType {
         return $null
     }
 }
+
+function Set-UploadedImage {
+    param (
+        [string]$imagePath
+    )
+    if (-not $imagePath -or $null -eq $imagePath) {
+        return @{
+            ImageDetected   = $false
+            URL             = $null
+            Success         = $false
+            Problem         = "image not found"
+        }        
+    }
+    $imageType = Invoke-ImageTest $imagePath
+    if (-not $imageType) {
+        return @{
+            ImageDetected   = $false                
+            Success         = $false
+            Problem         = "image error during image detection"
+        } 
+    }
+
+    try {
+        Write-Host "$imagePath appears to contain image... normalizing..." -ForegroundColor DarkRed
+        $imageInfo = Normalize-And-ConvertImage -InputPath $imagePath
+        Write-Host "$imagePath => $($imageInfo.FinalPath)" -ForegroundColor DarkRed
+        $imagePath = $imageInfo.FinalPath ?? $imagePath
+        $OriginalFullImagePath = $imageInfo.Original
+        Write-Host "Uploading new/copied ITGlue image $OriginalFullImagePath => $imagePath"
+    } catch {
+        return @{
+            Error           = $_
+            ImageDetected   = $true                
+            Success         = $false
+            Problem         = "image error during normalization or conversion"
+        } 
+    }
+
+    try {
+        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
+    } catch {
+        return @{
+            Error           = $_
+            ImageDetected   = $true                
+            Success         = $false
+            Problem         = "image error during upload to $(get-HuduBaseDomain)"
+        } 
+    }
+    return @{
+        ImageDetected   = $true                
+        Success         = $true
+        imageInfo       = $imageInfo
+        UploadImage     = $UploadImage
+    } 
+}
+function Set-ReplacedHTMLLinks {
+    param (
+        [string]$huduPhotoURL
+        $imageObject,
+        $html,
+    )
+    try {
+        $NewImageURL = $imageTest.UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+        $imageObject.src = [string]$NewImageURL
+        Write-Host "Setting <img>.src to: $NewImageURL"
+
+        # Try to find a matching <a> link around the image
+        $ImgLink = ($html.Links | Where-Object { $imageObject.innerHTML -eq $imgHTML }) | Select-Object -First 1
+        
+        if ($ImgLink) {
+            if ($ImgLink.PSObject.Properties.Match("href")) {
+                $ImgLink.href = [string]$NewImageURL
+            } else {
+                Write-Host "Image link object found but 'href' property is not present on it"
+            }
+        } else {
+            Write-Host "Image link object was not found for innerHTML: $imgHTML"
+        }        
+    } catch {
+        return @{
+            Error       =$_
+            Success     =$false
+            huduPhotoURL=$huduPhotoURL
+            Problem     ="error during HTML url replace for image"
+            ImgLink     =$ImgLink
+            NewImageURL =$NewImageURL
+        }
+    }
+    return @{
+        Success     =$true
+        ImgLink     =$ImgLink
+        NewImageURL =$NewImageURL
+    }
+}
+
+
+
 function Normalize-And-ConvertImage {
     param (
         [string]$InputPath,
