@@ -103,6 +103,7 @@ function Set-ReplacedHTMLLinks {
         Success     =$true
         ImgLink     =$ImgLink
         NewImageURL =$NewImageURL
+        html        =$html
     }
 }
 

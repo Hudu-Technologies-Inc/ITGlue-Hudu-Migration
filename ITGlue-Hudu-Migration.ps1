@@ -1645,38 +1645,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 
         # Now do the actual work of populating the content of articles
         $ArticleErrors = foreach ($Article in $MatchedArticles) {
-
-            $page_out = ''
-            $imagePath = $null
-	    
-            # Check for attachments
-            $attachdir = $Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID }
-            if ($Attachdir) {
-                $InFile = ''
-                $html = ''
-                $rawsource = ''
-
-                $ManualLog = [PSCustomObject]@{
-                    Document_Name = $Article.Name
-                    Asset_Type    = "Article"
-                    Company_Name  = $Article.HuduObject.company_name
-                    HuduID        = $Article.HuduID
-                    Field_Name    = "N/A"
-                    Notes         = "Attached Files not Supported"
-                    Action        = "Manually Upload files to Related Files"
-                    Data          = $attachdir.fullname
-                    Hudu_URL      = $Article.HuduObject.url
-                    ITG_URL       = "$ITGURL/$($Article.ITGLocator)"
-                }
-                $null = $ManualActions.add($ManualLog)
-
-            }
-
-
             Write-Host "Starting $($Article.Name) in $($Article.Company.CompanyName)" -ForegroundColor Green
-				
             $InFile = $Article.FullPath
-				
             $html = New-Object -ComObject "HTMLFile"
             $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
             if ($rawsource.Length -gt 0) {
@@ -1684,8 +1654,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                 $src = [System.Text.Encoding]::Unicode.GetBytes($source)
                 $html.write($src)
                 $images = @($html.Images)
+                $attachmentLinks = $html.Links
+                $page_out = ''
+            
+                # Check for attachments
+                foreach ($attachment in $($Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID })) {
+                    $attachlink = ($html.Links | Where-Object { $imageObject.innerHTML -eq $imgHTML }) | Select-Object -First 1
 
-                foreach ($imageObject in $images) {                    
+
+
+                }
+
+
+                foreach ($imageObject in $images) {  
+                    $imagePath = $null                                     
                     if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL))) {
                         $script:HasImages = $true
                         $imgHTML = $imageObject.outerHTML
@@ -1710,53 +1692,24 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                         
                         Write-Host "Processing IMG: $tnImgPath"
                         
-                        # Some logic to test for the original data source being specified vs the thumbnail. Grab the Thumbnail or final source.
-                        if ($fullImgUrl -and ($foundFile = Get-Item -Path "$fullImgPath*" -ErrorAction SilentlyContinue)) {
-                            $imagePath = $foundFile.FullName
-                        } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path "$tnImgPath*" -ErrorAction SilentlyContinue)) {
-                            $imagePath = $foundFile.FullName
-                        } else { 
-                            Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
-                            Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
-                            Write-Warning "Unable to validate image file."
-                            $ManualLog = [PSCustomObject]@{
-                                    Document_Name = $Article.Name
-                                    Asset_Type    = "Article"
-                                    Company_Name  = $Article.Company.CompanyName
-                                    HuduID        = $Article.HuduID
-                                    Notes         = 'Missing image, file not found'
-                                    Actions       = "Neither $fullImgPath or $tnImgPath were found, validate the images exist in the export, or retrieve them from ITGlue directly"
-                                    Data          = "$InFile"
-                                    Hudu_URL      = $Article.HuduObject.url
-                                    ITG_URL       = "$ITGURL/$($Article.ITGLocator)"
-                            }
-                            $null = $ManualActions.add($ManualLog)
+                    # Some logic to test for the original data source being specified vs the thumbnail. Grab the Thumbnail or final source.
+                    if ($fullImgUrl -and ($foundFile = Get-Item -Path "$fullImgPath*" -ErrorAction SilentlyContinue)) {
+                        $imagePath = $foundFile.FullName
+                    } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path "$tnImgPath*" -ErrorAction SilentlyContinue)) {
+                        $imagePath = $foundFile.FullName
+                    } else { 
+                        continue
                     }
                     $imageTest = Set-UploadedImage -FilePath $imagePath
                     if ($true -ne $imageTest.Success){Write-ErrorObjectsToFile -name $imagepath -ErrorObject $imageTest; continue}
 
                     $replacedLinksResult = Set-ReplacedHTMLLinks -huduPhotoURL $imageTest.UploadImage.public_photo.url -imageObject $imageObject -html $html
                     if ($true -ne $replacedLinksResult.Success){Write-ErrorObjectsToFile -name $imagepath -ErrorObject $replacedLinksResult; continue}
-                        } else {
-                            $ManualLog = [PSCustomObject]@{
-                                Document_Name = $Article.Name
-                                Asset_Type      = "Article"
-                                Company_Name    = $Article.Company.CompanyName
-                                HuduID          = $Article.HuduID
-                                Notes           = 'Image no longer in article'
-                                Action          = "$imagePath not detected as image, validate the identified file is an image, or imagemagick modules are loaded"        
-                                Data            = "$InFile"
-                                Hudu_URL        = $Article.HuduObject.url
-                                ITG_URL         = "$ITGURL/$($Article.ITGLocator)"
-                            }
-                            $null = $ManualActions.add($ManualLog)
-                        }
+                    $html = $replacedLinksResult.html
                     }
                 }
-            
                 $page_Source = $html.documentelement.outerhtml
                 $page_out = [regex]::replace($page_Source , '\xa0+', ' ')
-                        
             }
         
             if ($page_out -eq '') {
@@ -1764,20 +1717,18 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                 $ManualLog = [PSCustomObject]@{
                     Document_Name   = $Article.name
                     Asset_Type      = 'Article'
-		    Company_Name = $Article.Company.CompanyName
-		    Field_Name	   = 'N/A'
-		    HuduID = $Article.HuduID                    
-		    Notes       = 'Empty Document'
-		    Action	  = 'Validate the document is blank in ITGlue, or manually copy the content across. Note that embedded documents in ITGlue will be migrated in blank with an attachment of the original doc'
+                    Company_Name = $Article.Company.CompanyName
+                    Field_Name	   = 'N/A'
+                    HuduID = $Article.HuduID                    
+                    Notes       = 'Empty Document'
+                    Action	  = 'Validate the document is blank in ITGlue, or manually copy the content across. Note that embedded documents in ITGlue will be migrated in blank with an attachment of the original doc'
                     Data          = "$InFile"
                     Hudu_URL = $Article.HuduObject.url
-		    ITG_URL = "$ITGURL/$($Article.ITGLocator)"
+                    ITG_URL = "$ITGURL/$($Article.ITGLocator)"
                 }
-
                 $null = $ManualActions.add($ManualLog)
             }
 			
-				
             if ($_.company.InternalCompany -eq $false) {
                 $ArticleSplat = @{
                     article_id = $Article.HuduID
