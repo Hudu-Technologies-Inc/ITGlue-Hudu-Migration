@@ -1,5 +1,6 @@
 [string]$WorkingDirectory = "c:\tmp\images"
 
+
 function Get-ImageType {
     param (
         [string]$FilePath
@@ -12,7 +13,7 @@ function Get-ImageType {
     }
 }
 
-function Set-UploadedImage {
+function Get-ImageTests {
     param (
         [string]$imagePath,
         [int]$articleId
@@ -49,11 +50,22 @@ function Set-UploadedImage {
             Problem         = "image error during normalization or conversion"
         } 
     }
+    return @{
+        ImageDetected   = $true                
+        imageInfo = $imageInfo
+        Success   = $true
+    }
 
+}
+function Get-UploadedPhotoURL {
+    param (
+        [string]$imagePath,
+        [int]$articleId
+    )
     try {
         $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $articleId -record_type 'Article'
     } catch {
-        return @{
+        return @{   
             Error           = $_
             ImageDetected   = $true                
             Success         = $false
@@ -61,17 +73,15 @@ function Set-UploadedImage {
         } 
     }
     return @{
-        ImageDetected   = $true                
         Success         = $true
-        imageInfo       = $imageInfo
-        UploadImage     = $UploadImage
+        UploadImage     = $UploadImage.public_photo
     } 
 }
 function Set-ReplacedHTMLLinks {
     param (
-        [string]$huduPhotoURL
+        [string]$huduPhotoURL,
         $imageObject,
-        $html,
+        $html
     )
     try {
         $NewImageURL = $imageTest.UploadImage.public_photo.url.replace($HuduBaseDomain, '')

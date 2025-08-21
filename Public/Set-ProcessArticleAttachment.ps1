@@ -1,9 +1,9 @@
 function Set-ProcessArticleAttachment {
     [CmdletBinding()]
     param (
+        # COM HTMLFile document object (mutated in place)
         [Parameter(Mandatory)]
         $Html,
-
         [Parameter(Mandatory)]
         [string[]]$Attachments,
 
@@ -14,22 +14,18 @@ function Set-ProcessArticleAttachment {
         [int]$UploadableId,
         [Parameter(Mandatory)]
         [ValidateSet('Article','Asset','Company','Procedure')]
-        [string]$UploadableType
+        [string]$UploadableType,
+
+        [switch]$UploadUnlinked
     )
 
-    $errors = New-Object System.Collections.Generic.List[object]
-    $rewritten = 0
+    $errors      = New-Object System.Collections.Generic.List[object]
+    $rewritten   = 0
+    $linkedMeta  = New-Object System.Collections.Generic.List[object]   # files uploaded for anchors
+    $unlinkedMeta= New-Object System.Collections.Generic.List[object]   # files uploaded without anchors
 
     # Collect anchors
     $anchors = @($Html.Links)
-    if (-not $anchors -or $anchors.Count -eq 0) {
-        return [pscustomobject]@{
-            Success        = $true
-            RewrittenCount = 0
-            Html           = $Html.documentElement.outerHTML
-            Errors         = @()
-        }
-    }
 
     # Flatten files under all provided attachment dirs
     $articleFiles = foreach ($dir in $Attachments) {
@@ -42,7 +38,9 @@ function Set-ProcessArticleAttachment {
     $byName = @{}
     foreach ($f in $articleFiles) { $byName[$f.Name.ToLower()] = $f.FullName }
 
-    # Helper: URL-decode filename safely
+    # Track which local files were handled via anchors (case-insensitive)
+    $linkedLocalPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
     function _TryUrlDecode([string]$s) {
         if ([string]::IsNullOrWhiteSpace($s)) { return $s }
         try {
@@ -78,10 +76,9 @@ function Set-ProcessArticleAttachment {
                 if ($byName.ContainsKey($decKey)) {
                     $localPath = $byName[$decKey]
                 } else {
-                    # Fallback: startswith match
-                    $localPath = $articleFiles | Where-Object {
-                        $_.Name.ToLower().StartsWith($decKey)
-                    } | Select-Object -First 1 -ExpandProperty FullName
+                    # Fallback: startswith match (helps with cache suffixes or minor variations)
+                    $cand = $articleFiles | Where-Object { $_.Name.ToLower().StartsWith($decKey) } | Select-Object -First 1
+                    if ($cand) { $localPath = $cand.FullName }
                 }
             }
         }
@@ -92,27 +89,60 @@ function Set-ProcessArticleAttachment {
             $upload = New-HuduUpload -FilePath $localPath -uploadable_id $UploadableId -uploadable_type $UploadableType
             $newUrl = $upload.url
             if ([string]::IsNullOrWhiteSpace($newUrl)) {
-                $errors.Add([pscustomobject]@{Href=$href; File=$localPath; Error='Upload returned no URL'; Raw=$upload})
+                $errors.Add([pscustomobject]@{Kind='Linked'; Href=$href; File=$localPath; Error='Upload returned no URL'; Raw=$upload})
                 continue
             }
 
+            # Rewrite DOM
             $null = $a.setAttribute('href', $newUrl)
             $null = $a.setAttribute('target', '_blank')
             if ([string]::IsNullOrWhiteSpace("$($a.innerText)")) {
                 $a.innerText = [System.IO.Path]::GetFileName($localPath)
             }
+
             $rewritten++
+            $linkedLocalPaths.Add($localPath) | Out-Null
+            $linkedMeta.Add([pscustomobject]@{
+                LocalPath = $localPath
+                FileName  = [IO.Path]::GetFileName($localPath)
+                Url       = $newUrl
+                Raw       = $upload
+            })
         }
         catch {
-            $errors.Add([pscustomobject]@{Href=$href; File=$localPath; Error=$_.Exception.Message})
+            $errors.Add([pscustomobject]@{Kind='Linked'; Href=$href; File=$localPath; Error=$_.Exception.Message})
             continue
         }
     }
 
+    # Upload any remaining files that weren't referenced by anchors
+    if ($UploadUnlinked -and $articleFiles) {
+        foreach ($f in $articleFiles) {
+            if ($linkedLocalPaths.Contains($f.FullName)) { continue }
+            try {
+                $upload = New-HuduUpload -FilePath $f.FullName -uploadable_id $UploadableId -uploadable_type $UploadableType
+                if (-not $upload -or [string]::IsNullOrWhiteSpace($upload.url)) {
+                    $errors.Add([pscustomobject]@{Kind='Unlinked'; File=$f.FullName; Error='Upload returned no URL'; Raw=$upload})
+                    continue
+                }
+                $unlinkedMeta.Add([pscustomobject]@{
+                    LocalPath = $f.FullName
+                    FileName  = $f.Name
+                    Url       = $upload.url
+                    Raw       = $upload
+                })
+            } catch {
+                $errors.Add([pscustomobject]@{Kind='Unlinked'; File=$f.FullName; Error=$_.Exception.Message})
+            }
+        }
+    }
+
     [pscustomobject]@{
-        Success        = ($errors.Count -eq 0)
-        RewrittenCount = $rewritten
-        Html           = $Html.documentElement.outerHTML
-        Errors         = $errors
+        Success            = ($errors.Count -eq 0)
+        LinkedRewritten    = $rewritten
+        LinkedUploads      = $linkedMeta          # {LocalPath, FileName, Url, Raw}
+        UnlinkedUploads    = $unlinkedMeta        # {LocalPath, FileName, Url, Raw}
+        Html               = $Html.documentElement.outerHTML  # DOM already mutated
+        Errors             = $errors
     }
 }
