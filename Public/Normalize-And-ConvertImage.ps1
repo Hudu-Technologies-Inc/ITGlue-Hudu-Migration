@@ -14,7 +14,8 @@ function Get-ImageType {
 
 function Set-UploadedImage {
     param (
-        [string]$imagePath
+        [string]$imagePath,
+        [int]$articleId
     )
     if (-not $imagePath -or $null -eq $imagePath) {
         return @{
@@ -50,7 +51,7 @@ function Set-UploadedImage {
     }
 
     try {
-        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
+        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $articleId -record_type 'Article'
     } catch {
         return @{
             Error           = $_

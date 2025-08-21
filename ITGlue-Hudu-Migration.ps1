@@ -1654,17 +1654,22 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                 $src = [System.Text.Encoding]::Unicode.GetBytes($source)
                 $html.write($src)
                 $images = @($html.Images)
-                $attachmentLinks = $html.Links
+                $anchors = @($html.Links)
                 $page_out = ''
             
                 # Check for attachments
-                foreach ($attachment in $($Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID })) {
-                    $attachlink = ($html.Links | Where-Object { $imageObject.innerHTML -eq $imgHTML }) | Select-Object -First 1
-
-
+                foreach ($attachDir in ($Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match "^\Q$($Article.ITGID)\E(\b|$)" })) {
+                    $attachments = Get-ChildItem -Path $attachDir.FullName -File -Recurse -ErrorAction SilentlyContinue
+                    if (-not $articleFiles) { continue }
+                    $byName = @{}
+                    foreach ($f in $articleFiles) { $byName[$f.Name.ToLower()] = $f.FullName }
+                    Write-Host "Processing $($attachmetns.count) for article $($Article.ITGID)"
+                    $attachResult = Set-ProcessArticleAttachment -html $html -attachments -$attachments -ITGURL $ITGURL -UploadableId $Article.HuduID -UploadableType 'Article'
+                    if (-not $attachResult.success){Write-ErrorObjectsToFile -name $attachdir -ErrorObject $attachResult; continue}
+                    $page_out = [regex]::replace($attachResult.Html, '\xa0+', ' ')
+                    Write-Host "Rewrote $($attachResult.rewritten) anchors"
 
                 }
-
 
                 foreach ($imageObject in $images) {  
                     $imagePath = $null                                     
@@ -1700,7 +1705,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                     } else { 
                         continue
                     }
-                    $imageTest = Set-UploadedImage -FilePath $imagePath
+                    $imageTest = Set-UploadedImage -FilePath $imagePath -articleID $Article.HuduID
                     if ($true -ne $imageTest.Success){Write-ErrorObjectsToFile -name $imagepath -ErrorObject $imageTest; continue}
 
                     $replacedLinksResult = Set-ReplacedHTMLLinks -huduPhotoURL $imageTest.UploadImage.public_photo.url -imageObject $imageObject -html $html
