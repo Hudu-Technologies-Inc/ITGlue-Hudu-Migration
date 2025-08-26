@@ -28,8 +28,9 @@ $settings = @{
     FAPromptPrefix          = ""
     ITGLueExportPath        = "c:\tmp\export"
     MigrationLogs           = "$logs_folder"
-    IncludeITGlueID            = $true
+    IncludeITGlueID         = $true
     SplitConfigurations     = $true
+    AllowForCustomMapping   = $false
 }
 $ITGKey                     = "ITG.key"
 $HuduApiKey                 = "HUDU.key"

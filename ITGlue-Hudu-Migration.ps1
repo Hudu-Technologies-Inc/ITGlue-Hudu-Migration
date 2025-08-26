@@ -437,6 +437,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     }
 
 
+
+
     $LocImportSplat = @{
         AssetFieldsMap        = $LocAssetFieldsMap
         AssetLayoutFields     = $LocAssetLayoutFields
@@ -447,11 +449,25 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         ItemSelect            = $LocItemSelect
         MigrationName         = $LocMigrationName
         ITGImports            = $ITGLocations
+    }
+    $LocImportSplat | ConvertTo-Json -depth 95 | Out-File "locationsplat.json"
+    read-host
 
+
+    if ($true -eq $settings.AllowForCustomMapping) {
+        $customMapLocations = [bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
+    } else {
+        $customMapLocations = $false
     }
 
+
     #Import Locations
-    $MatchedLocations = Import-Items @LocImportSplat
+    if ($true -eq $customMapLocations) {
+        $MatchedLocations = Set-ITGAssetsToExistingLayout -desiredMapFileName "LocationsMap.ps1" -sourceassets $AssetFieldsMap -sourceassetlayout "ITG-Locations" -allrelations @()
+    } else {
+        $MatchedLocations = Import-Items @LocImportSplat
+    }
+
     $ITGLocationsHashTable = @{}
     foreach ($ITGL in $MatchedLocations) {
         $ITGLocationsHashTable[$ITGL.itgid] = $ITGL

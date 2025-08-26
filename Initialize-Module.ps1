@@ -120,8 +120,8 @@ function CollectAndSaveSettings {
     $settings.FAPromptPrefix = $settings.FAPromptPrefix ??
         $(Read-Host "Would you like a Prefix in front of Asset Layout names created in Hudu? This can make it easy to review and you can rename them later. Enter the prefix here, otherwise leave it blank. (e.g. ITGlue-)")
     $settings.IncludeITGlueID =  $settings.IncludeITGlueID ?? [bool]$($(Select-ObjectFromList -message "would you like to include ITGlue ID in your contacts, locations, and configurations layouts?" -objects @($true,$false) -allowNull $false) ?? $true)
+    $settings.AllowForCustomMapping =  $settings.AllowForCustomMapping ?? [bool]$($(Select-ObjectFromList -message "would you like to custom-map all assets to pre-existing layouts (advanced)?" -objects @($true,$false) -allowNull $false) ?? $true)
 
-    
     # 4. User-Entry Paths and Folders
     Write-Host "️Settings- Paths and Folders:" -ForegroundColor Yellow
     $settings.ITGLueExportPath = $settings.ITGLueExportPath ?? 
