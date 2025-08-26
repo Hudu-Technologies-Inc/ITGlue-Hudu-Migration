@@ -473,7 +473,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         $MatchedLocations = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$LocMigrationName.ps1" `
                             -sourceAssets $imports `
-                            -sourceAssetLayout [pscustomobject]@{Name="ephemeral-$LocMigrationName"; Fields=$LocAssetLayoutFields} `
+                            -sourceAssetLayout [pscustomobject]@{Id = -6; name="ephemeral-$LocMigrationName"; fields=$LocAssetLayoutFields} `
                             -allrelations @()
 
     } else {
@@ -1079,6 +1079,35 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     }
 
     #Import Locations
+
+    if ($true -eq $settings.AllowForCustomMapping) {
+        $customMapContacts = [bool]$($(Select-ObjectFromList -message "would you like to custom-map $ConMigrationName to existing layout or use the standard new ITG layout? $($($ConAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
+    } else {
+        $customMapContacts = $false
+    }
+
+
+    #Import Locations
+    if ($true -eq $customMapContacts) {
+        $imports = Convert-ITGImportsToHuduPreview `
+            -ITGImports $ITGContacts `
+            -CompaniesToMigrate $CompaniesToMigrate `
+            -ImportAssetLayoutName $ConMigrationName `
+            -AssetLayoutFields $ConAssetLayoutFields `
+            -AssetFieldsMap $ConAssetFieldsMap `
+            -Verbose
+        $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
+        $MatchedLocations = Set-ITGAssetsToExistingLayout `
+                            -desiredMapFileName "$ConMigrationName.ps1" `
+                            -sourceAssets $imports `
+                            -sourceAssetLayout [pscustomobject]@{Id = -6; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
+                            -allrelations @()
+
+    } else {
+        $MatchedLocations = Import-Items @LocImportSplat
+    }
+
+
     $MatchedContacts = Import-Items @ConImportSplat
 
     Write-Host "Contacts Complete"
