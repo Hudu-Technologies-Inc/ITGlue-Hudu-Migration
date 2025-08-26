@@ -60,6 +60,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1
 # initialization helper and field requirement helper, logging, selection helper
 . $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
+. $PSScriptRoot\Public\CustomMapping.ps1
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
 $ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
 
@@ -450,12 +451,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         MigrationName         = $LocMigrationName
         ITGImports            = $ITGLocations
     }
-    $LocImportSplat | ConvertTo-Json -depth 95 | Out-File "locationsplat.json"
-    read-host
 
 
     if ($true -eq $settings.AllowForCustomMapping) {
-        $customMapLocations = [bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
+        $customMapLocations = $true #[bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
     } else {
         $customMapLocations = $false
     }
@@ -463,7 +462,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 
     #Import Locations
     if ($true -eq $customMapLocations) {
-        $MatchedLocations = Set-ITGAssetsToExistingLayout -desiredMapFileName "LocationsMap.ps1" -sourceassets $AssetFieldsMap -sourceassetlayout "ITG-Locations" -allrelations @()
+        $imports = Convert-ITGImportsToHuduObjects `
+            -ITGImports $ITGLocations `
+            -CompaniesToMigrate $CompaniesToMigrate `
+            -ImportLayout $ImportLayout `
+            -AssetFieldsMap $LocAssetFieldsMap
+
+        # Optional: persist/inspect
+        $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "AssetLayoutFieldsImports.json"
+
     } else {
         $MatchedLocations = Import-Items @LocImportSplat
     }
