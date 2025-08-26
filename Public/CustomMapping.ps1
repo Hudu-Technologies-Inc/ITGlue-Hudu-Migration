@@ -303,7 +303,7 @@ function Remove-HtmlTags {
 }
 
 function build-templatemap {
-param ([array]$destfields,[string]$desiredMapFileName)
+param ([array]$destfields,[string]$desiredMapFileName="mapfile.ps1")
 # Build entries like: @{from='';to='Some Label'}
 $mapEntries = foreach ($f in $destfields) {
     if ($f.field_type -eq "AssetTag") {write-host "Skipping asset tag for $($f.label), those will be relinked."; continue}
@@ -498,7 +498,7 @@ function Set-ITGAssetsToExistingLayout {
     $choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
     $destassetlayout = $choice.DestLayout
 
-    foreach ($layout in @($sourceassetlayout, $destassetlayout)){
+    foreach ($layout in @($destassetlayout)){
         write-host "getting relinkable fields from layout $($layout.name)..."
         $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
     }
@@ -518,7 +518,7 @@ function Set-ITGAssetsToExistingLayout {
     foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
         $fields.value | convertto-json -depth 66 | out-file "$($fields.name)-fields.json"
     }
-    build-templatemap -destfields $dstfields -mapfile $desiredMapFileName
+    build-templatemap -destfields $dstfields -desiredMapFileName $desiredMapFileName
 
     read-host "press enter if you filled in your mapfile, $desiredMapFileName"
     if (-not $(test-path "$desiredMapFileName")) {

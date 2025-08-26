@@ -473,7 +473,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         $MatchedLocations = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$LocMigrationName.ps1" `
                             -sourceAssets $imports `
-                            -sourceAssetLayout $LocAssetLayoutFields `
+                            -sourceAssetLayout [pscustomobject]@{Name="ephemeral-$LocMigrationName"; Fields=$LocAssetLayoutFields} `
                             -allrelations @()
 
     } else {

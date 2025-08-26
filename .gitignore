@@ -9,3 +9,8 @@ README.md
 *.reference
 AssetLayoutFieldsImports.json
 AssetLayoutFieldsImports.preview.json
+Locations.ps1
+*.old
+mapfile.ps1
+source-fields.json
+dest-fields.json
