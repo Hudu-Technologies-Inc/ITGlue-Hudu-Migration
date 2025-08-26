@@ -462,14 +462,19 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 
     #Import Locations
     if ($true -eq $customMapLocations) {
-        $imports = Convert-ITGImportsToHuduObjects `
+        $imports = Convert-ITGImportsToHuduPreview `
             -ITGImports $ITGLocations `
             -CompaniesToMigrate $CompaniesToMigrate `
-            -ImportLayout $ImportLayout `
-            -AssetFieldsMap $LocAssetFieldsMap
-
-        # Optional: persist/inspect
-        $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "AssetLayoutFieldsImports.json"
+            -ImportAssetLayoutName $LocImportAssetLayoutName `
+            -AssetLayoutFields $LocAssetLayoutFields `
+            -AssetFieldsMap $LocAssetFieldsMap `
+            -Verbose
+        $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "$LocMigrationName.json"
+        $MatchedLocations = Set-ITGAssetsToExistingLayout `
+                            -desiredMapFileName "$LocMigrationName.ps1" `
+                            -sourceAssets $imports `
+                            -sourceAssetLayout $LocAssetLayoutFields `
+                            -allrelations @()
 
     } else {
         $MatchedLocations = Import-Items @LocImportSplat

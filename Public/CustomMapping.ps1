@@ -329,45 +329,45 @@ $PerJobSettings
 Set-Content -Path $desiredMapFileName -Value $mappingText -Encoding UTF8
 }
 
-function Convert-ITGImportsToHuduObjects {
+function Convert-ITGImportsToHuduPreview {
     [CmdletBinding()]
     param(
-        # Can be raw ITG records OR wrapper objects with .ITGObject/.Name/.Matched
         [Parameter(Mandatory)]
         [array]$ITGImports,
 
-        # Array where each item has .ITGCompanyObject.id and .HuduCompanyObject.Id
+        # Each item should expose .ITGCompanyObject.id and .HuduCompanyObject.Id
         [Parameter(Mandatory)]
         [array]$CompaniesToMigrate,
 
-        # Destination layout (must expose .id)
-        [Parameter(Mandatory)]
-        $ImportLayout,
+        [string]$ImportAssetLayoutName = "ITG-Locations",
+        [array]$AssetLayoutFields = @(),
 
-        # ScriptBlock that returns a hashtable of Fields.
-        # It can either (a) reference $unmatchedImport, or (b) accept params: -ITG, -Company, -UnmatchedImport
+        # Your map; can reference $unmatchedImport or accept -ITG/-Company/-UnmatchedImport
         [Parameter(Mandatory)]
-        [scriptblock]$AssetFieldsMap
+        [scriptblock]$AssetFieldsMap,
+
+        # When true (default), include rows even if company resolution fails
+        [switch]$IncludeUnresolved = $true
     )
 
     begin {
-        # Fast lookup: org-id -> company object
+        # Build org-id -> company map
         $CompanyByOrgId = @{}
         foreach ($c in $CompaniesToMigrate) {
-            $CompanyByOrgId[$c.ITGCompanyObject.id] = $c
+            if ($c.ITGCompanyObject -and $c.ITGCompanyObject.id) {
+                $CompanyByOrgId[$c.ITGCompanyObject.id] = $c
+            }
         }
+        Write-Verbose ("Company map count: {0}" -f $CompanyByOrgId.Count)
     }
 
     process {
-        $results = foreach ($item in $ITGImports) {
-
-            # Normalize to the "wrapper" contract this function expects.
+        $out = foreach ($item in $ITGImports) {
+            # Normalize to wrapper with .ITGObject/.Name/.Matched
             if ($item.PSObject.Properties.Name -contains 'ITGObject') {
                 $unmatchedImport = $item
             } else {
-                # raw ITG object -> wrap it
-                $nameGuess =
-                    $item.Name `
+                $nameGuess = $item.Name `
                     ?? $item.attributes?.name `
                     ?? $item.title `
                     ?? "ITG-$($item.id)"
@@ -378,41 +378,53 @@ function Convert-ITGImportsToHuduObjects {
                 }
             }
 
-            # Skip already matched entries if present
-            if ($unmatchedImport.PSObject.Properties.Name -contains 'Matched') {
-                if ($unmatchedImport.Matched) { continue }
+            if ($unmatchedImport.PSObject.Properties.Name -contains 'Matched' -and $unmatchedImport.Matched) { continue }
+
+            # Resolve company
+            $diag = [ordered]@{}
+            $orgId = $unmatchedImport.ITGObject.attributes.'organization-id'
+            $diag.orgId = $orgId
+
+            $company = $null
+            if ($orgId) { $company = $CompanyByOrgId[$orgId] }
+            if (-not $company -and $unmatchedImport.PSObject.Properties.Name -contains 'HuduCompanyId') {
+                $cid = $unmatchedImport.HuduCompanyId
+                $diag.fallbackHuduCompanyId = $cid
+                if ($cid) {
+                    $company = $CompaniesToMigrate | Where-Object { $_.HuduCompanyObject.Id -eq $cid } | Select-Object -First 1
+                }
             }
 
-            # Resolve org/company
-            $orgId = $unmatchedImport.ITGObject.attributes.'organization-id'
-            if (-not $orgId) { continue }
+            if (-not $company -and -not $IncludeUnresolved) { continue }
 
-            $company = $CompanyByOrgId[$orgId]
-            if (-not $company) { continue }
-
-            # Compute fields from your map, supporting both styles
+            # Build fields (supports both styles)
             $fields = $null
             try {
-                # Try parameterized style first
                 $fields = & $AssetFieldsMap -ITG $unmatchedImport.ITGObject -Company $company -UnmatchedImport $unmatchedImport
+                $diag.mapStyle = "parameterized"
             } catch {
-                # Fall back to closure style (map references $unmatchedImport directly)
                 $fields = & $AssetFieldsMap
+                $diag.mapStyle = "closure"
             }
             if (-not $fields) { $fields = @{} }
 
-            # Emit PSCustomObject
+            # Emit preview
             [pscustomobject]@{
-                Name          = $unmatchedImport.Name
-                CompanyId     = $company.HuduCompanyObject.Id
-                AssetLayoutId = $ImportLayout.id
-                Fields        = $fields
-                ITGId         = $unmatchedImport.ITGObject.id
-                ITGObject     = $unmatchedImport.ITGObject   # keeps traceability
+                Preview          = $true
+                Name             = $unmatchedImport.Name
+                CompanyId        = $company?.HuduCompanyObject?.Id
+                CompanyName      = $company?.CompanyName
+                AssetLayoutId    = $null
+                AssetLayoutName  = $ImportAssetLayoutName
+                Fields           = $fields
+                LayoutDefinition = $AssetLayoutFields
+                ITGId            = $unmatchedImport.ITGObject.id
+                ITGObject        = $unmatchedImport.ITGObject
+                _Diagnostics     = $diag
             }
         }
 
-        return ,$results
+        ,$out
     }
 }
 
