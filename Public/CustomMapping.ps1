@@ -498,7 +498,7 @@ function Set-ITGAssetsToExistingLayout {
     $choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
     $destassetlayout = $choice.DestLayout
 
-    foreach ($layout in @($destassetlayout)){
+    foreach ($layout in @($sourceassetlayout, $destassetlayout)){
         write-host "getting relinkable fields from layout $($layout.name)..."
         $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
     }

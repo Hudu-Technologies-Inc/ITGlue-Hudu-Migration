@@ -1260,7 +1260,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             $UnmatchedLayout.Imported = "Created-By-Script"
         }
 
-
         foreach ($UpdateLayout in $MatchedLayouts) {
             Write-Host "Starting $($UpdateLayout.Name)" -ForegroundColor Green
 
@@ -1418,6 +1417,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
     if ($ImportFlexibleAssets -eq $true) {
         $RelationsToCreate = [System.Collections.ArrayList]@()
         $MatchedAssets = [System.Collections.ArrayList]@()
+        $MatchedCustomAssets = [System.Collections.ArrayList]@()
         $MatchedAssetPasswords = [System.Collections.ArrayList]@()
 
         #We need to do a first pass creating empty assets with just the ITG migrated data. This builds an array we need to use to lookup relations when populating the entire assets
@@ -1429,8 +1429,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
             $MatchedLayouts = Filter-ScopedAssets -Layouts $MatchedLayouts -ScopedCompanyIds $ScopedCompanyIds
             Write-Host "Layouts scoped... $OriginalLayoutsCount => $($MatchedLayouts.count)"
         }
-
-        Foreach ($Layout in $MatchedLayouts) {
+        
+        foreach ($Layout in $($MatchedLayouts | Where-Object {-not $_.CustomLayout -and -not $true -eq $_.CustomLayout})){
             Write-Host "Creating base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
@@ -1441,9 +1441,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     'itglue_url' = $ITGAsset.attributes.'resource-url'
                     'itglue_id' = $ITGAsset.id
                 }
-			
-                $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id -fields $AssetFields).asset
 
+                $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id -fields $AssetFields).asset
                 $AssetDetails = [PSCustomObject]@{
                     "Name"       = $ITGAsset.attributes.name
                     "ITGID"      = $ITGAsset.id
@@ -1453,13 +1452,44 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     "ITGObject"  = $ITGAsset
                     "Imported"   = "First Pass"
                 }
-
                 $null = $MatchedAssets.add($AssetDetails)
-
             }
-		
         }
 	
+        #We'll need to make sure we have a mapping of fields for each custom layout definition elected by user
+        #for custom mappings, first go thru and make stub assets
+        foreach ($Layout in $($MatchedLayouts | Where-Object {$_.CustomLayout -and $true -eq $_.CustomLayout})){
+                $imports = Convert-ITGImportsToHuduPreview `
+                    -ITGImports $ITGConfigurations `
+                    -CompaniesToMigrate $CompaniesToMigrate `
+                    -ImportAssetLayoutName $Layout.name `
+                    -AssetLayoutFields $ConfigAssetLayoutFields `
+                    -AssetFieldsMap $ConfigAssetFieldsMap `
+                    -Verbose
+                        
+                $layout | Add-Member -MemberType 'NoteProperty' -Name 'CustomImports' -Value $IdOrganizationMap[[string]$row.id].password
+                foreach ($ITGAsset in $Layout.ITGAssets) {
+                    # Match Company
+                    $HuduCompanyID = ($MatchedCompanies | Where-Object { $_.ITGID -eq $ITGAsset.attributes.'organization-id' }).HuduID
+
+                    $AssetFields = @{ 
+                    }
+
+                    $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id -fields $AssetFields).asset
+                    $AssetDetails = [PSCustomObject]@{
+                        "Name"       = $ITGAsset.attributes.name
+                        "ITGID"      = $ITGAsset.id
+                        "HuduID"     = $NewHuduAsset.Id
+                        "Matched"    = $false
+                        "HuduObject" = $NewHuduAsset
+                        "ITGObject"  = $ITGAsset
+                        "Imported"   = "First Pass"
+                        "CustomLayout" = $true
+                    }
+                    $null = $MatchedCustomAssets.add($AssetDetails)
+                }
+        }        
+
 	
         #We now need to loop through all Assets again updating the assets to their final version
         foreach ($UpdateAsset in $MatchedAssets) {
@@ -1630,17 +1660,48 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
             $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields $AssetFields).asset
 
             $UpdateAsset.HuduObject = $UpdatedHuduAsset
+            
             $UpdateAsset.Imported = "Created-By-Script"
         }
 
+        #populate custom-layout assets 
+        foreach ($Layout in $($MatchedLayouts | Where-Object {$_.CustomLayout -and $true -eq $_.CustomLayout})){
+                foreach ($customImport in $layout.CustomImports){
+                    $customImport | Add-Member -MemberType "NoteProperty" -name "CompanyId" -value ($MatchedCompanies | Where-Object { $_.ITGID -eq $ITGAsset.attributes.'organization-id' }).HuduID
+                }
+                $MatchedCustomAssets = Set-ITGAssetsToExistingLayout `
+                                    -desiredMapFileName "$($Layout.Name).ps1" `
+                                    -sourceAssets $layout.CustomImports `
+                                    -sourceAssetLayout [pscustomobject]@{Id = -6; name="ephemeral-$($Layout.name)"; fields=$ConfigAssetLayoutFields} `
+                                    -allrelations @()
+
+
+                    # $AssetDetails = [PSCustomObject]@{
+                    #     "Name"       = $ITGAsset.attributes.name
+                    #     "ITGID"      = $ITGAsset.id
+                    #     "HuduID"     = $NewHuduAsset.Id
+                    #     "Matched"    = $false
+                    #     "HuduObject" = $NewHuduAsset
+                    #     "ITGObject"  = $ITGAsset
+                    #     "Imported"   = "First Pass"
+                    #     "CustomLayout" = $true
+                    # }
+                    $null = $MatchedCustomAssets.add($AssetDetails)
+                
+        }        
+
+
 
         $MatchedAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Assets.json"
+        $MatchedCustomAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Assets.json"
         $MatchedAssetPasswords | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\AssetPasswords.json"
         $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
         $RelationsToCreate | ConvertTo-Json -Depth 20 | Out-File "$MigrationLogs\RelationsToCreate.json"
         Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Assets Migrated Continue?" -DefaultResponse "continue to Documents/Articles, please."
     }
 }
+
+
 
 
 ############################### Documents / Articles ###############################
