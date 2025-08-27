@@ -451,8 +451,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         MigrationName         = $LocMigrationName
         ITGImports            = $ITGLocations
     }
-
-
     if ($true -eq $settings.AllowForCustomMapping) {
         $customMapLocations = $true #[bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
     } else {
@@ -839,6 +837,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     Write-Host "1) The script can create a new Hudu Asset Layout for all configurations to go into, like how IT Glue works"
     Write-Host "2) The script can create an Asset layout for each in use Configuration Type you have in IT Glue and then split up configurations into them"
     Write-Host "3) The script can prompt for each Configuration type you have, asking you for the new Hudu Asset Layout to map to, this will allow you to have a mix of 1 and 2"
+        $configImports = @{}
 
     $ConfigurationOption = Get-ConfigurationsImportMode
 
@@ -858,9 +857,25 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             MigrationName         = $ConfigMigrationName
             ITGImports            = $ITGConfigurations
         }
-
-        $MatchedConfigurations = Import-Items @ConfigImportSplat
-
+        if ($true -eq $settings.AllowForCustomMapping) {
+            $configImports["config"] = Convert-ITGImportsToHuduPreview `
+                -ITGImports $ITGConfigurations `
+                -CompaniesToMigrate $CompaniesToMigrate `
+                -ImportAssetLayoutName "configs" `
+                -AssetLayoutFields $ConfigAssetLayoutFields `
+                -AssetFieldsMap $ConfigAssetFieldsMap `
+                -Verbose
+            $mockLayout =[pscustomobject]@{Id = -7; name="ephemeral-configs"; fields=$ConfigAssetLayoutFields}
+            $configImports["config"] | ConvertTo-Json -Depth 95 | Set-Content -Path "configsmapping.json"
+            $MatchedLocations = Set-ITGAssetsToExistingLayout `
+                                -desiredMapFileName "ConfigsMap.ps1" `
+                                -sourceAssets $configImports["config"] `
+                                -sourceAssetLayout  $mockLayout `
+                                -allrelations @() `
+                                -stagedMode $false -justMap $false -userMapping $null
+        } else {
+            $MatchedConfigurations = Import-Items @ConfigImportSplat
+        }
 
     } elseif ($ConfigurationOption -eq 2) {
         $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
@@ -885,8 +900,27 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                 MigrationName         = $ConfigMigrationName
                 ITGImports            = $ParsedITGConfigs
             }
-	
-            $ReturnedConfigurations = Import-Items @ConfigImportSplat
+        
+            if ($true -eq $settings.AllowForCustomMapping) {
+                
+                $configImports["$ConfigType"] = Convert-ITGImportsToHuduPreview `
+                    -ITGImports $ITGConfigurations `
+                    -CompaniesToMigrate $CompaniesToMigrate `
+                    -ImportAssetLayoutName "configs" `
+                    -AssetLayoutFields $ConfigAssetLayoutFields `
+                    -AssetFieldsMap $ConfigAssetFieldsMap `
+                    -Verbose
+                $mockLayout =[pscustomobject]@{Id = -7; name="ephemeral-$($ConfigType)"; fields=$ConfigAssetLayoutFields}
+                $configImports["$ConfigType"] | ConvertTo-Json -Depth 95 | Set-Content -Path "configs$($ConfigType)mapping.json"
+                $MatchedLocations = Set-ITGAssetsToExistingLayout `
+                                    -desiredMapFileName "$($ConfigType)Map.ps1" `
+                                    -sourceAssets $configImports["$ConfigType"] `
+                                    -sourceAssetLayout  $mockLayout `
+                                    -allrelations @() `
+                                    -stagedMode $false -justMap $false -userMapping $null
+            } else {
+                $MatchedConfigurations = Import-Items @ConfigImportSplat
+            }
 
             if (($ReturnedConfigurations | measure-object).count -gt 1) {
                 $MatchedConfigurations.addrange($ReturnedConfigurations)
@@ -1091,17 +1125,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
 
     #Import Locations
     if ($true -eq $customMapContacts) {
-        $imports = Convert-ITGImportsToHuduPreview `
+        $Contactimports = Convert-ITGImportsToHuduPreview `
             -ITGImports $ITGContacts `
             -CompaniesToMigrate $CompaniesToMigrate `
             -ImportAssetLayoutName $ConMigrationName `
             -AssetLayoutFields $ConAssetLayoutFields `
             -AssetFieldsMap $ConAssetFieldsMap `
             -Verbose
-        $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
+        $Contactimports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
         $MatchedLocations = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$ConMigrationName.ps1" `
-                            -sourceAssets $imports `
+                            -sourceAssets $Contactimports `
                             -sourceAssetLayout [pscustomobject]@{Id = -6; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
                             -allrelations @() `
                             -stagedMode $false -justMap $false -userMapping $null

@@ -403,7 +403,7 @@ function Convert-ITGImportsToHuduPreview {
                 CompanyId        = $unmatchedImport.ITGObject.HuduCompanyID
                 AssetLayoutId    = $null
                 AssetLayoutName  = $ImportAssetLayoutName
-                Fields           = $fields
+                fields           = $fields
                 LayoutDefinition = $AssetLayoutFields
                 ITGId            = $unmatchedImport.ITGObject.id
                 ITGObject        = $unmatchedImport.ITGObject
@@ -431,6 +431,13 @@ function Set-ITGAssetsToExistingLayout {
         [int]$justMap=$false,
         [hashtable]$userMapping=$null
     )
+    $createdAssets = @()    
+    $sourcedestlabels = @{}
+    $sourcedestrequired = @{}        
+    $CONSTANTS=@()
+    $SMOOSHLABELS=@()
+    $mapping=@()
+    $inspectlayouts = $false    
     if ($userMapping -and $null -ne $userMapping -and $stagedMode -and $true -eq $stagedMode) {
             $srcfields=$userMapping.srcfields
             $dstfields=$userMapping.dstfields
@@ -447,12 +454,6 @@ function Set-ITGAssetsToExistingLayout {
             $sourcedestlabels=$userMapping.sourcedestlabels
             $sourcedestrequired=$userMapping.sourcedestrequired
     } else {
-        $createdAssets = @()    
-        
-        $CONSTANTS=@()
-        $SMOOSHLABELS=@()
-        $mapping=@()
-        $inspectlayouts = $false
         write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
         $destlayout   = Select-ObjectFromList -objects $(get-huduassetlayouts) -message "Which dest / target asset layout (migrating assets from $($sourceassetlayout.name)?" -allowNull $false -inspectObjects $true
         $allassets = $allassets ?? $(get-huduassets -AssetLayoutId $destlayout.id)
@@ -485,8 +486,7 @@ function Set-ITGAssetsToExistingLayout {
             exit
         }
         . $project_workdir\$desiredMapFileName
-        $sourcedestlabels = @{}
-        $sourcedestrequired = @{}
+
         foreach ($entry in $mapping) {
             write-host "mapping $($entry.from) to $($entry.to)"
             $sourcedestlabels[$entry.from] = $entry.to
@@ -564,15 +564,15 @@ function Set-ITGAssetsToExistingLayout {
                 $transformedFields += @{$c.to_label = $c.literal}
             }
         }
-
-        foreach ($field in $originalasset.fields) {
-            $transformedlabel = $sourcedestlabels[$field.label] ?? $null
-            $destTranslationFieldRequired = $("$($sourcedestrequired[$field.label])".ToLower() -eq 'true') ?? $false
+        # foreach ($field in $originalasset.fields) {
+        foreach ($kv in $originalasset.fields | ForEach-Object GetEnumerator) {
+            $field = @{label = $kv.Key; value = $kv.Value; required=$($("$($sourcedestrequired[$kv.Key])".ToLower() -eq 'true') ?? $false)}
+            $transformedlabel = $($sourcedestlabels[$field.label] ?? $null)
             if (-not $transformedlabel -or $null -eq $transformedlabel) {continue}
                 
             if (-not $field.value -or $null -eq $field.value) {
                     write-host "no translate for $($field.label)";
-                    if ($true -eq $destTranslationFieldRequired) {
+                    if ($true -eq $field.required) {
                         write-host "no value for REQUIRED $($field.label) => $transformedlabel"
                         $field.value = $($(read-host "target field $($field.label) => $transformedlabel is required but null, enter value") ?? "None")
                     } else {
@@ -654,6 +654,7 @@ function Set-ITGAssetsToExistingLayout {
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $newAsset -Force
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutName' -Value $destassetlayout.Name  -Force
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $destassetlayout.Name  -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'Preview' -Value $false  -Force
             $createdAssets+=$originalasset
             write-host "created asset $($newasset.id)"
         }
