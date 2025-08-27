@@ -480,82 +480,120 @@ function Set-ITGAssetsToExistingLayout {
         [string]$desiredMapFileName,
         [array]$sourceassets,
         [PSCustomObject]$sourceassetlayout,
-        [array]$allrelations
+        [array]$allrelations,
+        [bool]$stagedMode=$false,
+        [int]$justMap=$false,
+        [hashtable]$userMapping=$null,
     )
-    $createdAssets = @()    
-    
-    $CONSTANTS=@()
-    $SMOOSHLABELS=@()
-    $mapping=@()
-    $inspectlayouts = $false
-    write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
-    $allassets = $allassets ?? $(get-huduassets)
-    write-host "refreshing layouts cache (every time)"
-    $assetlayouts = get-huduassetlayouts 
-    $totallayouts = $assetlayouts.count
-    write-host "adding/calculating addtitional properties for layouts"
-    foreach ($layout in $assetlayouts) {$layout | Add-Member -NotePropertyName assetsInLayoutCount -NotePropertyValue $($allAssets | Where-Object {$_.asset_layout_id -eq $layout.id}).count -Force}
-    $choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
-    $destassetlayout = $choice.DestLayout
+    if ($null -ne $userMapping -and $true -eq $stagedMode) {
+            $srcfields=$userMapping.srcfields
+            $dstfields=$userMapping.dstfields
+            $destassets=$userMapping.destassets
+            $CONSTANTS=$userMapping.CONSTANTS
+            $SMOOSHLABELS=$userMapping.SMOOSHLABELS
+            $mapping=$userMapping.mapping        
+            $includeblanksduringsmoosh=$userMapping.includeblanksduringsmoosh
+            $includeRelationsForArchived=$userMapping.includeRelationsForArchived
+            $includeLabelInSmooshedValues=$userMapping.includeLabelInSmooshedValues
+            $excludeHTMLinSMOOSH=$userMapping.excludeHTMLinSMOOSH
+            $describeRelatedInSmoosh=$userMapping.describeRelatedInSmoosh
+            $destassetlayout=$userMapping.destassetlayout
+            $sourcedestlabels=$userMapping.sourcedestlabels
+            $sourcedestrequired=$userMapping.sourcedestrequired
+    } else {
+        $createdAssets = @()    
+        
+        $CONSTANTS=@()
+        $SMOOSHLABELS=@()
+        $mapping=@()
+        $inspectlayouts = $false
+        write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
+        $allassets = $allassets ?? $(get-huduassets)
+        write-host "refreshing layouts cache (every time)"
+        $assetlayouts = get-huduassetlayouts 
+        $totallayouts = $assetlayouts.count
+        write-host "adding/calculating addtitional properties for layouts"
+        foreach ($layout in $assetlayouts) {$layout | Add-Member -NotePropertyName assetsInLayoutCount -NotePropertyValue $($allAssets | Where-Object {$_.asset_layout_id -eq $layout.id}).count -Force}
+        $choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
+        $destassetlayout = $choice.DestLayout
 
-    foreach ($layout in @($sourceassetlayout, $destassetlayout)){
-        write-host "getting relinkable fields from layout $($layout.name)..."
-        $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
-    }
-    if ($(test-path "$desiredMapFileName")) {
-        write-host "backed up $desiredMapFileName to $desiredMapFileName.old"; Move-Item $desiredMapFileName "$desiredMapFileName.old" -Force
-    }
-
-    # get fields mapped and ready
-    $srcfields=@()
-    foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) {
-        $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
-    }
-    $dstfields=@()
-    foreach ($field in $destassetlayout.fields | Where-Object {$_.field_type -ne "ListSelect"}) {
-        $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
-    }
-    foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
-        $fields.value | convertto-json -depth 66 | out-file "$($fields.name)-fields.json"
-    }
-    build-templatemap -destfields $dstfields -desiredMapFileName $desiredMapFileName
-
-    read-host "press enter if you filled in your mapfile, $desiredMapFileName"
-    if (-not $(test-path "$desiredMapFileName")) {
-        exit
-    }
-    . .\$desiredMapFileName
-    $sourcedestlabels = @{}
-    $sourcedestrequired = @{}
-    foreach ($entry in $mapping) {
-        write-host "mapping $($entry.from) to $($entry.to)"
-        $sourcedestlabels[$entry.from] = $entry.to
-        $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
-    }
-    # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
-    # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destassetlayout.id}) 
-    $destassets = Get-HuduAssets -AssetLayoutId $destLayout.id
-    if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; return}
-    $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
-    if ($mappingtosmooshed) {
-        $smooshmappingto = $($mapping | where-object {$_.from="SMOOSH"}).to
-        write-host "Smooshing $SMOOSHLABELS => $mappingtosmooshed; $smooshmappingto"
-    }
-    if ($CONSTANTS) {
-        foreach ($c in $CONSTANTS){
-            write-host "Dest Labels containing $($c.to_label) will be given static value from literal $($c.literal) as literal value!"
+        foreach ($layout in @($sourceassetlayout, $destassetlayout)){
+            write-host "getting relinkable fields from layout $($layout.name)..."
+            $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
         }
-    } else {write-host "No constants mapped"}
-    $totalcounts = @{
-        fromablescreated=0
-        toablescreated=0
-        assetsarchived=0
-        assetsmoved=0
-        assetsskipped=0
-        assetsmatched=0
-        errored=0
-        sourceassetcount=$sourceassets.count
+        if ($(test-path "$desiredMapFileName")) {
+            write-host "backed up $desiredMapFileName to $desiredMapFileName.old"; Move-Item $desiredMapFileName "$desiredMapFileName.old" -Force
+        }
+
+        # get fields mapped and ready
+        $srcfields=@()
+        foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) {
+            $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
+        }
+        $dstfields=@()
+        foreach ($field in $destassetlayout.fields | Where-Object {$_.field_type -ne "ListSelect"}) {
+            $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
+        }
+        foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
+            $fields.value | convertto-json -depth 66 | out-file "$($fields.name)-fields.json"
+        }
+        build-templatemap -destfields $dstfields -desiredMapFileName $desiredMapFileName
+
+        read-host "press enter if you filled in your mapfile, $desiredMapFileName"
+        if (-not $(test-path "$desiredMapFileName")) {
+            exit
+        }
+        . .\$desiredMapFileName
+        $sourcedestlabels = @{}
+        $sourcedestrequired = @{}
+        foreach ($entry in $mapping) {
+            write-host "mapping $($entry.from) to $($entry.to)"
+            $sourcedestlabels[$entry.from] = $entry.to
+            $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
+        }
+        # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
+        # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destassetlayout.id}) 
+        $destassets = Get-HuduAssets -AssetLayoutId $destLayout.id
+        if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; return}
+        $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
+        if ($mappingtosmooshed) {
+            $smooshmappingto = $($mapping | where-object {$_.from="SMOOSH"}).to
+            write-host "Smooshing $SMOOSHLABELS => $mappingtosmooshed; $smooshmappingto"
+        }
+        if ($CONSTANTS) {
+            foreach ($c in $CONSTANTS){
+                write-host "Dest Labels containing $($c.to_label) will be given static value from literal $($c.literal) as literal value!"
+            }
+        } else {write-host "No constants mapped"}
+        $totalcounts = @{
+            fromablescreated=0
+            toablescreated=0
+            assetsarchived=0
+            assetsmoved=0
+            assetsskipped=0
+            assetsmatched=0
+            errored=0
+            sourceassetcount=$sourceassets.count
+        }
+        if ($true -eq $stagedMode -and $true -eq $justMap) {return @{
+            srcfields=$srcfields
+            dstfields=$dstfields
+            destassets=$destassets
+            CONSTANTS=$CONSTANTS
+            SMOOSHLABELS=$SMOOSHLABELS
+            mapping=$mapping        
+            includeblanksduringsmoosh=$includeblanksduringsmoosh
+            includeRelationsForArchived=$includeRelationsForArchived
+            includeLabelInSmooshedValues=$includeLabelInSmooshedValues
+            excludeHTMLinSMOOSH=$excludeHTMLinSMOOSH
+            describeRelatedInSmoosh=$describeRelatedInSmoosh
+            destassetlayout=$destassetlayout
+            sourcedestlabels=$sourcedestlabels
+            sourcedestrequired=$sourcedestrequired
+        }}
+
     }
+
     Write-Host "Smooshing $(if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {'using plaintext value-joining'} else {'using traditional HTML value joining'})"
     read-host "$($sourceassets.count) source assets and $($destassets.count) dest assets. press enter to proceed"
     $sourceassetsIDX=0
@@ -647,9 +685,15 @@ function Set-ITGAssetsToExistingLayout {
 
         try {
             write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
-            $newAsset = $(new-huduasset @newAssetRequest).asset
+            if ($false -eq $stagedMode) {
+                $newAsset = $(new-huduasset @newAssetRequest).asset
+            } else {
+                $newAssetRequest["id"] = $originalAsset.HuduObject.id
+                $newAsset = $(set-huduasset @newAssetRequest).asset
+            }
             write-host "Created asset $($newAsset.id)"
             # archive new asset if original was archived
+            
             if ($originalasset.archived -eq $true) {
                 Set-HuduAssetArchive -CompanyId $newAsset.company_id -Id $newAsset.id -Archive $true
                 $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
