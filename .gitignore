@@ -14,3 +14,4 @@ Locations.ps1
 mapfile.ps1
 source-fields.json
 dest-fields.json
+*.json

@@ -347,7 +347,8 @@ function Convert-ITGImportsToHuduPreview {
         [scriptblock]$AssetFieldsMap,
 
         # When true (default), include rows even if company resolution fails
-        [switch]$IncludeUnresolved = $true
+        [switch]$IncludeUnresolved = $true,
+        [hashtable]$ITGCompaniesHashTable
     )
 
     begin {
@@ -382,20 +383,8 @@ function Convert-ITGImportsToHuduPreview {
 
             # Resolve company
             $diag = [ordered]@{}
-            $orgId = $unmatchedImport.ITGObject.attributes.'organization-id'
+            $orgId = $unmatchedImport.ITGObject.HuduCompanyID
             $diag.orgId = $orgId
-
-            $company = $null
-            if ($orgId) { $company = $CompanyByOrgId[$orgId] }
-            if (-not $company -and $unmatchedImport.PSObject.Properties.Name -contains 'HuduCompanyId') {
-                $cid = $unmatchedImport.HuduCompanyId
-                $diag.fallbackHuduCompanyId = $cid
-                if ($cid) {
-                    $company = $CompaniesToMigrate | Where-Object { $_.HuduCompanyObject.Id -eq $cid } | Select-Object -First 1
-                }
-            }
-
-            if (-not $company -and -not $IncludeUnresolved) { continue }
 
             # Build fields (supports both styles)
             $fields = $null
@@ -412,8 +401,7 @@ function Convert-ITGImportsToHuduPreview {
             [pscustomobject]@{
                 Preview          = $true
                 Name             = $unmatchedImport.Name
-                CompanyId        = $company?.HuduCompanyObject?.Id
-                CompanyName      = $company?.CompanyName
+                CompanyId        = $unmatchedImport.ITGObject.HuduCompanyID
                 AssetLayoutId    = $null
                 AssetLayoutName  = $ImportAssetLayoutName
                 Fields           = $fields
@@ -428,47 +416,6 @@ function Convert-ITGImportsToHuduPreview {
     }
 }
 
-function Set-LayoutsForTransfer {
-    param (
-        [array]$allLayouts,
-        [bool]$includeSource=$false
-    )
-    $layoutMap = @{}
-    foreach ($layout in $allLayouts) {
-        $layoutMap[$layout.id] = $layout
-    }
-    $layoutSummaries = $allLayouts  | ForEach-Object {
-        [PSCustomObject]@{
-            ID          = $_.id
-            Description = "$($($_.fields | where-object {$_.required -and $required -eq $true}).Count) required fields, $($($_.fields | where-object {-not $_.required -or $required -eq $false}).Count) optional fields and $($_.assetsInLayoutCount) assets present, originally created at $($_.created_at)"
-            Name        = $_.name
-    }}
-    write-host "$(if ($layoutSummaries.count -ne $allLayouts.count) {
-        "$([int]$allLayouts.count - [int]$layoutSummaries.count) layouts were excluded due to not having fields, not having assets, or being otherwise ineligible."
-    } else {
-        "created user-friendly summaries for $($layoutSummaries.count) asset layouts"
-    })" -ForegroundColor darkcyan
-    $sourceLayout = $null
-    $destLayout = $null
-    while ($true) {
-        if ($true -eq $includeSource) {
-            $sourceSummary = Select-ObjectFromList -objects $layoutSummaries -message "Which source / origin asset layout? [layouts without assets omitted for source]" -allowNull $false -inspectObjects $inspectlayouts
-            $sourceLayout  = $layoutMap[$sourceSummary.ID]
-            $destSummaries = $layoutSummaries | Where-Object { $_.ID -ne $sourceLayout.id }
-        } else {
-            $destSummaries = $layoutSummaries
-        }
-        $destSummary   = Select-ObjectFromList -objects $destSummaries -message "Which dest / target asset layout?" -allowNull $false -inspectObjects $inspectlayouts
-        $destLayout    = $layoutMap[$destSummary.ID]
-        if ($($null -ne $destLayout) -and $(Select-ObjectFromList -objects @("yes","no") -message "You've selected dest layout as: $($destLayout.name). Proceed?") -eq "yes") {
-            return @{
-                DestLayout   = $destLayout
-            }
-        } else {
-            Write-Host "Opting to re-select."
-        }
-    }
-}
 
 
 # this is a proven method for transferring assets to new layout, but I'm thinking if we create faux/mock layout / fields, relations (assettag)
@@ -483,9 +430,9 @@ function Set-ITGAssetsToExistingLayout {
         [array]$allrelations,
         [bool]$stagedMode=$false,
         [int]$justMap=$false,
-        [hashtable]$userMapping=$null,
+        [hashtable]$userMapping=$null
     )
-    if ($null -ne $userMapping -and $true -eq $stagedMode) {
+    if ($userMapping -and $null -ne $userMapping -and $stagedMode -and $true -eq $stagedMode) {
             $srcfields=$userMapping.srcfields
             $dstfields=$userMapping.dstfields
             $destassets=$userMapping.destassets
@@ -497,7 +444,7 @@ function Set-ITGAssetsToExistingLayout {
             $includeLabelInSmooshedValues=$userMapping.includeLabelInSmooshedValues
             $excludeHTMLinSMOOSH=$userMapping.excludeHTMLinSMOOSH
             $describeRelatedInSmoosh=$userMapping.describeRelatedInSmoosh
-            $destassetlayout=$userMapping.destassetlayout
+            $destlayout=$userMapping.destassetlayout
             $sourcedestlabels=$userMapping.sourcedestlabels
             $sourcedestrequired=$userMapping.sourcedestrequired
     } else {
@@ -508,16 +455,11 @@ function Set-ITGAssetsToExistingLayout {
         $mapping=@()
         $inspectlayouts = $false
         write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
-        $allassets = $allassets ?? $(get-huduassets)
-        write-host "refreshing layouts cache (every time)"
-        $assetlayouts = get-huduassetlayouts 
-        $totallayouts = $assetlayouts.count
-        write-host "adding/calculating addtitional properties for layouts"
-        foreach ($layout in $assetlayouts) {$layout | Add-Member -NotePropertyName assetsInLayoutCount -NotePropertyValue $($allAssets | Where-Object {$_.asset_layout_id -eq $layout.id}).count -Force}
-        $choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
-        $destassetlayout = $choice.DestLayout
+        $destlayout   = Select-ObjectFromList -objects $(get-huduassetlayouts) -message "Which dest / target asset layout (migrating assets from $($sourceassetlayout.name)?" -allowNull $false -inspectObjects $true
+        $allassets = $allassets ?? $(get-huduassets -AssetLayoutId $destlayout.id)
 
-        foreach ($layout in @($sourceassetlayout, $destassetlayout)){
+
+        foreach ($layout in @($destlayout)){
             write-host "getting relinkable fields from layout $($layout.name)..."
             $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
         }
@@ -531,7 +473,7 @@ function Set-ITGAssetsToExistingLayout {
             $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
         }
         $dstfields=@()
-        foreach ($field in $destassetlayout.fields | Where-Object {$_.field_type -ne "ListSelect"}) {
+        foreach ($field in $destlayout.fields | Where-Object {$_.field_type -ne "ListSelect"}) {
             $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
         }
         foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
@@ -552,8 +494,8 @@ function Set-ITGAssetsToExistingLayout {
             $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
         }
         # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
-        # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destassetlayout.id}) 
-        $destassets = Get-HuduAssets -AssetLayoutId $destLayout.id
+        # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destlayout.id}) 
+        $destassets = $allassets
         if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; return}
         $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
         if ($mappingtosmooshed) {
@@ -587,7 +529,7 @@ function Set-ITGAssetsToExistingLayout {
             includeLabelInSmooshedValues=$includeLabelInSmooshedValues
             excludeHTMLinSMOOSH=$excludeHTMLinSMOOSH
             describeRelatedInSmoosh=$describeRelatedInSmoosh
-            destassetlayout=$destassetlayout
+            destassetlayout=$destlayout
             sourcedestlabels=$sourcedestlabels
             sourcedestrequired=$sourcedestrequired
         }}
@@ -601,7 +543,7 @@ function Set-ITGAssetsToExistingLayout {
         $sourceassetsIDX=$sourceassetsIDX+1
         $linkableToAssetInfo = $null
         write-host "matching existing assets to asset $sourceassetsIDX of $($sourceassets.count) in destination layout assets ($($destassets.count) total) to determine if overlap"
-        $match = $destassets | where-object {$_.company_id -eq $originalasset.company_id -and $_.name -like "*$($originalasset.name)*"} | Select-Object -First 1
+        $match = $destassets | where-object {$_.company_id -eq $originalasset.ITGObject.HuduCompanyID -and $_.name -like "*$($originalasset.name)*"} | Select-Object -First 1
         if ($match -and $null -ne $match) {
             $totalcounts.assetsmatched=$totalcounts.assetsmatched+1
             write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
@@ -609,7 +551,7 @@ function Set-ITGAssetsToExistingLayout {
             write-host "match: $($($match | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Blue
             $archiveChoice=$(select-objectfromlist -message "which action to take for match?" -objects @("archive match","move anyway, archive original","skip"))
             if ($archiveChoice -eq "archive match") {
-                Set-HuduAssetArchive -CompanyId $originalasset.company_id -Id $originalasset.id -Archive $true
+                Set-HuduAssetArchive -CompanyId $originalasset.ITGObject.HuduCompanyID -Id $originalasset.id -Archive $true
                 $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
             } elseif ($archiveChoice -eq "skip") {
                 $totalcounts.assetsskipped=$totalcounts.assetsskipped+1
@@ -662,8 +604,8 @@ function Set-ITGAssetsToExistingLayout {
 
         $newAssetRequest = @{
             Name            = $originalasset.name
-            CompanyId       = $originalasset.company_id
-            AssetLayoutId   = $destassetlayout.id
+            CompanyId       = $originalasset.ITGObject.HuduCompanyID
+            AssetLayoutId   = $destlayout.id
         }
         if ($transformedFields -and $transformedFields.count -gt 0){
             $newAssetRequest["Fields"]=$transformedFields
@@ -687,8 +629,10 @@ function Set-ITGAssetsToExistingLayout {
             write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
             if ($false -eq $stagedMode) {
                 $newAsset = $(new-huduasset @newAssetRequest).asset
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'CreatedNew' -Value $true
             } else {
                 $newAssetRequest["id"] = $originalAsset.HuduObject.id
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'UpdatedAs' -Value $true
                 $newAsset = $(set-huduasset @newAssetRequest).asset
             }
             write-host "Created asset $($newAsset.id)"
@@ -708,7 +652,8 @@ function Set-ITGAssetsToExistingLayout {
             continue
         } else {
             $totalcounts.assetsmoved=$totalcounts.assetsmoved+1
-            $createdAssets+=$newAsset
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $originalasset
+            $createdAssets+=$originalasset
             write-host "created asset $($newasset.id)"
         }
 
