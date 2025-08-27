@@ -347,8 +347,7 @@ function Convert-ITGImportsToHuduPreview {
         [scriptblock]$AssetFieldsMap,
 
         # When true (default), include rows even if company resolution fails
-        [switch]$IncludeUnresolved = $true,
-        [hashtable]$ITGCompaniesHashTable
+        [switch]$IncludeUnresolved = $true
     )
 
     begin {
@@ -485,7 +484,7 @@ function Set-ITGAssetsToExistingLayout {
         if (-not $(test-path "$desiredMapFileName")) {
             exit
         }
-        . .\$desiredMapFileName
+        . $project_workdir\$desiredMapFileName
         $sourcedestlabels = @{}
         $sourcedestrequired = @{}
         foreach ($entry in $mapping) {
@@ -629,19 +628,19 @@ function Set-ITGAssetsToExistingLayout {
             write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
             if ($false -eq $stagedMode) {
                 $newAsset = $(new-huduasset @newAssetRequest).asset
-                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'CreatedNew' -Value $true
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'CreatedNew' -Value $true  -Force
             } else {
                 $newAssetRequest["id"] = $originalAsset.HuduObject.id
-                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'UpdatedAs' -Value $true
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'UpdatedAs' -Value $true  -Force
                 $newAsset = $(set-huduasset @newAssetRequest).asset
             }
             write-host "Created asset $($newAsset.id)"
             # archive new asset if original was archived
             
-            if ($originalasset.archived -eq $true) {
-                Set-HuduAssetArchive -CompanyId $newAsset.company_id -Id $newAsset.id -Archive $true
-                $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
-            }
+            # if ($originalasset.archived -eq $true) {
+            #     Set-HuduAssetArchive -CompanyId $newAsset.company_id -Id $newAsset.id -Archive $true
+            #     $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
+            # }
 
         } catch {
             Write-ErrorObjectsToFile -ErrorObject @{Err=$_; request=$newAssetRequest} -Name $newAssetRequest.name
@@ -652,7 +651,9 @@ function Set-ITGAssetsToExistingLayout {
             continue
         } else {
             $totalcounts.assetsmoved=$totalcounts.assetsmoved+1
-            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $originalasset
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $newAsset -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutName' -Value $destassetlayout.Name  -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $destassetlayout.Name  -Force
             $createdAssets+=$originalasset
             write-host "created asset $($newasset.id)"
         }
@@ -697,6 +698,6 @@ function Set-ITGAssetsToExistingLayout {
                 }
             }
         }
-        return $createdAssets
     }
+        return $createdAssets
 }
