@@ -667,6 +667,9 @@ function Set-ITGAssetsToExistingLayout {
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutName' -Value $destassetlayout.Name  -Force
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $destassetlayout.Name  -Force
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'Preview' -Value $false  -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "matched" -Value $true -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "HuduID" -Value $newAsset.id -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "Imported" -Value "Created-By-Script (custom-mapped)" -Force
             $createdAssets+=$originalasset
             write-host "created asset $($newasset.id)"
         }
