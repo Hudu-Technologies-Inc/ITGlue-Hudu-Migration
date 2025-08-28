@@ -504,6 +504,16 @@ function Set-ITGAssetsToExistingLayout {
                 . $desiredMapFilePath
             }            
         }
+        if ($true -eq $settings.IncludeITGlueID -and $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"}) -gt 0) {
+            Write-Host "Itglue ID set to be included, injecting into dest layout"
+            $currentFields = $destlayout.fields ?? @()
+            $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
+            if ($sourceITGfield) {$currentFields += $sourceITGfield}
+            $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+            Write-Host "added ITGLueID field, refreshing layouts"
+            $destlayout = Get-HuduAssetLayout -id $destlayout.id
+
+        }
 
         foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
             $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
