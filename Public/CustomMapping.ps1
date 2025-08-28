@@ -312,7 +312,7 @@ $mapEntries = foreach ($f in $destfields) {
     $toEsc = ([string]$f.label) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $desttype = ([string]$($f.field_type ?? $f.type)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $req = ([string]$($f.required ?? $false)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
-    "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'}" 
+    "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'; striphtml='false'}" 
 }
 # Wrap and write
 $mappingText = @'
@@ -437,6 +437,7 @@ function Set-ITGAssetsToExistingLayout {
     $createdAssets = @()    
     $sourcedestlabels = @{}
     $sourcedestrequired = @{}        
+    $sourcedestStripHTML = @{}        
     $CONSTANTS=@()
     $SMOOSHLABELS=@()
     $mapping=@()
@@ -512,7 +513,6 @@ function Set-ITGAssetsToExistingLayout {
             $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
             Write-Host "added ITGLueID field, refreshing layouts"
             $destlayout = Get-HuduAssetLayout -id $destlayout.id
-
         }
 
         foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
@@ -541,6 +541,7 @@ function Set-ITGAssetsToExistingLayout {
             write-host "mapping $($entry.from) to $($entry.to)"
             $sourcedestlabels[$entry.from] = $entry.to
             $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
+            $sourcedestStripHTML[$entry.from] = $(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
         }
         # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
         # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destlayout.id}) 
@@ -589,6 +590,7 @@ function Set-ITGAssetsToExistingLayout {
     read-host "$($sourceassets.count) source assets and $($destassets.count) dest assets. press enter to proceed"
     $sourceassetsIDX=0
     foreach ($originalasset in $sourceassets) {
+        $addMatch = $false
         $sourceassetsIDX=$sourceassetsIDX+1
         $linkableToAssetInfo = $null
         write-host "matching existing assets to asset $sourceassetsIDX of $($sourceassets.count) in destination layout assets ($($destassets.count) total) to determine if overlap"
@@ -605,9 +607,22 @@ function Set-ITGAssetsToExistingLayout {
                     $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
                 } elseif ($archiveChoice -eq "skip") {
                     $totalcounts.assetsskipped=$totalcounts.assetsskipped+1
-                    continue
-                } else {write-host "archive after moving as usual"}
+                    $addMatch = $true
+                } else {continue; write-host "skipped"}
             } else {
+                $addMatch = $true
+            }
+            if ($true -eq $addMatch) {
+                $totalcounts.assetsmatched=$totalcounts.assetsmatched+1
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $match -Force
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutName' -Value $destlayout.name  -Force
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayout' -Value $destlayout  -Force
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $destlayout.Id  -Force
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'Preview' -Value $false  -Force
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "matched" -Value $true -Force
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "HuduID" -Value $match.id -Force
+                $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "Imported" -Value "Pre-Existing" -Force                
+                $createdAssets+=$originalasset
                 continue
             }
         }
@@ -620,7 +635,10 @@ function Set-ITGAssetsToExistingLayout {
         }
         # foreach ($field in $originalasset.fields) {
         foreach ($kv in $($originalasset.fields | ForEach-Object GetEnumerator)) {
-            $field = @{label = $kv.Key; value = $kv.Value; required=$($("$($sourcedestrequired[$kv.Key])".ToLower() -eq 'true') ?? $false)}
+            $field = @{label = $kv.Key; value = $kv.Value; 
+                required=$($("$($sourcedestrequired[$kv.Key])".ToLower() -eq 'true') ?? $false)
+                stripHTML=$($($sourcedestStripHTML[$kv.Key]) ?? $false)            
+            }
             $transformedlabel = $($sourcedestlabels[$field.label] ?? $null)
             if (-not $transformedlabel -or $null -eq $transformedlabel) {continue}
                 
@@ -634,6 +652,9 @@ function Set-ITGAssetsToExistingLayout {
                         continue
                     }
                 }
+            if ($true -eq $field.StripHTML) {
+                $field.value = "$(Remove-HtmlTags -InputString "$($field.value)")"
+            }
 
             $transformedFields += @{$transformedlabel = $field.value}
             write-host "$($field.label) => $transformedlabel for value $($field.value)"

@@ -1055,7 +1055,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
         @{
             label        = 'Location'
             field_type   = 'AssetTag'
-             linkable_id  = $LocationLayout.ID
+            show_in_list = 'false'
+            linkable_id  = $LocationLayout.ID
             position     = 5
         },
         @{
@@ -1196,58 +1197,61 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
     # Match to existing layouts
     if ($true -eq $settings.AllowForCustomMapping) {
-        $selectedLayout = Select-ObjectFromList -message "Which layout would you like to map ITGlue layout, named $($ITGLayout.attributes.name) to in Hudu? Select 0/skip/null to create new layout for this." -objects $HuduLayouts -allowNull $true        
-        if ($null -eq $selectedLayout) {
-            $MatchedLayouts+=[PSCustomObject]@{
-                    "Name"       = $ITGLayout.attributes.name
-                    "ITGID"      = $ITGLayout.id
-                    "HuduID"     = ""
-                    "Matched"    = $false
-                    "HuduObject" = ""
-                    "ITGObject"  = $ITGLayout
-                    "ITGAssets"  = ""
-                    "Imported"   = ""
-        }} else {
-            $MatchedLayouts+=[PSCustomObject]@{
-                    "Name"       = $ITGLayout.attributes.name
-                    "ITGID"      = $ITGLayout.id
-                    "HuduID"     = $selectedLayout.id
-                    "Matched"    = $true
-                    "HuduObject" = $selectedLayout
-                    "ITGObject"  = $ITGLayout
-                    "ITGAssets"  = ""
-                    "Imported"   = "Pre-Existing"
-                    "CustomLayout" = $true
-            }}
-    } else {
-        $MatchedLayouts = foreach ($ITGLayout in $FlexLayouts) {
-            $HuduLayout = $HuduLayouts | Where-Object { $_.name -eq "$($FlexibleLayoutPrefix)$($ITGLayout.attributes.name)" }
-            if ($HuduLayout) {
-                [PSCustomObject]@{
-                    "Name"       = $ITGLayout.attributes.name
-                    "ITGID"      = $ITGLayout.id
-                    "HuduID"     = $HuduLayout.id
-                    "Matched"    = $true
-                    "HuduObject" = $HuduLayout
-                    "ITGObject"  = $ITGLayout
-                    "ITGAssets"  = ""
-                    "Imported"   = "Pre-Existing"
-                
-                }
-            } else {
-                [PSCustomObject]@{
-                    "Name"       = $ITGLayout.attributes.name
-                    "ITGID"      = $ITGLayout.id
-                    "HuduID"     = ""
-                    "Matched"    = $false
-                    "HuduObject" = ""
-                    "ITGObject"  = $ITGLayout
-                    "ITGAssets"  = ""
-                    "Imported"   = ""
-                }
+        foreach ($ITGLayout in $FlexLayouts) {        
+            $selectedLayout = Select-ObjectFromList -message "Which layout would you like to map ITGlue layout, named $($ITGLayout.attributes.name) to in Hudu? Select 0/skip/null to create new layout for this." -objects $HuduLayouts -allowNull $true        
+            if ($null -eq $selectedLayout) {
+                $MatchedLayouts+=[PSCustomObject]@{
+                        "Name"       = $ITGLayout.attributes.name
+                        "ITGID"      = $ITGLayout.id
+                        "HuduID"     = ""
+                        "Matched"    = $false
+                        "HuduObject" = ""
+                        "ITGObject"  = $ITGLayout
+                        "ITGAssets"  = ""
+                        "Imported"   = ""
+                        "CustomLayout" = $false
+            }} else {
+                $MatchedLayouts+=[PSCustomObject]@{
+                        "Name"       = $ITGLayout.attributes.name
+                        "ITGID"      = $ITGLayout.id
+                        "HuduID"     = $selectedLayout.id
+                        "Matched"    = $true
+                        "HuduObject" = $selectedLayout
+                        "ITGObject"  = $ITGLayout
+                        "ITGAssets"  = ""
+                        "Imported"   = "Pre-Existing"
+                        "CustomLayout" = $true
+                }}
+        }
+    }
+    $MatchedLayouts = foreach ($ITGLayout in $($FlexLayouts | Where-Object {$true -ne $_.CustomLayout})) {
+        $HuduLayout = $HuduLayouts | Where-Object { $_.name -eq "$($FlexibleLayoutPrefix)$($ITGLayout.attributes.name)" }
+        if ($HuduLayout) {
+            [PSCustomObject]@{
+                "Name"       = $ITGLayout.attributes.name
+                "ITGID"      = $ITGLayout.id
+                "HuduID"     = $HuduLayout.id
+                "Matched"    = $true
+                "HuduObject" = $HuduLayout
+                "ITGObject"  = $ITGLayout
+                "ITGAssets"  = ""
+                "Imported"   = "Pre-Existing"
+            
+            }
+        } else {
+            [PSCustomObject]@{
+                "Name"       = $ITGLayout.attributes.name
+                "ITGID"      = $ITGLayout.id
+                "HuduID"     = ""
+                "Matched"    = $false
+                "HuduObject" = ""
+                "ITGObject"  = $ITGLayout
+                "ITGAssets"  = ""
+                "Imported"   = ""
             }
         }
     }
+
 
 
 
