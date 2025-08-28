@@ -483,14 +483,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
                             -sourceAssetLayout  $mockLayout `
                             -allrelations @() `
                             -stagedMode $false -justMap $false -userMapping $null
+        $MatchedLocations = $MatchedLocations | Where-Object {$_.ITGId -and $null -ne $_.ITGId}
+        $LocationLayout = $(Get-HuduAssetLayouts -id $($MatchedLocations | Where-Object {$true -eq $_.CreatedNew -and $null -ne $_.HuduObject.asset_layout_id} | Select-Object -First 1).HuduObject.asset_layout_id)
+        $LocImportAssetLayoutName = $LocationLayout.name
 
     } else {
         $MatchedLocations = Import-Items @LocImportSplat
     }
-
     $ITGLocationsHashTable = @{}
     foreach ($ITGL in $MatchedLocations) {
-        if (-not $ITGL.ITGId) {Read-Host "No ITGID for location $($($ITGL | ConvertTo-Json -depth 90).ToString())"; continue}
         $ITGLocationsHashTable[$ITGL.ITGId] = $ITGL
     }
     # Save the results to resume from if needed
@@ -1145,8 +1146,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
         $MatchedContacts = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$ConMigrationName.ps1" `
                             -sourceAssets $Contactimports `
-                            -sourceAssetLayout [pscustomobject]@{Id = -7; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
                             -allrelations @() `
+                            -sourceAssetLayout [pscustomobject]@{Id = -7; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
                             -stagedMode $false -justMap $false -userMapping $null
 
 

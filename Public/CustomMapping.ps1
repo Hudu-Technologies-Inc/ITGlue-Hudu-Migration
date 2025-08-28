@@ -479,14 +479,12 @@ function Set-ITGAssetsToExistingLayout {
             $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
         }
         foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
-            $fields.value | convertto-json -depth 66 | out-file "$($fields.name)-fields.json"
+            $fields.value | convertto-json -depth 66 | out-file $(join-path $ITGCUSTOMMAPPINGSDIR "$($fields.name)-fields.json")
         }
-        build-templatemap -destfields $dstfields -desiredMapFileName $desiredMapFilePath
+        build-templatemap -destfields $dstfields -desiredMapFilePath $desiredMapFilePath
 
         read-host "press enter if you filled in your mapfile, $desiredMapFilePath"
-        if (-not $(test-path "$desiredMapFilePath")) {
-            exit
-        }
+
         while (-not $mapping -or $mapping.count -lt 1){
             $mapping=@()
             try {
@@ -498,6 +496,11 @@ function Set-ITGAssetsToExistingLayout {
                 $mapping=@()
                 Read-Host "Please adjust your mapping file, $($desiredMapFilePath), as it an error was encountered during import ($_). Please adjust and press ENTER when adjusted."
             }
+            if (-not $(test-path "$desiredMapFilePath")) {
+                Write-Host "Mapfile appears to have been deleted from $desiredMapFilePath? creating again, you will still need to fill it out, however."
+                build-templatemap -destfields $dstfields -desiredMapFilePath $desiredMapFilePath
+                . $desiredMapFilePath
+            }            
         }
 
 
@@ -666,8 +669,9 @@ function Set-ITGAssetsToExistingLayout {
         } else {
             $totalcounts.assetsmoved=$totalcounts.assetsmoved+1
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $newAsset -Force
-            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutName' -Value $destassetlayout.Name  -Force
-            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $destassetlayout.Name  -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutName' -Value $destlayout.name  -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayout' -Value $destlayout  -Force
+            $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $destlayout.Id  -Force
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'Preview' -Value $false  -Force
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "matched" -Value $true -Force
             $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "HuduID" -Value $newAsset.id -Force
