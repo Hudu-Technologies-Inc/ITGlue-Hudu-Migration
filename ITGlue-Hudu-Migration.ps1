@@ -4,10 +4,10 @@
 # Use this to set the context of the script runs
 $FirstTimeLoad = 1
 
-if ((get-host).version.major -ne 7) {
-    Write-Host "Powershell 7 Required" -foregroundcolor Red
-    exit 1
+if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
+  throw "PowerShell 7+ required. You're on $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion) at $((Get-Process -Id $PID).Path)"
 }
+
 ############################### Functions ###############################
 # Import ImageMagick for Invoke-ImageTest Function (Disabled)
  . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
@@ -131,7 +131,7 @@ if (Test-Path -Path "$MigrationLogs") {
         $ResumeFound = $true
     } else {
         Write-Host "A previous attempt has been found, resume is disabled so this will be lost, if you haven't reverted to a snapshot, a resume is recommended" -ForegroundColor Red
-        Write-TimedMessage -Timeout 12 -Message "Press any key to continue or ctrl + c to quit and edit the ResumePrevious setting" -DefaultResponse "proceed with new migration, do not resume"
+        # Write-TimedMessage -Timeout 12 -Message "Press any key to continue or ctrl + c to quit and edit the ResumePrevious setting" -DefaultResponse "proceed with new migration, do not resume"
         $ResumeFound = $false
     }
 } else {
@@ -238,7 +238,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     Write-Host "Your Internal Company has been matched to: $(($MatchedCompanies | Sort-Object CompanyName | Where-Object {$_.InternalCompany -eq $true} | Select-Object CompanyName).companyname) in IT Glue"
     Write-Host "The documents under this customer will be migrated to the Global KB in Hudu"
     Write-Host ""
-    Write-TimedMessage -Message "Internal Company Correct? Press Return to continue or CTRL+C to quit if this is not correct" -Timeout 12 -DefaultResponse "Assuming found match on '$(($MatchedCompanies | Sort-Object CompanyName | Where-Object {$_.InternalCompany -eq $true} | Select-Object CompanyName).companyname)' is correct."
+    # Write-TimedMessage -Message "Internal Company Correct? Press Return to continue or CTRL+C to quit if this is not correct" -Timeout 12 -DefaultResponse "Assuming found match on '$(($MatchedCompanies | Sort-Object CompanyName | Where-Object {$_.InternalCompany -eq $true} | Select-Object CompanyName).companyname)' is correct."
 
     Write-Host "Matched Companies (Already exist so will not be migrated)"
     $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.Matched -eq $true } | Select-Object CompanyName | Format-Table
@@ -319,13 +319,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
             Write-Host "All Companies matched, no migration required" -foregroundcolor green
         } else {
             Write-Host "Warning Import Companies is set to disabled so the above unmatched companies will not have data migrated" -foregroundcolor red
-            Write-TimedMessage -Message "Press any key to continue or CTRL+C to quit" -DefaultResponse "continue and wrap-up companies, please." -Timeout 6
+            # Write-TimedMessage -Message "Press any key to continue or CTRL+C to quit" -DefaultResponse "continue and wrap-up companies, please." -Timeout 6
         }
     }
 
     # Save the results to resume from if needed
     $MatchedCompanies | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Companies.json"
-    Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Companies Migrated Continue?"  -DefaultResponse "continue to Locations, please."
+    # Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Companies Migrated Continue?"  -DefaultResponse "continue to Locations, please."
 
 
 }
@@ -451,8 +451,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         MigrationName         = $LocMigrationName
         ITGImports            = $ITGLocations
     }
-
-
     if ($true -eq $settings.AllowForCustomMapping) {
         $customMapLocations = $true #[bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
     } else {
@@ -469,12 +467,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
             -AssetLayoutFields $LocAssetLayoutFields `
             -AssetFieldsMap $LocAssetFieldsMap `
             -Verbose
+        $mockLayout =[pscustomobject]@{Id = -6; name="ephemeral-$LocMigrationName"; fields=$LocAssetLayoutFields}
         $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "$LocMigrationName.json"
         $MatchedLocations = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$LocMigrationName.ps1" `
                             -sourceAssets $imports `
-                            -sourceAssetLayout [pscustomobject]@{Id = -6; name="ephemeral-$LocMigrationName"; fields=$LocAssetLayoutFields} `
-                            -allrelations @()
+                            -sourceAssetLayout  $mockLayout `
+                            -allrelations @() `
+                            -stagedMode $false -justMap $false -userMapping $null
 
     } else {
         $MatchedLocations = Import-Items @LocImportSplat
@@ -482,7 +482,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 
     $ITGLocationsHashTable = @{}
     foreach ($ITGL in $MatchedLocations) {
-        $ITGLocationsHashTable[$ITGL.itgid] = $ITGL
+        $ITGLocationsHashTable[$ITGL.ITGId] = $ITGL
     }
     # Save the results to resume from if needed
     $MatchedLocations | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
@@ -837,9 +837,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     Write-Host "1) The script can create a new Hudu Asset Layout for all configurations to go into, like how IT Glue works"
     Write-Host "2) The script can create an Asset layout for each in use Configuration Type you have in IT Glue and then split up configurations into them"
     Write-Host "3) The script can prompt for each Configuration type you have, asking you for the new Hudu Asset Layout to map to, this will allow you to have a mix of 1 and 2"
+        $configImports = @{}
 
     $ConfigurationOption = Get-ConfigurationsImportMode
-    $configImports = @{}
 
     # All Configurations to 1 Layout
     if ($ConfigurationOption -eq 1) {
@@ -857,7 +857,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             MigrationName         = $ConfigMigrationName
             ITGImports            = $ITGConfigurations
         }
-
         if ($true -eq $settings.AllowForCustomMapping) {
             $configImports["config"] = Convert-ITGImportsToHuduPreview `
                 -ITGImports $ITGConfigurations `
@@ -877,7 +876,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         } else {
             $MatchedConfigurations = Import-Items @ConfigImportSplat
         }
-
 
     } elseif ($ConfigurationOption -eq 2) {
         $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
@@ -912,7 +910,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                     -AssetLayoutFields $ConfigAssetLayoutFields `
                     -AssetFieldsMap $ConfigAssetFieldsMap `
                     -Verbose
-                $mockLayout =[pscustomobject]@{Id = -8; name="ephemeral-$($ConfigType)"; fields=$ConfigAssetLayoutFields}
+                $mockLayout =[pscustomobject]@{Id = -7; name="ephemeral-$($ConfigType)"; fields=$ConfigAssetLayoutFields}
                 $configImports["$ConfigType"] | ConvertTo-Json -Depth 95 | Set-Content -Path "configs$($ConfigType)mapping.json"
                 $MatchedLocations = Set-ITGAssetsToExistingLayout `
                                     -desiredMapFileName "$($ConfigType)Map.ps1" `
@@ -1135,16 +1133,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             -AssetFieldsMap $ConAssetFieldsMap `
             -Verbose
         $Contactimports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
-        $MatchedContacts = Set-ITGAssetsToExistingLayout `
+        $MatchedLocations = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$ConMigrationName.ps1" `
                             -sourceAssets $Contactimports `
                             -sourceAssetLayout [pscustomobject]@{Id = -6; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
-                            -allrelations @()`
+                            -allrelations @() `
                             -stagedMode $false -justMap $false -userMapping $null
 
+
     } else {
-        $MatchedContacts = Import-Items @ConImportSplat
+        $MatchedLocations = Import-Items @LocImportSplat
     }
+
+
+    $MatchedContacts = Import-Items @ConImportSplat
 
     Write-Host "Contacts Complete"
 
@@ -1153,7 +1155,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
 }
-
 	
 ############################### Flexible Asset Layouts and Assets ###############################
 $CustomLayoutsMapping = @()
@@ -1711,8 +1712,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                     -desiredMapFileName "$($Layout.Name).ps1" `
                                     -sourceAssets $assets `
                                     -stagedMode $true `
-                                    -userMapping $layout.CustomMapping `
-                                    -sourceAssetLayout [pscustomobject]@{Id = -6; name="virtual-$($Layout.name)"; fields=$ConfigAssetLayoutFields} `
+                                    -userMapping $layout.CustomImportsMap `
+                                    -sourceAssetLayout [pscustomobject]@{Id = -9; name="virtual-$($Layout.name)"; fields=$ConfigAssetLayoutFields} `
                                     -allrelations @()
                 
         }        

@@ -15,3 +15,9 @@ mapfile.ps1
 source-fields.json
 dest-fields.json
 *.json
+New System SetupMap.ps1
+Managed WorkstationMap.ps1
+Network DeviceMap.ps1
+Managed ServerMap.ps1
+Email SetupMap.ps1
+Active Directory InformationMap.ps1
