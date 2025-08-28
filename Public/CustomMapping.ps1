@@ -284,6 +284,7 @@ $describeRelatedInSmoosh = $true
 $includeLabelInSmooshedValues = $true
 '@
 
+
 function Remove-HtmlTags {
     param (
         [string]$InputString
@@ -613,6 +614,7 @@ function Set-ITGAssetsToExistingLayout {
             if ($describeRelatedInSmoosh -and $true -eq $describeRelatedInSmoosh){
                 $describerelated=Get-SmooshedLinkableDescription -linkableObjects $linkableToAssetInfo
                 $valueToAdd="$describerelated<br>$valueToAdd"
+                if ($valueToAdd -eq "<br>") {continue}
                 if ($true -eq $excludeHTMLinSMOOSH){$valueToAdd = Remove-HtmlTags -InputString $valueToAdd }
             }        
             $transformedFields+=@{"$($sourcedestlabels["SMOOSH"])" = $valueToAdd}
@@ -721,5 +723,21 @@ function Set-ITGAssetsToExistingLayout {
             }
         }
     }
-        return $createdAssets
+        $mappingInfo = @{
+                CONSTANTS                       =$CONSTANTS
+                SMOOSHLABELS                    =$SMOOSHLABELS
+                mapping                         =$mapping
+                includeLabelInSmooshedValues    =$includeLabelInSmooshedValues
+                describeRelatedInSmoosh         =$describeRelatedInSmoosh
+                excludeHTMLinSMOOSH             =$excludeHTMLinSMOOSH
+                includeRelationsForArchived     =$includeRelationsForArchived
+                includeblanksduringsmoosh       =$includeblanksduringsmoosh
+        }
+
+        return @{
+            createdAssets   =$createdAssets
+            destlayout      =$destlayout
+            counts          =$totalcounts
+            mappingInfo     =$mappingInfo
+        }
 }

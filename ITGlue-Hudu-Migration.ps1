@@ -477,16 +477,16 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
             -Verbose
         $mockLayout =[pscustomobject]@{Id = -6; name="ephemeral-$LocMigrationName"; fields=$LocAssetLayoutFields}
         $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "$LocMigrationName.json"
-        $MatchedLocations = Set-ITGAssetsToExistingLayout `
+        $LocationsResult = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$LocMigrationName.ps1" `
                             -sourceAssets $imports `
                             -sourceAssetLayout  $mockLayout `
                             -allrelations @() `
                             -stagedMode $false -justMap $false -userMapping $null
-        $MatchedLocations = $MatchedLocations | Where-Object {$_.ITGId -and $null -ne $_.ITGId}
-        $LocationLayout = $(Get-HuduAssetLayouts -id $($MatchedLocations | Where-Object {$true -eq $_.CreatedNew -and $null -ne $_.HuduObject.asset_layout_id} | Select-Object -First 1).HuduObject.asset_layout_id)
+        $MatchedLocations = $LocationsResult.createdAssets | Where-Object {$_.ITGId -and $null -ne $_.ITGId}
+        $LocationLayout   =   $LocationsResult.destlayout
         $LocImportAssetLayoutName = $LocationLayout.name
-
+        Write-Host "Added $($LocationsResult.counts.assetsmoved ?? 0) of $($MatchedLocations.count ?? 0) from mock ITG to $LocImportAssetLayoutName"
     } else {
         $MatchedLocations = Import-Items @LocImportSplat
     }
@@ -877,12 +877,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                 -Verbose
             $mockLayout =[pscustomobject]@{Id = -7; name="ephemeral-configs"; fields=$ConfigAssetLayoutFields}
             $configImports["config"] | ConvertTo-Json -Depth 95 | Set-Content -Path "configsmapping.json"
-            $MatchedLocations = Set-ITGAssetsToExistingLayout `
+            $ConfigsResult = Set-ITGAssetsToExistingLayout `
                                 -desiredMapFileName "ConfigsMap.ps1" `
                                 -sourceAssets $configImports["config"] `
                                 -sourceAssetLayout  $mockLayout `
                                 -allrelations @() `
                                 -stagedMode $false -justMap $false -userMapping $null
+            $MatchedConfigurations = $ConfigsResult.createdAssets
+            Write-Host "Added $($ConfigsResult.counts.assetsmoved ?? 0) of $($MatchedConfigurations.count ?? 0) from mock ITG to $($ConfigsResult.destlayout.name)"
         } else {
             $MatchedConfigurations = Import-Items @ConfigImportSplat
         }
@@ -922,12 +924,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                     -Verbose
                 $mockLayout =[pscustomobject]@{Id = -7; name="ephemeral-$($ConfigType)"; fields=$ConfigAssetLayoutFields}
                 $configImports["$ConfigType"] | ConvertTo-Json -Depth 95 | Set-Content -Path "configs$($ConfigType)mapping.json"
-                $MatchedLocations = Set-ITGAssetsToExistingLayout `
+                $ConfigsResult = Set-ITGAssetsToExistingLayout `
                                     -desiredMapFileName "$($ConfigType)Map.ps1" `
                                     -sourceAssets $configImports["$ConfigType"] `
                                     -sourceAssetLayout  $mockLayout `
                                     -allrelations @() `
                                     -stagedMode $false -justMap $false -userMapping $null
+                $MatchedConfigurations = $ConfigsResult.createdAssets
+                Write-Host "Added $($ConfigsResult.counts.assetsmoved ?? 0) of $($MatchedConfigurations.count ?? 0) from mock ITG to $($ConfigsResult.destlayout.name)"
+
             } else {
                 $MatchedConfigurations = Import-Items @ConfigImportSplat
             }
@@ -1142,14 +1147,16 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             -AssetLayoutFields $ConAssetLayoutFields `
             -AssetFieldsMap $ConAssetFieldsMap `
             -Verbose
+        $mockContactsLayout = [pscustomobject]@{Id = -7; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields}
         $Contactimports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
-        $MatchedContacts = Set-ITGAssetsToExistingLayout `
+        $ContactsResult = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$ConMigrationName.ps1" `
                             -sourceAssets $Contactimports `
                             -allrelations @() `
-                            -sourceAssetLayout [pscustomobject]@{Id = -7; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
+                            -sourceAssetLayout $mockContactsLayout `
                             -stagedMode $false -justMap $false -userMapping $null
-
+        $MatchedContacts = $ContactsResult.createdAssets
+        Write-Host "Added $($ContactsResult.counts.assetsmoved ?? 0) of $($MatchedContacts.count ?? 0) from mock ITG to $($ContactsResult.destlayout.name)"
 
     } else {
         $MatchedContacts = Import-Items @ConImportSplat
@@ -1730,7 +1737,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
 
         #populate custom-layout assets 
         foreach ($layout in $MatchedCustomAssets.layout) {
-                $MatchedCustomAssets = Set-ITGAssetsToExistingLayout `
+            $customAssetsResult = Set-ITGAssetsToExistingLayout `
                                     -desiredMapFileName "LayoutMapping-$($Layout.Name).ps1" `
                                     -sourceAssets $layout.customLayoutImports `
                                     -stagedMode $true `
@@ -1738,6 +1745,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                     -userMapping $layout.CustomImportsMap `
                                     -sourceAssetLayout [pscustomobject]@{Id = -11; name="virtual-$($Layout.name)"; fields=$layout.MockFields} `
                                     -allrelations @()
+            $MatchedCustomAssets = $customAssetsResult.createdAssets
+            Write-Host "Added $($customAssetsResult.counts.assetsmoved ?? 0) of $($MatchedCustomAssets.count ?? 0) from mock ITG to $($customAssetsResult.destlayout.name)"
         }        
 
         $MatchedAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Assets.json"
