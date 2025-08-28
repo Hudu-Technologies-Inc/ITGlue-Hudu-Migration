@@ -1421,14 +1421,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     
                 $UpdateLayout | Add-Member -MemberType 'NoteProperty' -Name 'MockFields' -Value $($UpdateLayoutMockFields)
                 Write-Host "Populated mock layout field data for mapping $($UpdateLayoutMockFields.count) faux fields for layout name $($UpdateLayout.Name)"
+            } else {
+                $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
+                $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
+                Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
             }
-            $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
-            $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
-            Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
-        
             $UpdateLayout.HuduObject = $UpdatedLayout
             $UpdateLayout.ITGAssets = $FlexAssets
             $UpdateLayout.Matched = $true
+            
         }
     }
 
@@ -1678,6 +1679,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     Write-Host "Warning $ITGParsed : $ITGValues Could not be added" -ForegroundColor Red
                 }
             }
+            # if custom layout, just record the fields for subsequent processing.
             if ($true -eq $UpdateAsset.IsCustomLayout) {
                 $updateAsset  | Add-Member -MemberType 'NoteProperty' -Name 'fields' -Value $AssetFields -Force
                 $updateAsset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $UpdateAsset.HuduObject.asset_layout_id -Force
@@ -1702,12 +1704,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                                     name    = $Layout.name
                                                     fields  = $MockFields
                                                 } 
-            $UserMapResult = Set-ITGAssetsToExistingLayout `
+            $UserAssetMapResult = Set-ITGAssetsToExistingLayout `
                                 -desiredMapFileName "$($Layout.name).ps1" `
                                 -sourceAssets $imports `
                                 -allrelations @() `
                                 -sourceAssetLayout $MockSourceLayout `
-                                -stagedMode $true -justMap $false -userMapping $null         
+                                -stagedMode $true -justMap $false -userMapping $null
+            $ParsedCustomAssets["$($Layout.name)"]=$UserAssetMapResult.createdAssets
         }
 
         $MatchedAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Assets.json"
