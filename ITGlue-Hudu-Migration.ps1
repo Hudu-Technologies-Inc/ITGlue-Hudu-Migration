@@ -1162,9 +1162,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
         $MatchedContacts = Import-Items @ConImportSplat
     }
 
-
-    $MatchedContacts = Import-Items @ConImportSplat
-
     Write-Host "Contacts Complete"
 
     # Save the results to resume from if needed
