@@ -1023,7 +1023,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             label        = 'Last Name'
             field_type   = 'Text'
             show_in_list = 'false'
-            position     = 2x
+            position     = 2
         },
         @{
             label        = 'Title'
