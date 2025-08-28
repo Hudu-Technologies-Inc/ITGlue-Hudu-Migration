@@ -570,22 +570,63 @@ function Set-ITGAssetsToExistingLayout {
             errored=0
             sourceassetcount=$sourceassets.count
         }
-        if ($true -eq $stagedMode -and $true -eq $justMap) {return @{
-            srcfields=$srcfields
-            dstfields=$dstfields
-            destassets=$destassets
-            CONSTANTS=$CONSTANTS
-            SMOOSHLABELS=$SMOOSHLABELS
-            mapping=$mapping        
-            includeblanksduringsmoosh=$includeblanksduringsmoosh
-            includeRelationsForArchived=$includeRelationsForArchived
-            includeLabelInSmooshedValues=$includeLabelInSmooshedValues
-            excludeHTMLinSMOOSH=$excludeHTMLinSMOOSH
-            describeRelatedInSmoosh=$describeRelatedInSmoosh
-            destassetlayout=$destlayout
-            sourcedestlabels=$sourcedestlabels
-            sourcedestrequired=$sourcedestrequired
-        }}
+        # two-stage, just create placeholder asset
+        if ($true -eq $stagedMode -and $true -eq $justMap) {
+            foreach ($originalasset in $sourceassets) {
+                $newAssetRequest = @{Name            = $originalasset.name
+                                    CompanyId       = $originalasset.ITGObject.HuduCompanyID
+                                    AssetLayoutId   = $destlayout.id}
+                $newAsset = $null
+                if ($originalAsset.primary_serial){$newAssetRequest["PrimarySerial"]=$originalAsset.primary_serial}
+                if ($originalAsset.primary_mail){$newAssetRequest["PrimaryMail"]=$originalAsset.primary_mail}
+                if ($originalAsset.primary_model){$newAssetRequest["PrimaryModel"]=$originalAsset.primary_model}
+                if ($originalAsset.primary_manufacturer){$newAssetRequest["PrimaryManufacturer"]=$originalAsset.primary_manufacturer} 
+                try {
+                    $newAsset = $(new-huduasset @newAssetRequest).asset
+                } catch {Write-ErrorObjectsToFile -ErrorObject @{Err=$_; request=$newAssetRequest} -Name $newAssetRequest.name; continue}
+                
+                if (-not $newAsset -or $null -eq $newAsset) {$totalcounts.errored=$totalcounts.errored+1; continue} else {
+                    $totalcounts.assetsmoved=$totalcounts.assetsmoved+1
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'Stubbed' -Value $true -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $newAsset -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutName' -Value $destlayout.name  -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayout' -Value $destlayout  -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $destlayout.Id  -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'Preview' -Value $false  -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "matched" -Value $true -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "HuduID" -Value $newAsset.id -Force
+                    $originalasset  | Add-Member -MemberType 'NoteProperty' -Name "Imported" -Value "Created-By-Script (custom-mapped)" -Force
+                    $createdAssets+=$originalasset
+                    write-host "created asset $($newasset.id)"
+                }
+                $createdAssets+=$originalasset
+            }
+            # save the user mapping datas we need to populate after.
+            $UserMapping= @{
+                srcfields=$srcfields
+                dstfields=$dstfields
+                destassets=$destassets
+                CONSTANTS=$CONSTANTS
+                SMOOSHLABELS=$SMOOSHLABELS
+                mapping=$mapping        
+                includeblanksduringsmoosh=$includeblanksduringsmoosh
+                includeRelationsForArchived=$includeRelationsForArchived
+                includeLabelInSmooshedValues=$includeLabelInSmooshedValues
+                excludeHTMLinSMOOSH=$excludeHTMLinSMOOSH
+                describeRelatedInSmoosh=$describeRelatedInSmoosh
+                destassetlayout=$destlayout
+                sourcedestlabels=$sourcedestlabels
+                sourcedestrequired=$sourcedestrequired}
+            }
+
+            return @{
+                createdAssets   =$createdAssets
+                destlayout      =$destlayout
+                counts          =$totalcounts
+                mappingInfo     =$UserMapping
+            }
+
+
 
     }
 
