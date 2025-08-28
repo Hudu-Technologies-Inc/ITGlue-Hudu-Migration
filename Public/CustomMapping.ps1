@@ -485,7 +485,19 @@ function Set-ITGAssetsToExistingLayout {
         if (-not $(test-path "$desiredMapFileName")) {
             exit
         }
-        . $project_workdir\$desiredMapFileName
+        while (-not $mapping -or $mapping.count -lt 1){
+            $mapping=@()
+            try {
+                . $project_workdir\$desiredMapFileName
+                if (-not $mapping -or $mapping.count -lt 1){
+                    Read-Host "Please adjust your mapping file, $($project_workdir)\$($desiredMapFileName), as it does not seem to have a usable or properly-formatted mapping definition. Please adjust and press ENTER when adjusted."
+                }
+            } catch {
+                $mapping=@()
+                Read-Host "Please adjust your mapping file, $($project_workdir)\$($desiredMapFileName), as it an error was encountered during import ($_). Please adjust and press ENTER when adjusted."
+            }
+        }
+
 
         foreach ($entry in $mapping) {
             write-host "mapping $($entry.from) to $($entry.to)"

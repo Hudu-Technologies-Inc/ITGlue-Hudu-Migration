@@ -452,7 +452,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         ITGImports            = $ITGLocations
     }
     if ($true -eq $settings.AllowForCustomMapping) {
-        $customMapLocations = $true #[bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
+        $customMapLocations = $customMapLocations ?? [bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
     } else {
         $customMapLocations = $false
     }
@@ -1117,7 +1117,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     #Import Locations
 
     if ($true -eq $settings.AllowForCustomMapping) {
-        $customMapContacts = [bool]$($(Select-ObjectFromList -message "would you like to custom-map $ConMigrationName to existing layout or use the standard new ITG layout? $($($ConAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
+        $customMapContacts = $customMapContacts ?? [bool]$($(Select-ObjectFromList -message "would you like to custom-map $ConMigrationName to existing layout or use the standard new ITG layout? $($($ConAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
     } else {
         $customMapContacts = $false
     }
@@ -1247,10 +1247,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
     if ($ImportFlexibleAssetLayouts -eq $true) {
 
-        foreach ($UnmatchedLayout in $MatchedLayouts | Where-Object { $_.Matched -eq $false }) {
+        foreach ($UnmatchedLayout in $MatchedLayouts) {
             if ($ImportOption -eq 2) {
                 Confirm-Import -ImportObjectName "$($ITGLayout.attributes.name)" -ImportObject $null -ImportSetting $ImportOption
             }
+
 
             $TempLayoutFields = @(
                 @{
@@ -1287,14 +1288,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 }
                 $NewIcon = $CurrentIcon
             }
+            if ($UnmatchedLayout.Matched -eq $false) {
+                #create-layout-only-jobs
 		
-		
-            $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)" -icon "fas fa-$NewIcon" -color "#00adef" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
-            $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
+                $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)" -icon "fas fa-$NewIcon" -color "#00adef" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
+                $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
 
-            $UnmatchedLayout.HuduObject = $MatchedNewLayout
-            $UnmatchedLayout.HuduID = $NewLayout.asset_layout.id
-            $UnmatchedLayout.Imported = "Created-By-Script"
+                $UnmatchedLayout.HuduObject = $MatchedNewLayout
+                $UnmatchedLayout.HuduID = $NewLayout.asset_layout.id
+                $UnmatchedLayout.Imported = "Created-By-Script"
+            }
+
         }
 
         foreach ($UpdateLayout in $MatchedLayouts) {
@@ -1408,7 +1412,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                     FieldName       = $ITGField.Attributes.name
                     FieldType       = $ITGField.Attributes.kind
                     FieldSubType    = $SubKind
-                    HuduLayoutID    = $UpdateLayout.HuduID
+                    HuduLayoutID    = $($UpdateLayout.HuduID ?? $null)
                     IGLayoutID      = $UpdateLayout.ITGID
                     ITGParsedName   = $ITGField.Attributes."name-key"
                     HuduParsedName  = ($ITGField.Attributes.name -replace " ", "_").ToLower()
@@ -1423,10 +1427,16 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 }
 
             }
-
-            $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
-            $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
-            Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
+            if ($UpdateLayout.CustomLayout -and $true -eq $UpdateLayout.CustomLayout) {
+                $UpdateLayoutMockFields = $AllFields | Where-Object {$_.LayoutName -eq $UpdateLayout.Name}
+    
+                $UpdateLayout | Add-Member -MemberType 'NoteProperty' -Name 'MockFields' -Value $($UpdateLayoutMockFields.HuduLayoutField)
+                Write-Host "Populated mock layout field data for mapping $($UpdateLayoutMockFields.count) faux fields for layout name $($UpdateLayout.Name)"
+            } else {
+                $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
+                $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
+                Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
+            }
             $UpdateLayout.HuduObject = $UpdatedLayout
             $UpdateLayout.ITGAssets = $FlexAssets
             $UpdateLayout.Matched = $true
@@ -1441,6 +1451,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
 ############################### Flexible Assets ###############################
 #Check for Assets Resume
+$LayoutImportsMappings ={}
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
     Write-Host "Loading Previous Asset Migration"
     $MatchedAssets = Get-Content "$MigrationLogs\Assets.json" -raw | Out-String | ConvertFrom-Json -depth 100
@@ -1496,17 +1507,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         #We'll need to make sure we have a mapping of fields for each custom layout definition elected by user
         #for custom mappings, first go thru and make stub assets
         foreach ($Layout in $($MatchedLayouts | Where-Object {$_.CustomLayout -and $true -eq $_.CustomLayout})){
-                $importsMap = Convert-ITGImportsToHuduPreview `
-                    -ITGImports $ITGConfigurations `
-                    -CompaniesToMigrate $CompaniesToMigrate `
-                    -ImportAssetLayoutName $Layout.name `
-                    -AssetLayoutFields $ConfigAssetLayoutFields `
-                    -AssetFieldsMap $ConfigAssetFieldsMap `
-                    -stagedMode $true `
-                    -Justmap $true `
-                    -Verbose
-                        
-                $layout | Add-Member -MemberType 'NoteProperty' -Name 'CustomImportsMap' -Value $importsMap
                 foreach ($ITGAsset in $Layout.ITGAssets) {
                     # Match Company
                     $HuduCompanyID = ($MatchedCompanies | Where-Object { $_.ITGID -eq $ITGAsset.attributes.'organization-id' }).HuduID
@@ -1528,6 +1528,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     }
                     $null = $MatchedCustomAssets.add($AssetDetails)
                 }
+            $customLayoutImports = $($MatchedCustomAssets | Where-Object {$_.Layout.id -eq $Layout.id})
+            $importsMap = Convert-ITGImportsToHuduPreview `
+                -ITGImports $customLayoutImports `
+                -CompaniesToMigrate $CompaniesToMigrate `
+                -ImportAssetLayoutName $Layout.name `
+                -AssetLayoutFields $ConfigAssetLayoutFields `
+                -AssetFieldsMap $ConfigAssetFieldsMap `
+                -stagedMode $true `
+                -Justmap $true `
+                -Verbose
+            
+            $layout | Add-Member -MemberType 'NoteProperty' -Name 'CustomImportsMap' -Value $importsMap
+            $layout | Add-Member -MemberType 'NoteProperty' -Name 'CustomImports' -Value $customLayoutImports
+
         }        
 
 	
@@ -1706,18 +1720,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
 
         #populate custom-layout assets 
         foreach ($layout in $MatchedCustomAssets.layout) {
-                $assets = $MatchedCustomAssets | where-object $_.layout.id -eq $layout.id
-                $mapping = $asset.layout
                 $MatchedCustomAssets = Set-ITGAssetsToExistingLayout `
-                                    -desiredMapFileName "$($Layout.Name).ps1" `
-                                    -sourceAssets $assets `
+                                    -desiredMapFileName "LayoutMapping-$($Layout.Name).ps1" `
+                                    -sourceAssets $layout.customLayoutImports `
                                     -stagedMode $true `
+                                    -justMap $false `
                                     -userMapping $layout.CustomImportsMap `
-                                    -sourceAssetLayout [pscustomobject]@{Id = -9; name="virtual-$($Layout.name)"; fields=$ConfigAssetLayoutFields} `
+                                    -sourceAssetLayout [pscustomobject]@{Id = -11; name="virtual-$($Layout.name)"; fields=$layout.MockFields} `
                                     -allrelations @()
-                
         }        
-
 
         $MatchedAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Assets.json"
         $MatchedCustomAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\CustomLayoutAssets.json"
@@ -1727,8 +1738,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Assets Migrated Continue?" -DefaultResponse "continue to Documents/Articles, please."
     }
 }
-
-
 
 
 ############################### Documents / Articles ###############################
