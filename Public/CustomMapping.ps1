@@ -312,7 +312,7 @@ $mapEntries = foreach ($f in $destfields) {
     $toEsc = ([string]$f.label) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $desttype = ([string]$($f.field_type ?? $f.type)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $req = ([string]$($f.required ?? $false)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
-    "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'; striphtml='false'}" 
+    "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'; striphtml='False'}" 
 }
 # Wrap and write
 $mappingText = @'
@@ -513,6 +513,7 @@ function Set-ITGAssetsToExistingLayout {
             $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
             Write-Host "added ITGLueID field, refreshing layouts"
             $destlayout = Get-HuduAssetLayout -id $destlayout.id
+            $mapping+=@{from="ITGlue ID"; to="ITGlue ID"; dest_type='Text'; required='False'}
         }
 
         foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
@@ -527,6 +528,7 @@ function Set-ITGAssetsToExistingLayout {
                     $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
                     $currentFields += @{
                         position=$($MaxPosition+1)
+                        label        = $field.label
                         field_type   = 'AssetTag'
                         show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
                         linkable_id  = $field.linkable_id
@@ -534,6 +536,7 @@ function Set-ITGAssetsToExistingLayout {
                     $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
                     Write-Host "added assettag field, refreshing layouts"
                     $destlayout = Get-HuduAssetLayout -id $destlayout.id
+                    $mapping+=@{from="$($field.label)"; to="$($field.label)"; dest_type='AssetTag'}
                 }
             }
         }
@@ -541,7 +544,7 @@ function Set-ITGAssetsToExistingLayout {
             write-host "mapping $($entry.from) to $($entry.to)"
             $sourcedestlabels[$entry.from] = $entry.to
             $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
-            $sourcedestStripHTML[$entry.from] = $(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
+            $sourcedestStripHTML[$entry.from] = [bool]$(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
         }
         # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
         # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destlayout.id}) 
