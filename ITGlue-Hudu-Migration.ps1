@@ -1147,7 +1147,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             -AssetLayoutFields $ConAssetLayoutFields `
             -AssetFieldsMap $ConAssetFieldsMap `
             -Verbose
-        $mockContactsLayout = [pscustomobject]@{Id = -7; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields}
+        $mockContactsLayout = [pscustomobject]@{Id = -12; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields}
         $Contactimports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
         $ContactsResult = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$ConMigrationName.ps1" `

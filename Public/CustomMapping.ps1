@@ -431,7 +431,8 @@ function Set-ITGAssetsToExistingLayout {
         [array]$allrelations,
         [bool]$stagedMode=$false,
         [int]$justMap=$false,
-        [hashtable]$userMapping=$null
+        [hashtable]$userMapping=$null,
+        [bool]$PromptOnMatch=$false
     )
     $createdAssets = @()    
     $sourcedestlabels = @{}
@@ -472,11 +473,11 @@ function Set-ITGAssetsToExistingLayout {
 
         # get fields mapped and ready
         $srcfields=@()
-        foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) {
+        foreach ($field in $sourceassetlayout.fields ) { #| Where-Object {$_.field_type -ne "AssetTag"}
             $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
         }
         $dstfields=@()
-        foreach ($field in $destlayout.fields | Where-Object {$_.field_type -ne "ListSelect"}) {
+        foreach ($field in $destlayout.fields ) { #| Where-Object {$_.field_type -ne "ListSelect"}
             $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
         }
         foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
@@ -560,20 +561,24 @@ function Set-ITGAssetsToExistingLayout {
         $sourceassetsIDX=$sourceassetsIDX+1
         $linkableToAssetInfo = $null
         write-host "matching existing assets to asset $sourceassetsIDX of $($sourceassets.count) in destination layout assets ($($destassets.count) total) to determine if overlap"
-        $match = $destassets | where-object {$_.company_id -eq $originalasset.ITGObject.HuduCompanyID -and $_.name -like "*$($originalasset.name)*"} | Select-Object -First 1
+        $match = $destassets | where-object {$_.company_id -eq $originalasset.ITGObject.HuduCompanyID -and $_.name -eq "$($originalasset.name)"} | Select-Object -First 1
         if ($match -and $null -ne $match) {
             $totalcounts.assetsmatched=$totalcounts.assetsmatched+1
-            write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
-            write-host "original: $($($originalasset | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Yellow
-            write-host "match: $($($match | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Blue
-            $archiveChoice=$(select-objectfromlist -message "which action to take for match?" -objects @("archive match","move anyway, archive original","skip"))
-            if ($archiveChoice -eq "archive match") {
-                Set-HuduAssetArchive -CompanyId $originalasset.ITGObject.HuduCompanyID -Id $originalasset.id -Archive $true
-                $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
-            } elseif ($archiveChoice -eq "skip") {
-                $totalcounts.assetsskipped=$totalcounts.assetsskipped+1
+            if ($true -eq $PromptOnMatch){
+                write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
+                write-host "original: $($($originalasset | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Yellow
+                write-host "match: $($($match | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Blue
+                $archiveChoice=$(select-objectfromlist -message "which action to take for match?" -objects @("archive match","move anyway, archive original","skip"))
+                if ($archiveChoice -eq "archive match") {
+                    Set-HuduAssetArchive -CompanyId $originalasset.ITGObject.HuduCompanyID -Id $originalasset.id -Archive $true
+                    $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
+                } elseif ($archiveChoice -eq "skip") {
+                    $totalcounts.assetsskipped=$totalcounts.assetsskipped+1
+                    continue
+                } else {write-host "archive after moving as usual"}
+            } else {
                 continue
-            } else {write-host "archive after moving as usual"}
+            }
         }
 
         $transformedFields = @()
@@ -583,7 +588,7 @@ function Set-ITGAssetsToExistingLayout {
             }
         }
         # foreach ($field in $originalasset.fields) {
-        foreach ($kv in $originalasset.fields | ForEach-Object GetEnumerator) {
+        foreach ($kv in $($originalasset.fields | ForEach-Object GetEnumerator)) {
             $field = @{label = $kv.Key; value = $kv.Value; required=$($("$($sourcedestrequired[$kv.Key])".ToLower() -eq 'true') ?? $false)}
             $transformedlabel = $($sourcedestlabels[$field.label] ?? $null)
             if (-not $transformedlabel -or $null -eq $transformedlabel) {continue}
@@ -595,7 +600,8 @@ function Set-ITGAssetsToExistingLayout {
                         $field.value = $($(read-host "target field $($field.label) => $transformedlabel is required but null, enter value") ?? "None")
                     } else {
                         write-host "no value for optional $($field.label) => $transformedlabel"
-                        continue
+                        
+                         continue
                     }
                 }
 
