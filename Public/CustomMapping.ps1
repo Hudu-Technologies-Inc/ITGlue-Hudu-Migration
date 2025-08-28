@@ -303,7 +303,7 @@ function Remove-HtmlTags {
 }
 
 function build-templatemap {
-param ([array]$destfields,[string]$desiredMapFileName="mapfile.ps1")
+param ([array]$destfields,[string]$desiredMapFilePath="mapfile.ps1")
 # Build entries like: @{from='';to='Some Label'}
 $mapEntries = foreach ($f in $destfields) {
     if ($f.field_type -eq "AssetTag") {write-host "Skipping asset tag for $($f.label), those will be relinked."; continue}
@@ -326,7 +326,7 @@ $mapping=@(
 '@ + @"
 $PerJobSettings
 "@
-Set-Content -Path $desiredMapFileName -Value $mappingText -Encoding UTF8
+Set-Content -Path $desiredMapFilePath -Value $mappingText -Encoding UTF8
 }
 
 function Convert-ITGImportsToHuduPreview {
@@ -399,13 +399,14 @@ function Convert-ITGImportsToHuduPreview {
             # Emit preview
             [pscustomobject]@{
                 Preview          = $true
-                Name             = $unmatchedImport.Name
-                CompanyId        = $unmatchedImport.ITGObject.HuduCompanyID
+                Name             = $($unmatchedImport.Name ?? $itgimport.attributes.name)
+                CompanyId        = $($unmatchedImport.ITGObject.HuduCompanyID ?? $orgId)
+                CompanyName      = $unmatchedImport.attributes."organization-name"
                 AssetLayoutId    = $null
                 AssetLayoutName  = $ImportAssetLayoutName
                 fields           = $fields
                 LayoutDefinition = $AssetLayoutFields
-                ITGId            = $unmatchedImport.ITGObject.id
+                ITGId            = $($unmatchedImport.id ?? $unmatchedImport.ITGObject.id)
                 ITGObject        = $unmatchedImport.ITGObject
                 _Diagnostics     = $diag
             }
@@ -438,6 +439,7 @@ function Set-ITGAssetsToExistingLayout {
     $SMOOSHLABELS=@()
     $mapping=@()
     $inspectlayouts = $false    
+    $desiredMapFilePath = $(join-path $ITGCUSTOMMAPPINGSDIR $desiredMapFileName)
     if ($userMapping -and $null -ne $userMapping -and $stagedMode -and $true -eq $stagedMode) {
             $srcfields=$userMapping.srcfields
             $dstfields=$userMapping.dstfields
@@ -463,8 +465,8 @@ function Set-ITGAssetsToExistingLayout {
             write-host "getting relinkable fields from layout $($layout.name)..."
             $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
         }
-        if ($(test-path "$desiredMapFileName")) {
-            write-host "backed up $desiredMapFileName to $desiredMapFileName.old"; Move-Item $desiredMapFileName "$desiredMapFileName.old" -Force
+        if ($(test-path "$desiredMapFilePath")) {
+            write-host "backed up $desiredMapFilePath to $desiredMapFilePath.old"; Move-Item $desiredMapFilePath "$desiredMapFilePath.old" -Force
         }
 
         # get fields mapped and ready
@@ -479,22 +481,22 @@ function Set-ITGAssetsToExistingLayout {
         foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
             $fields.value | convertto-json -depth 66 | out-file "$($fields.name)-fields.json"
         }
-        build-templatemap -destfields $dstfields -desiredMapFileName $desiredMapFileName
+        build-templatemap -destfields $dstfields -desiredMapFileName $desiredMapFilePath
 
-        read-host "press enter if you filled in your mapfile, $desiredMapFileName"
-        if (-not $(test-path "$desiredMapFileName")) {
+        read-host "press enter if you filled in your mapfile, $desiredMapFilePath"
+        if (-not $(test-path "$desiredMapFilePath")) {
             exit
         }
         while (-not $mapping -or $mapping.count -lt 1){
             $mapping=@()
             try {
-                . $project_workdir\$desiredMapFileName
+                . $desiredMapFilePath
                 if (-not $mapping -or $mapping.count -lt 1){
-                    Read-Host "Please adjust your mapping file, $($project_workdir)\$($desiredMapFileName), as it does not seem to have a usable or properly-formatted mapping definition. Please adjust and press ENTER when adjusted."
+                    Read-Host "Please adjust your mapping file, $($desiredMapFilePath), as it does not seem to have a usable or properly-formatted mapping definition. Please adjust and press ENTER when adjusted."
                 }
             } catch {
                 $mapping=@()
-                Read-Host "Please adjust your mapping file, $($project_workdir)\$($desiredMapFileName), as it an error was encountered during import ($_). Please adjust and press ENTER when adjusted."
+                Read-Host "Please adjust your mapping file, $($desiredMapFilePath), as it an error was encountered during import ($_). Please adjust and press ENTER when adjusted."
             }
         }
 

@@ -139,6 +139,14 @@ if (Test-Path -Path "$MigrationLogs") {
     $null = New-Item "$MigrationLogs" -ItemType "directory"
     $ResumeFound = $false
 }
+if ($true -eq $config.AllowForCustomMapping){
+    if (-not $ITGCUSTOMMAPPINGSDIR -or $null -eq $ITGCUSTOMMAPPINGSDIR) {
+        $ITGCUSTOMMAPPINGSDIR = "$PSScriptRoot\Mappings"
+    }
+
+    if (!(Test-Path -Path "$ITGCUSTOMMAPPINGSDIR")) { New-Item "$ITGCUSTOMMAPPINGSDIR" -ItemType Directory } {else Write-Host "mappings dir $ITGCUSTOMMAPPINGSDIR exists"}
+    Write-Host "Custom mappings allowed, mapfiles will be in $ITGCUSTOMMAPPINGSDIR"
+}
 
 
 # Setup some variables
@@ -482,6 +490,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 
     $ITGLocationsHashTable = @{}
     foreach ($ITGL in $MatchedLocations) {
+        if (-not $ITGL.ITGId) {Read-Host "No ITGID for location $($($ITGL | ConvertTo-Json -depth 90).ToString())"; continue}
         $ITGLocationsHashTable[$ITGL.ITGId] = $ITGL
     }
     # Save the results to resume from if needed
@@ -1133,16 +1142,16 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             -AssetFieldsMap $ConAssetFieldsMap `
             -Verbose
         $Contactimports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
-        $MatchedLocations = Set-ITGAssetsToExistingLayout `
+        $MatchedContacts = Set-ITGAssetsToExistingLayout `
                             -desiredMapFileName "$ConMigrationName.ps1" `
                             -sourceAssets $Contactimports `
-                            -sourceAssetLayout [pscustomobject]@{Id = -6; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
+                            -sourceAssetLayout [pscustomobject]@{Id = -7; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields} `
                             -allrelations @() `
                             -stagedMode $false -justMap $false -userMapping $null
 
 
     } else {
-        $MatchedLocations = Import-Items @LocImportSplat
+        $MatchedContacts = Import-Items @ConImportSplat
     }
 
 
