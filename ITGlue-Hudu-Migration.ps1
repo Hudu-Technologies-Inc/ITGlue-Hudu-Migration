@@ -1055,8 +1055,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
         @{
             label        = 'Location'
             field_type   = 'AssetTag'
-            show_in_list = 'false'
-            linkable_id  = $LocationLayout.ID
+             linkable_id  = $LocationLayout.ID
             position     = 5
         },
         @{

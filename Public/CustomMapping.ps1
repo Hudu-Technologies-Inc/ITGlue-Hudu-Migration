@@ -473,7 +473,7 @@ function Set-ITGAssetsToExistingLayout {
 
         # get fields mapped and ready
         $srcfields=@()
-        foreach ($field in $sourceassetlayout.fields ) { #| Where-Object {$_.field_type -ne "AssetTag"}
+        foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) {
             $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
         }
         $dstfields=@()
@@ -505,7 +505,28 @@ function Set-ITGAssetsToExistingLayout {
             }            
         }
 
-
+        foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
+            $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
+            if ($null -ne $matchingDestField) {
+                Write-Host "source tag field $($field.label) Destination layout has corresponding tag field: $($matchingDestField.label); adding to mapping."
+                $mapping+=@{from="$($field.label)"; to="$($matchingDestField.label)"; dest_type='AssetTag'}
+            } else {
+                $linkableLayout=$(get-huduassetlayouts -id $field.linkable_id) ?? $null
+                if ($null -ne $linkableLayout -and 'yes' -eq $(Select-ObjectFromList -message "Would you like to add corresponding assettag field $($field.label) from source layout $($sourceassetlayout.name) to your destination layout, $($destlayout.name)?")){
+                    $currentFields = $destlayout.fields ?? @()
+                    $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
+                    $currentFields += @{
+                        position=$($MaxPosition+1)
+                        field_type   = 'AssetTag'
+                        show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
+                        linkable_id  = $field.linkable_id
+                    }
+                    $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+                    Write-Host "added assettag field, refreshing layouts"
+                    $destlayout = Get-HuduAssetLayout -id $destlayout.id
+                }
+            }
+        }
         foreach ($entry in $mapping) {
             write-host "mapping $($entry.from) to $($entry.to)"
             $sourcedestlabels[$entry.from] = $entry.to
@@ -600,8 +621,7 @@ function Set-ITGAssetsToExistingLayout {
                         $field.value = $($(read-host "target field $($field.label) => $transformedlabel is required but null, enter value") ?? "None")
                     } else {
                         write-host "no value for optional $($field.label) => $transformedlabel"
-                        
-                         continue
+                        continue
                     }
                 }
 
