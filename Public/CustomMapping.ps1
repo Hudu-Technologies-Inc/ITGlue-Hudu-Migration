@@ -505,41 +505,43 @@ function Set-ITGAssetsToExistingLayout {
                 . $desiredMapFilePath
             }            
         }
-        if ($true -eq $settings.IncludeITGlueID -and [bool]$($(($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"})).count -gt 0)) {
-            Write-Host "Itglue ID set to be included, injecting into dest layout"
-            $currentFields = $destlayout.fields ?? @()
-            $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
-            if ($sourceITGfield) {$currentFields += $sourceITGfield}
-            $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
-            Write-Host "added ITGLueID field, refreshing layouts"
-            $destlayout = Get-HuduAssetLayout -id $destlayout.id
-            $mapping+=@{from="ITGlue ID"; to="ITGlue ID"; dest_type='Text'; required='False'}
-        }
+        # AddressData, ListSelect fields in target layout prevent us from updating layouts.
+        # until bug gets solved, we can't update layouts with 'newer' field types.
+        # if ($true -eq $settings.IncludeITGlueID -and [bool]$($(($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"})).count -gt 0)) {
+        #     Write-Host "Itglue ID set to be included, injecting into dest layout"
+        #     $currentFields = $destlayout.fields | Where-Object {$_.field_type -ne "ListSelect"} ?? @()
+        #     $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
+        #     if ($sourceITGfield) {$currentFields += $sourceITGfield}
+        #     $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+        #     Write-Host "added ITGLueID field, refreshing layouts"
+        #     $destlayout = Get-HuduAssetLayouts -id $destlayout.id
+        #     $mapping+=@{from="ITGlue ID"; to="ITGlue ID"; dest_type='Text'; required='False'}
+        # }
 
-        foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
-            $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
-            if ($null -ne $matchingDestField) {
-                Write-Host "source tag field $($field.label) Destination layout has corresponding tag field: $($matchingDestField.label); adding to mapping."
-                $mapping+=@{from="$($field.label)"; to="$($matchingDestField.label)"; dest_type='AssetTag'}
-            } else {
-                $linkableLayout=$(get-huduassetlayouts -id $field.linkable_id) ?? $null
-                if ($null -ne $linkableLayout -and 'yes' -eq $(Select-ObjectFromList -message "Would you like to add corresponding assettag field $($field.label) from source layout $($sourceassetlayout.name) to your destination layout, $($destlayout.name)?")){
-                    $currentFields = $destlayout.fields ?? @()
-                    $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
-                    $currentFields += @{
-                        position=$($MaxPosition+1)
-                        label        = $field.label
-                        field_type   = 'AssetTag'
-                        show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
-                        linkable_id  = $field.linkable_id
-                    }
-                    $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
-                    Write-Host "added assettag field, refreshing layouts"
-                    $destlayout = Get-HuduAssetLayout -id $destlayout.id
-                    $mapping+=@{from="$($field.label)"; to="$($field.label)"; dest_type='AssetTag'}
-                }
-            }
-        }
+        # foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
+        #     $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
+        #     if ($null -ne $matchingDestField) {
+        #         Write-Host "source tag field $($field.label) Destination layout has corresponding tag field: $($matchingDestField.label); adding to mapping."
+        #         $mapping+=@{from="$($field.label)"; to="$($matchingDestField.label)"; dest_type='AssetTag'}
+        #     } else {
+        #         $linkableLayout=$(get-huduassetlayouts -id $field.linkable_id) ?? $null
+        #         if ($null -ne $linkableLayout -and 'yes' -eq $(Select-ObjectFromList -message "Would you like to add corresponding assettag field $($field.label) from source layout $($sourceassetlayout.name) to your destination layout, $($destlayout.name)?")){
+        #             $currentFields = $destlayout.fields ?? @()
+        #             $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
+        #             $currentFields += @{
+        #                 position     = $($MaxPosition+1)
+        #                 label        = $field.label
+        #                 field_type   = 'AssetTag'
+        #                 show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
+        #                 linkable_id  = $field.linkable_id
+        #             }
+        #             $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+        #             Write-Host "added assettag field, refreshing layouts"
+        #             $destlayout = Get-HuduAssetLayouts -id $destlayout.id
+        #             $mapping+=@{from="$($field.label)"; to="$($field.label)"; dest_type='AssetTag'}
+        #         }
+        #     }
+        # }
         foreach ($entry in $mapping) {
             write-host "mapping $($entry.from) to $($entry.to)"
             $sourcedestlabels[$entry.from] = $entry.to
