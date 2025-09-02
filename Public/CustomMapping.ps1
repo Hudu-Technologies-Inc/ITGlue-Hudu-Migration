@@ -422,6 +422,9 @@ function Convert-ITGImportsToHuduPreview {
 # this is a proven method for transferring assets to new layout, but I'm thinking if we create faux/mock layout / fields, relations (assettag)
 # the same format as hudu would provide, it should still work and allow custom mapping to existing layouts without having to migrate and then move; simply migrate to target
 
+$FieldTypesThatDisallowLayoutUpdate = @(
+    "ListSelect","AddressData"
+)
 
 function Set-ITGAssetsToExistingLayout {
     param (
@@ -505,43 +508,51 @@ function Set-ITGAssetsToExistingLayout {
                 . $desiredMapFilePath
             }            
         }
-        # AddressData, ListSelect fields in target layout prevent us from updating layouts.
-        # until bug gets solved, we can't update layouts with 'newer' field types.
-        # if ($true -eq $settings.IncludeITGlueID -and [bool]$($(($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"})).count -gt 0)) {
-        #     Write-Host "Itglue ID set to be included, injecting into dest layout"
-        #     $currentFields = $destlayout.fields | Where-Object {$_.field_type -ne "ListSelect"} ?? @()
-        #     $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
-        #     if ($sourceITGfield) {$currentFields += $sourceITGfield}
-        #     $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
-        #     Write-Host "added ITGLueID field, refreshing layouts"
-        #     $destlayout = Get-HuduAssetLayouts -id $destlayout.id
-        #     $mapping+=@{from="ITGlue ID"; to="ITGlue ID"; dest_type='Text'; required='False'}
-        # }
 
-        # foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
-        #     $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
-        #     if ($null -ne $matchingDestField) {
-        #         Write-Host "source tag field $($field.label) Destination layout has corresponding tag field: $($matchingDestField.label); adding to mapping."
-        #         $mapping+=@{from="$($field.label)"; to="$($matchingDestField.label)"; dest_type='AssetTag'}
-        #     } else {
-        #         $linkableLayout=$(get-huduassetlayouts -id $field.linkable_id) ?? $null
-        #         if ($null -ne $linkableLayout -and 'yes' -eq $(Select-ObjectFromList -message "Would you like to add corresponding assettag field $($field.label) from source layout $($sourceassetlayout.name) to your destination layout, $($destlayout.name)?")){
-        #             $currentFields = $destlayout.fields ?? @()
-        #             $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
-        #             $currentFields += @{
-        #                 position     = $($MaxPosition+1)
-        #                 label        = $field.label
-        #                 field_type   = 'AssetTag'
-        #                 show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
-        #                 linkable_id  = $field.linkable_id
-        #             }
-        #             $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
-        #             Write-Host "added assettag field, refreshing layouts"
-        #             $destlayout = Get-HuduAssetLayouts -id $destlayout.id
-        #             $mapping+=@{from="$($field.label)"; to="$($field.label)"; dest_type='AssetTag'}
-        #         }
-        #     }
-        # }
+        if ($($destlayout.fields | Where-Object {$FieldTypesThatDisallowLayoutUpdate -contains $_.field_type}).count -lt 1){
+            # AddressData, ListSelect fields in target layout prevent us from updating layouts.
+            # until bug gets solved, we can't update layouts with 'newer' field types.
+            # if there are no 'special' dest fields, however, this does work fine
+            # until this bug is fixed in hudu api, it is best to manually make sure that corresponding asset tag / itglue id fields exist
+            # if target layout doesnt have either of the currently-known disallowed types, however, it's business as usual
+
+
+            if ($true -eq $settings.IncludeITGlueID -and [bool]$($(($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"})).count -gt 0)) {
+                Write-Host "Itglue ID set to be included, injecting into dest layout"
+                $currentFields = $destlayout.fields | Where-Object {$_.field_type -ne "ListSelect"} ?? @()
+                $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
+                if ($sourceITGfield) {$currentFields += $sourceITGfield}
+                $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+                Write-Host "added ITGLueID field, refreshing layouts"
+                $destlayout = Get-HuduAssetLayouts -id $destlayout.id
+                $mapping+=@{from="ITGlue ID"; to="ITGlue ID"; dest_type='Text'; required='False'}
+            }
+
+            foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
+                $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
+                if ($null -ne $matchingDestField) {
+                    Write-Host "source tag field $($field.label) Destination layout has corresponding tag field: $($matchingDestField.label); adding to mapping."
+                    $mapping+=@{from="$($field.label)"; to="$($matchingDestField.label)"; dest_type='AssetTag'}
+                } else {
+                    $linkableLayout=$(get-huduassetlayouts -id $field.linkable_id) ?? $null
+                    if ($null -ne $linkableLayout -and 'yes' -eq $(Select-ObjectFromList -message "Would you like to add corresponding assettag field $($field.label) from source layout $($sourceassetlayout.name) to your destination layout, $($destlayout.name)?")){
+                        $currentFields = $destlayout.fields ?? @()
+                        $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
+                        $currentFields += @{
+                            position     = $($MaxPosition+1)
+                            label        = $field.label
+                            field_type   = 'AssetTag'
+                            show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
+                            linkable_id  = $field.linkable_id
+                        }
+                        $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+                        Write-Host "added assettag field, refreshing layouts"
+                        $destlayout = Get-HuduAssetLayouts -id $destlayout.id
+                        $mapping+=@{from="$($field.label)"; to="$($field.label)"; dest_type='AssetTag'}
+                    }
+                }
+            }
+        }
         foreach ($entry in $mapping) {
             write-host "mapping $($entry.from) to $($entry.to)"
             $sourcedestlabels[$entry.from] = $entry.to
