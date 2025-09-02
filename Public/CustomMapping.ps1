@@ -505,7 +505,7 @@ function Set-ITGAssetsToExistingLayout {
                 . $desiredMapFilePath
             }            
         }
-        if ($true -eq $settings.IncludeITGlueID -and [bool]$($($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"}) -gt 0)) {
+        if ($true -eq $settings.IncludeITGlueID -and [bool]$($(($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"})).count -gt 0)) {
             Write-Host "Itglue ID set to be included, injecting into dest layout"
             $currentFields = $destlayout.fields ?? @()
             $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
@@ -571,7 +571,6 @@ function Set-ITGAssetsToExistingLayout {
         errored=0
         sourceassetcount=$sourceassets.count
     }
-
 
     Write-Host "Smooshing $(if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {'using plaintext value-joining'} else {'using traditional HTML value joining'})"
     read-host "$($sourceassets.count) source assets and $($destassets.count) dest assets. press enter to proceed"
