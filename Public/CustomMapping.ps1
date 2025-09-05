@@ -506,6 +506,11 @@ function Set-ITGAssetsToExistingLayout {
         [hashtable]$userMapping=$null,
         [bool]$PromptOnMatch=$false
     )
+
+
+    $sourceDestDataType = @{}
+    $addressMapsByDest    = @{} 
+
     $createdAssets = @()    
     $sourcedestlabels = @{}
     $sourcedestrequired = @{}        
@@ -530,6 +535,9 @@ function Set-ITGAssetsToExistingLayout {
             $destlayout=$userMapping.destassetlayout
             $sourcedestlabels=$userMapping.sourcedestlabels
             $sourcedestrequired=$userMapping.sourcedestrequired
+            $sourceDestDataType=$userMapping.sourceDestDataType
+            $addressMapsByDest=$userMapping.addressMapsByDest
+            
     } else {
         write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
         $destlayout   = Select-ObjectFromList -objects $(get-huduassetlayouts) -message "Which dest / target asset layout (migrating assets from $($sourceassetlayout.name)?" -allowNull $false -inspectObjects $true
@@ -623,11 +631,21 @@ function Set-ITGAssetsToExistingLayout {
             }
         }
         foreach ($entry in $mapping) {
-            write-host "mapping $($entry.from) to $($entry.to)"
+            if ($entry.dest_type -eq 'AddressData') {
+                $addressMapsByDest[$entry.to] = $entry.address
+                $sourcedestrequired[$entry.from] = $false
+                $sourceDestDataType[$entry.from] = 'AddressData'
+                $sourcedestlabels[$entry.from] = 'Meta'
+                continue
+            }            
+            $sourcedestStripHTML[$entry.from] = [bool]$(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
+            write-host "mapping $($entry.from) to $($entry.to) $(if ($true -eq $sourcedestStripHTML[$entry.from]) {"destination field of $($entry.to) will have HTML stripped."} else {'as-is'})"
             $sourcedestlabels[$entry.from] = $entry.to
             $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
-            $sourcedestStripHTML[$entry.from] = [bool]$(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
+            $sourceDestDataType[$entry.from] = $($entry.dest_type ?? 'Text')
         }
+        Write-Host "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target press enter to proceed"
+
         # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
         # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destlayout.id}) 
         $destassets = $allassets
@@ -705,7 +723,8 @@ function Set-ITGAssetsToExistingLayout {
         foreach ($kv in $($originalasset.fields | ForEach-Object GetEnumerator)) {
             $field = @{label = $kv.Key; value = $kv.Value; 
                 required=$($("$($sourcedestrequired[$kv.Key])".ToLower() -eq 'true') ?? $false)
-                stripHTML=$($($sourcedestStripHTML[$kv.Key]) ?? $false)            
+                stripHTML=$($($sourcedestStripHTML[$kv.Key]) ?? $false)
+                dest_type=$sourceDestDataType["$($kv.Key)"] ?? 'Text'
             }
             $transformedlabel = $($sourcedestlabels[$field.label] ?? $null)
             if (-not $transformedlabel -or $null -eq $transformedlabel) {continue}
@@ -723,9 +742,38 @@ function Set-ITGAssetsToExistingLayout {
             if ($true -eq $field.StripHTML) {
                 $field.value = "$(Remove-HtmlTags -InputString "$($field.value)")"
             }
-
+            if ($destFieldType -eq "Email" -or ($($destFieldType -eq "Text" -and $transformedlabel -like "*Email*"))){
+                $field.value="$(Get-CleansedEmailAddresses -InputString "$($field.value)")".Trim()
+            }
             $transformedFields += @{$transformedlabel = $field.value}
             write-host "$($field.label) => $transformedlabel for value $($field.value)"
+        }
+        foreach ($kv in $addressMapsByDest.GetEnumerator()) {
+            $destLabel = $kv.Key
+            $addrMap   = $kv.Value
+
+            $addr1 = Get-FieldValueByLabel $originalasset.fields $addrMap.address_line_1.from
+            $addr2 = Get-FieldValueByLabel $originalasset.fields $addrMap.address_line_2.from
+            $city  = Get-FieldValueByLabel $originalasset.fields $addrMap.city.from
+            $state = Get-FieldValueByLabel $originalasset.fields $addrMap.state.from
+            $zip   = Get-FieldValueByLabel $originalasset.fields $addrMap.zip.from
+            $cntry = Get-FieldValueByLabel $originalasset.fields $addrMap.country_name.from
+
+            $state = Normalize-Region $state
+            $zip   = Normalize-Zip    $zip
+            $cntry = Normalize-CountryName $cntry
+
+            if ($addr1 -or $addr2 -or $city -or $state -or $zip -or $cntry) {
+                $NewAddress = [ordered]@{
+                    address_line_1 = $addr1
+                    city           = $city
+                    state          = $state
+                    zip            = $zip
+                    country_name   = $cntry
+                }
+                if ($addr2) { $NewAddress['address_line_2'] = $addr2 }
+                $transformedFields += @{ $destLabel = $NewAddress }
+            }
         }
 
         if ($sourceassetlayout.linkables -and $sourceassetlayout.linkables.keys.count -gt 0){
@@ -857,6 +905,8 @@ function Set-ITGAssetsToExistingLayout {
                 excludeHTMLinSMOOSH             =$excludeHTMLinSMOOSH
                 includeRelationsForArchived     =$includeRelationsForArchived
                 includeblanksduringsmoosh       =$includeblanksduringsmoosh
+                sourceDestDataType              = $sourceDestDataType
+                addressMapsByDest               = $addressMapsByDest
         }
 
         return @{
