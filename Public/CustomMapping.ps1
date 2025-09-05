@@ -315,8 +315,19 @@ $mapEntries = foreach ($f in $destfields) {
     $toEsc = ([string]$f.label) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $desttype = ([string]$($f.field_type ?? $f.type)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $req = ([string]$($f.required ?? $false)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
-    "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'; striphtml='False'}" 
-}
+    if ($desttype -eq "AddressData") {
+        "@{to='$toEsc'; from='Meta'; dest_type='AddressData'; required='$req'; address=@{
+                address_line_1=@{from=''}
+                address_line_2=@{from=''}
+                city=@{from=''}
+                state=@{from=''}
+                zip=@{from=''}
+                country_name=@{from=''}
+        }}"
+    } else {
+        "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'; striphtml='False'}"
+    }
+    }
 # Wrap and write
 $mappingText = @'
 # source 
