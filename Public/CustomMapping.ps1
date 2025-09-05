@@ -290,10 +290,13 @@ function Remove-HtmlTags {
         [string]$InputString
     )
     $tags = @(
-        "hr", "br", "tr", "td", "th", "table",
-        "div", "span", "p", "ul", "ol", "li",
-        "h[1-6]", "strong", "em", "b", "i"
-    )
+'hr','br', 'tr', 'td', 'th', 'table', 'div', 'span',
+'p', 'ul', 'ol', 'li', 'h[1-6]', 'strong', 'em', 'b', 'i',
+'colgroup', 'col', 'input', 'column', 'section', 'article',
+'header', 'footer', 'aside', 'nav', 'main', 'figure', 'figcaption',
+'blockquote', 'pre', 'address', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+'thead', 'tbody', 'tfoot','script','noscript','style','template','head','svg','math'
+        )
     $cleaned = $InputString
     foreach ($tag in $tags) {
         # Regex matches both opening <tag ...> and closing </tag>
