@@ -159,6 +159,11 @@ $ErroredItemsFolder = if ($ErroredItemsFolder) {$ErroredItemsFolder} else {(Get-
 #Grab existing companies in Hudu
 $HuduCompanies = Get-HuduCompanies
 
+$MergedOrganizationSettings = @{
+    Types        = @()
+    TargetCompany = $null
+}
+
 #Check for Company Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     Write-Host "Loading Previous Companies Migration"
@@ -170,9 +175,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     $CompanySelect = { (Get-ITGlueOrganizations -page_size 1000 -page_number $i).data }
     $ITGCompanies = Import-ITGlueItems -ItemSelect $CompanySelect
     $ITGCompaniesFromCSV = Import-CSV (Join-Path -Path $ITGlueExportPath -ChildPath "organizations.csv")
-
-
-
     Write-Host "$($ITGCompanies.count) ITG Glue Companies Found" 
 
     if ($ScopedMigration) {
@@ -185,6 +187,24 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
         }
         $ScopedCompanyIds = $ITGCompanies.id
         Write-Host "Companies scoped... $OriginalCompanyCount => $($Itgcompanies.count)"
+    }
+    $uniqueOrgTypes = $($ITGCompanies.attributes.'organization-type-name' | Select-Object -unique)
+    if ($true -eq $MergedOrganizationTypes){
+        $MergedOrganizationSettings.Types+=$(select-objectfromlist -objects $uniqueOrgTypes -message "Select a type to include in type-scoping (from ITGlue). These company types will be attributed to a single company.")
+        $MergedOrganizationSettings.TargetCompany = $(Get-HuduCompanies -id $(read-host "To which company will you be scoping $($MergedOrganizationSettings.types) to? [enter company id]"))
+        Write-Host "$($($MergedOrganizationSettings.Types | ForEach-Object { $_ }) -join ', ') org types in ITGlue will be attributed to $($MergedOrganizationSettings.TargetCompany.name) in Hudu."
+        if ($null -ne $MergedOrganizationSettings.TargetCompany){
+            foreach ($kind in $uniqueOrgTypes){
+                if ($MergedOrganizationSettings.Types -contains $kind){
+                    Write-Host "$($($ITGCompanies | where-object {"$($_.attributes.'organization-type-name')" -eq $kind}).count) of $kind will be migrated to $($MergedOrganizationSettings.TargetCompany.name)" -ForegroundColor Yellow 
+                } else {
+                    Write-Host "$($($ITGCompanies | where-object {"$($_.attributes.'organization-type-name')" -eq $kind}).count) of $kind will be migrated in the typical fashion" -ForegroundColor Green
+                }
+            }
+    }}
+    if ($MergedOrganizationSettings.Types.Count -gt 0 -and -not $MergedOrganizationSettings.TargetCompany){
+        Write-Host "Youve designated $($MergedOrganizationSettings.Types.Count) company types to be merged into hudu, but don't have a valid company. Verify that a hudu company exists with the ID that you elected to merge into"
+        exit 1
     }
     $ITGCompaniesHashTable = @{}
 
@@ -203,6 +223,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
         }
 
         $HuduCompany = $HuduCompanies | where-object { $_.name -eq $itgcompany.attributes.name }
+
+        if ($MergedOrganizationSettings.Types -contains "$($itgcompany.attributes.'organization-type-name')"){
+            $HuduCompany = $MergedOrganizationSettings.TargetCompany
+        }
 
         $intCompany = $InternalCompany -eq $originalName
 
@@ -253,6 +277,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 
     Write-Host "Unmatched Companies"
     $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.Matched -eq $false } | Select-Object CompanyName | Format-Table
+
+
 
     #Import Locations
     Write-Host "Fetching Locations from IT Glue" -ForegroundColor Green
@@ -1279,8 +1305,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             if ($UnmatchedLayout.Matched -eq $false) {
                 #create-layout-only-jobs
 		
-                $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)" -icon "fas fa-$NewIcon" -color "#00adef" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
-                $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
+            $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)" -icon "fas fa-$NewIcon" -color "#6136ff" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
+            $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
 
                 $UnmatchedLayout.HuduObject = $MatchedNewLayout
                 $UnmatchedLayout.HuduID = $NewLayout.asset_layout.id
@@ -2577,9 +2603,9 @@ $ManualActionsReport = foreach ($item in $UniqueItems) {
 }
 
 ############################### Wrap-Up ###############################
-write-host "wrapup 1/5... setting asset layouts as active"
+write-host "wrapup 1/5... setting asset layouts as active, enabling advanced website monitoring features"
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
-
+$MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}
 write-host "wrapup 2/5... adding attachments (this can take a while)"
 . .\Add-HuduAttachmentsViaAPI.ps1
 
