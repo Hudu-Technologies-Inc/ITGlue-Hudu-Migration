@@ -726,6 +726,7 @@ function Set-ITGAssetsToExistingLayout {
                 stripHTML=$($($sourcedestStripHTML[$kv.Key]) ?? $false)
                 dest_type=$sourceDestDataType["$($kv.Key)"] ?? 'Text'
             }
+            if ($dest_type -eq 'AddressData') {continue}
             $transformedlabel = $($sourcedestlabels[$field.label] ?? $null)
             if (-not $transformedlabel -or $null -eq $transformedlabel) {continue}
                 
@@ -738,7 +739,7 @@ function Set-ITGAssetsToExistingLayout {
                         write-host "no value for optional $($field.label) => $transformedlabel"
                         continue
                     }
-                }
+            }
             if ($true -eq $field.StripHTML) {
                 $field.value = "$(Remove-HtmlTags -InputString "$($field.value)")"
             }
@@ -787,10 +788,11 @@ function Set-ITGAssetsToExistingLayout {
             if ($describeRelatedInSmoosh -and $true -eq $describeRelatedInSmoosh){
                 $describerelated=Get-SmooshedLinkableDescription -linkableObjects $linkableToAssetInfo
                 $valueToAdd="$describerelated<br>$valueToAdd"
-                if ($valueToAdd -eq "<br>") {continue}
-                if ($true -eq $excludeHTMLinSMOOSH){$valueToAdd = Remove-HtmlTags -InputString $valueToAdd }
+                if ($valueToAdd -ne "<br>") {
+                    if ($true -eq $excludeHTMLinSMOOSH){$valueToAdd = Remove-HtmlTags -InputString $valueToAdd }
+                    $transformedFields+=@{"$($sourcedestlabels["SMOOSH"])" = $valueToAdd}
+                }
             }        
-            $transformedFields+=@{"$($sourcedestlabels["SMOOSH"])" = $valueToAdd}
         }
 
         $newAssetRequest = @{
