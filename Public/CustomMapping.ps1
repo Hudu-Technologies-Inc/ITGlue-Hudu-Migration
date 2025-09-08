@@ -284,10 +284,53 @@ $describeRelatedInSmoosh = $true
 $includeLabelInSmooshedValues = $true
 '@
 
+$labelAliases = @{
+  'Address 1'   = 'address_1'
+  'Address 2'   = 'address_2'
+  'City'        = 'city'
+  'Region'      = 'region'       # your source uses 'region' for state
+  'Postal Code' = 'postal_code'
+  'Country'     = 'country'
+}
+
 function Get-FieldValueByLabel {
-    param([array]$Fields, [string]$Label)
+    param($Fields, [string]$Label, $Aliases = $null)
     if (-not $Label) { return $null }
-    ($Fields | Where-Object { $_.label -eq $Label } | Select-Object -First 1).value
+
+    # Build candidate keys (space/underscore & case-insensitive)
+    $wanted = $Label.Trim()
+    $candidates = @(
+        $wanted,
+        ($wanted -replace '\s+', '_'),
+        $wanted.ToLowerInvariant(),
+        ($wanted -replace '\s+', '_').ToLowerInvariant()
+    )
+
+    if ($Aliases -and $Aliases.ContainsKey($wanted)) {
+        $alias = $Aliases[$wanted]
+        $candidates = @($alias, $alias.ToLowerInvariant()) + $candidates
+    }
+
+    if ($Fields -is [System.Collections.IDictionary]) {
+        foreach ($k in $candidates) {
+            if ($Fields.ContainsKey($k)) { return $Fields[$k] }
+        }
+        return $null
+    }
+
+    # Fallback: array of @{label=..; value=..} or single-pair objects
+    foreach ($f in @($Fields)) {
+        if ($f.PSObject.Properties.Match('label').Count -and
+            $f.PSObject.Properties.Match('value').Count) {
+            if ($f.label -ieq $wanted) { return $f.value }
+        }
+        foreach ($p in $f.PSObject.Properties) {
+            if ($p.Name -ieq $wanted -or $p.Name -ieq ($wanted -replace '\s+','_')) {
+                return $p.Value
+            }
+        }
+    }
+    $null
 }
 
 
@@ -763,9 +806,9 @@ function Set-ITGAssetsToExistingLayout {
             $state = Normalize-Region $state
             $zip   = Normalize-Zip    $zip
             $cntry = Normalize-CountryName $cntry
-            $LocationName = $($originalasset.name ?? "Location")
+
             if ($addr1 -or $addr2 -or $city -or $state -or $zip -or $cntry) {
-                $LocationName = [ordered]@{
+                $NewAddress = [ordered]@{
                     address_line_1 = $addr1
                     city           = $city
                     state          = $state
