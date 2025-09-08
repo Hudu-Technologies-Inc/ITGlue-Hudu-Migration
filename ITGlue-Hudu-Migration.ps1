@@ -1209,8 +1209,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
         if ($true -eq $settings.AllowForCustomMapping) {
             $customLayout = Select-ObjectFromList -message "Which layout would you like to map ITGlue layout, named $($ITGLayout.attributes.name) to in Hudu? Select 0/skip/null to create new layout for this." -objects $HuduLayouts -allowNull $true
         }
-        $HuduLayout = $($customLayout ?? $($HuduLayouts | Where-Object { $_.name -eq "$($FlexibleLayoutPrefix)$($ITGLayout.attributes.name)" }))
-        if ($HuduLayout -and $HuduLayout.id -and $HuduLayout.id -gt 0) {
+        $HuduLayout = $HuduLayouts | Where-Object { $_.name -eq "$($FlexibleLayoutPrefix)$($ITGLayout.attributes.name)" } | Select-Object -First 1
+        if ($customLayout -and $customLayout.id -and $customLayout.id -gt 0) {
+            [PSCustomObject]@{
+                "Name"       = $customLayout.name
+                "ITGID"      = $ITGLayout.id
+                "HuduID"     = $customLayout.id
+                "Matched"    = $true
+                "HuduObject" = $customLayout
+                "ITGObject"  = $ITGLayout
+                "ITGAssets"  = ""
+                "Imported"   = "Pre-Existing"
+                "CustomLayout" = $true
+            }
+        } elseif ($HuduLayout -and $HuduLayout.id -and $HuduLayout.id -gt 0) {
             [PSCustomObject]@{
                 "Name"       = $ITGLayout.attributes.name
                 "ITGID"      = $ITGLayout.id
@@ -1220,7 +1232,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 "ITGObject"  = $ITGLayout
                 "ITGAssets"  = ""
                 "Imported"   = "Pre-Existing"
-                "CustomLayout" = [bool]$($null -ne $customLayout)
+                "CustomLayout" = $false
             }
         } else {
             [PSCustomObject]@{
@@ -1232,10 +1244,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 "ITGObject"  = $ITGLayout
                 "ITGAssets"  = ""
                 "Imported"   = ""
-                "CustomLayout" = [bool]$($null -ne $customLayout)
+                "CustomLayout" = $false 
             }
         }
     }
+    
 
     Write-Host "Matched Flexible Layouts (Already exist so will not be migrated)"
     $MatchedLayouts | Sort-Object Name | Where-Object { $_.Matched -eq $true } | Select-Object Name | Format-Table
@@ -1479,7 +1492,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         
         foreach ($Layout in $MatchedLayouts){
             Write-Host "Creating base assets for $($layout.name)"
-            $isCustomLayout = [bool]$($Layout.CustomLayout -eq $true)
 
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
@@ -1490,7 +1502,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     'itglue_url' = $ITGAsset.attributes.'resource-url'
                     'itglue_id' = $ITGAsset.id
                 }
-                if ($true -eq $isCustomLayout) {
+                if ($true -eq $Layout.CustomLayout) {
                     $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id).asset
                     $AssetDetails = [PSCustomObject]@{
                         "Name"       = $ITGAsset.attributes.name

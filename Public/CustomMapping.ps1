@@ -224,7 +224,10 @@ function Set-HuduInstance {
     Clear-Host
     New-HuduBaseURL $HuduBaseURL
 }
-
+function Normalize-Key([string]$k) {
+  if (-not $k) { return $null }
+  return ($k.Trim() -replace '\s+', '_').ToLowerInvariant()
+}
 function Get-RelinkableRelationsForAsset {
     param (
         [PSCustomObject]$sourceAsset,
@@ -630,7 +633,7 @@ function Set-ITGAssetsToExistingLayout {
         }
 
         if ($($destlayout.fields | Where-Object {$FieldTypesThatDisallowLayoutUpdate -contains $_.field_type}).count -lt 1){
-            # AddressData, ListSelect fields in target layout prevent us from updating layouts.
+            # ListSelect fields in target layout prevent us from updating layouts.
             # until bug gets solved, we can't update layouts with 'newer' field types.
             # if there are no 'special' dest fields, however, this does work fine
             # until this bug is fixed in hudu api, it is best to manually make sure that corresponding asset tag / itglue id fields exist
@@ -714,6 +717,17 @@ function Set-ITGAssetsToExistingLayout {
         errored=0
         sourceassetcount=$sourceassets.count
     }
+    $labelsNorm     = @{}
+    $requiredNorm   = @{}
+    $stripHTMLNorm  = @{}
+    $destTypeNorm   = @{}
+
+    foreach ($k in $sourcedestlabels.Keys)    { $labelsNorm[   (Normalize-Key $k) ] = $sourcedestlabels[$k] }
+    foreach ($k in $sourcedestrequired.Keys)  { $requiredNorm[ (Normalize-Key $k) ] = $sourcedestrequired[$k] }
+    foreach ($k in $sourcedestStripHTML.Keys) { $stripHTMLNorm[(Normalize-Key $k) ] = $sourcedestStripHTML[$k] }
+    foreach ($k in $sourceDestDataType.Keys)  { $destTypeNorm[ (Normalize-Key $k) ] = $sourceDestDataType[$k] }
+
+
 
     Write-Host "Smooshing $(if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {'using plaintext value-joining'} else {'using traditional HTML value joining'})"
     read-host "$($sourceassets.count) source assets and $($destassets.count) dest assets. press enter to proceed"
@@ -763,34 +777,45 @@ function Set-ITGAssetsToExistingLayout {
             }
         }
         # foreach ($field in $originalasset.fields) {
-        foreach ($kv in $($originalasset.fields | ForEach-Object GetEnumerator)) {
-            $field = @{label = $kv.Key; value = $kv.Value; 
-                required=$($("$($sourcedestrequired[$kv.Key])".ToLower() -eq 'true') ?? $false)
-                stripHTML=$($($sourcedestStripHTML[$kv.Key]) ?? $false)
-                dest_type=$sourceDestDataType["$($kv.Key)"] ?? 'Text'
+        foreach ($kv in ($originalasset.fields | ForEach-Object GetEnumerator)) {
+            $key        = $kv.Key
+            $keyNorm    = Normalize-Key $key
+
+            $field = @{
+                label      = $key
+                value      = $kv.Value
+                required   = ([string]$requiredNorm[$keyNorm]).ToLower() -eq 'true'
+                stripHTML  = [bool]$stripHTMLNorm[$keyNorm]
+                dest_type  = $destTypeNorm[$keyNorm] ?? 'Text'
             }
-            if ($dest_type -eq 'AddressData') {continue}
-            $transformedlabel = $($sourcedestlabels[$field.label] ?? $null)
-            if (-not $transformedlabel -or $null -eq $transformedlabel) {continue}
-                
-            if (-not $field.value -or $null -eq $field.value) {
-                    write-host "no translate for $($field.label)";
-                    if ($true -eq $field.required) {
-                        write-host "no value for REQUIRED $($field.label) => $transformedlabel"
-                        $field.value = $($(read-host "target field $($field.label) => $transformedlabel is required but null, enter value") ?? "None")
-                    } else {
-                        write-host "no value for optional $($field.label) => $transformedlabel"
-                        continue
-                    }
+
+            if ($field.dest_type -eq 'AddressData') { continue }
+
+            $transformedLabel = $labelsNorm[$keyNorm]
+            if (-not $transformedLabel) { continue }
+
+            if ($null -eq $field.value -or $field.value -eq '') {
+                Write-Host "no translate for $($field.label)"
+                if ($field.required) {
+                    Write-Host "no value for REQUIRED $($field.label) => $transformedLabel"
+                    $field.value = (Read-Host "target field $($field.label) => $transformedLabel is required but null, enter value") ?? "None"
+                } else {
+                    Write-Host "no value for optional $($field.label) => $transformedLabel"
+                    continue
+                }
             }
-            if ($true -eq $field.StripHTML) {
+
+            if ($field.stripHTML) {
                 $field.value = "$(Remove-HtmlTags -InputString "$($field.value)")"
             }
-            if ($destFieldType -eq "Email" -or ($($destFieldType -eq "Text" -and $transformedlabel -like "*Email*"))){
-                $field.value="$(Get-CleansedEmailAddresses -InputString "$($field.value)")".Trim()
+
+            if ($field.dest_type -eq "Email" -or
+                ($field.dest_type -eq "Text" -and $transformedLabel -like "*Email*")) {
+                $field.value = "$(Get-CleansedEmailAddresses -InputString "$($field.value)")".Trim()
             }
-            $transformedFields += @{$transformedlabel = $field.value}
-            write-host "$($field.label) => $transformedlabel for value $($field.value)"
+
+            $transformedFields += @{ $transformedLabel = $field.value }
+            Write-Host "$($field.label) => $transformedLabel for value $($field.value)"
         }
         foreach ($kv in $addressMapsByDest.GetEnumerator()) {
             $destLabel = $kv.Key
