@@ -905,12 +905,12 @@ function Set-ITGAssetsToExistingLayout {
                 $newAsset = $(set-huduasset @newAssetRequest).asset
             }
             write-host "Created asset $($newAsset.id)"
-            # archive new asset if original was archived
+            archive new asset if original was archived
             
-            # if ($originalasset.archived -eq $true) {
-            #     Set-HuduAssetArchive -CompanyId $newAsset.company_id -Id $newAsset.id -Archive $true
-            #     $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
-            # }
+            if ($originalasset.archived -eq $true) {
+                Set-HuduAssetArchive -CompanyId $newAsset.company_id -Id $newAsset.id -Archive $true
+                $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
+            }
 
         } catch {
             Write-ErrorObjectsToFile -ErrorObject @{Err=$_; request=$newAssetRequest} -Name $newAssetRequest.name
