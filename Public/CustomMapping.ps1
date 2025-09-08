@@ -124,46 +124,67 @@ This would mean asset A looks like [in conjunction with not including labels]:
 
 #>
 
-function Set-SmooshAssetFieldsToField {
-    param (
-        [PSCustomObject]$sourceAsset,
-        [array]$smooshsource,
-        [bool]$includeBlanks=$false
-    )
-    if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {
-        $lineDelmit = " "
-    } else {
-        $lineDelmit = "<br><hr>"
+function Build-LabelMap {
+  param($Fields)  # supports hashtable, @{label;value} array, or single-pair objects
+  $map = @{}
+
+  if ($Fields -is [System.Collections.IDictionary]) {
+    foreach ($k in $Fields.Keys) { $map[(Normalize-Key $k)] = $Fields[$k] }
+    return $map
+  }
+
+  foreach ($f in @($Fields)) {
+    if ($null -eq $f) { continue }
+    if ($f.PSObject.Properties.Match('label').Count -and $f.PSObject.Properties.Match('value').Count) {
+      $map[(Normalize-Key $f.label)] = $f.value
+      continue
     }
-    foreach ($sourcefieldsmoosh in $smooshsource) {
-        if ($null -eq $($($sourceasset.fields | where-object {$_.label -eq $sourcefieldsmoosh}).value)){
-            if ($false -eq $includeBlanks) {continue}
-        }
-        
-    if ($includeLabelInSmooshedValues){
-        $header = "$sourcefieldsmoosh -"
-    } else {$header = ""}
-    
-    $smooshin=@"
-$header
-$($($sourceasset.fields | where-object {$_.label -eq $sourcefieldsmoosh}).value)
-"@
-$smoosh=@"
-$smoosh
-$lineDelmit
-$smooshin
-"@
+    foreach ($p in $f.PSObject.Properties) {
+      $map[(Normalize-Key $p.Name)] = $p.Value
+    }
+  }
+  $map
 }
-    if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {
-        Write-Host "Not using HTML for smoosh; Cleaning values to text-friendly single-line."
-        $smoosh = $smoosh -replace "`r?`n", ' '
-        $smoosh = $smoosh -replace '\s{2,}', ' '
-        $smoosh = Remove-HtmlTags -InputString $smoosh
-        $smoosh = $smoosh.Trim()
+
+function Get-SmooshedValue {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][pscustomobject]$SourceAsset,
+    [Parameter(Mandatory)][string[]]$Labels,      # your SMOOSHLABELS (with spaces)
+    [bool]$IncludeBlanks = $false,
+    [bool]$IncludeHeaders = $true,                # your $includeLabelInSmooshedValues
+    [bool]$PlainText = $false,                    # your $excludeHTMLinSMOOSH
+    [string]$HtmlDelimiter = "<br><hr>",
+    [string]$TextDelimiter = " "
+  )
+
+  $by = Build-LabelMap $SourceAsset.fields
+  $pieces = New-Object System.Collections.Generic.List[string]
+
+  foreach ($label in $Labels) {
+    if ([string]::IsNullOrWhiteSpace($label)) { continue }
+    $val = $by[(Normalize-Key $label)]
+
+    if ($null -eq $val -or ($val -is [string] -and $val -eq '')) {
+      if (-not $IncludeBlanks) { continue } else { $val = '' }
     }
-    write-host "Smooshed: $smoosh"
-    write-host "$($($smoosh | ConvertTo-Json -depth 66).ToString())"
-    return $smoosh
+
+    $piece = if ($IncludeHeaders) { "$label -`n$val" } else { "$val" }
+    $pieces.Add($piece.Trim())
+  }
+
+  if ($pieces.Count -eq 0) { return '' }
+
+  $out = if ($PlainText) { ($pieces -join $TextDelimiter) } else { ($pieces -join $HtmlDelimiter) }
+
+  if ($PlainText) {
+    $out = $out -replace "`r?`n", ' '
+    $out = $out -replace '\s{2,}', ' '
+    $out = Remove-HtmlTags -InputString $out
+    $out = $out.Trim()
+  }
+
+  $out
 }
 
 function Get-RelinkableAssetTagLayoutFields {
@@ -226,7 +247,9 @@ function Set-HuduInstance {
 }
 function Normalize-Key([string]$k) {
   if (-not $k) { return $null }
-  return ($k.Trim() -replace '\s+', '_').ToLowerInvariant()
+  $k = $k.Trim().ToLowerInvariant()
+  $k = ($k -replace '[\s\-]+','_') -replace '[^a-z0-9_]', ''
+  ($k -replace '_{2,}','_').Trim('_')
 }
 function Get-RelinkableRelationsForAsset {
     param (
@@ -547,10 +570,8 @@ function Set-ITGAssetsToExistingLayout {
         [array]$sourceassets,
         [PSCustomObject]$sourceassetlayout,
         [array]$allrelations,
-        [bool]$stagedMode=$false,
-        [int]$justMap=$false,
-        [hashtable]$userMapping=$null,
-        [bool]$PromptOnMatch=$false
+        [bool]$PromptOnMatch=$false,
+        [bool]$assetExists=$false
     )
 
 
@@ -566,147 +587,129 @@ function Set-ITGAssetsToExistingLayout {
     $mapping=@()
     $inspectlayouts = $false    
     $desiredMapFilePath = $(join-path $ITGCUSTOMMAPPINGSDIR $desiredMapFileName)
-    if ($userMapping -and $null -ne $userMapping -and $stagedMode -and $true -eq $stagedMode) {
-            $srcfields=$userMapping.srcfields
-            $dstfields=$userMapping.dstfields
-            $destassets=$userMapping.destassets
-            $CONSTANTS=$userMapping.CONSTANTS
-            $SMOOSHLABELS=$userMapping.SMOOSHLABELS
-            $mapping=$userMapping.mapping        
-            $includeblanksduringsmoosh=$userMapping.includeblanksduringsmoosh
-            $includeRelationsForArchived=$userMapping.includeRelationsForArchived
-            $includeLabelInSmooshedValues=$userMapping.includeLabelInSmooshedValues
-            $excludeHTMLinSMOOSH=$userMapping.excludeHTMLinSMOOSH
-            $describeRelatedInSmoosh=$userMapping.describeRelatedInSmoosh
-            $destlayout=$userMapping.destassetlayout
-            $sourcedestlabels=$userMapping.sourcedestlabels
-            $sourcedestrequired=$userMapping.sourcedestrequired
-            $sourceDestDataType=$userMapping.sourceDestDataType
-            $addressMapsByDest=$userMapping.addressMapsByDest
-            
-    } else {
-        write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
-        $destlayout   = Select-ObjectFromList -objects $(get-huduassetlayouts) -message "Which dest / target asset layout (migrating assets from $($sourceassetlayout.name)?" -allowNull $false -inspectObjects $true
-        $allassets = $allassets ?? $(get-huduassets -AssetLayoutId $destlayout.id)
+
+    write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
+    $destlayout   = Select-ObjectFromList -objects $(get-huduassetlayouts) -message "Which dest / target asset layout (migrating assets from $($sourceassetlayout.name)?" -allowNull $false -inspectObjects $true
+    $allassets = $allassets ?? $(get-huduassets -AssetLayoutId $destlayout.id)
 
 
-        foreach ($layout in @($destlayout)){
-            write-host "getting relinkable fields from layout $($layout.name)..."
-            $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
-        }
-        if ($(test-path "$desiredMapFilePath")) {
-            write-host "backed up $desiredMapFilePath to $desiredMapFilePath.old"; Move-Item $desiredMapFilePath "$desiredMapFilePath.old" -Force
-        }
-
-        # get fields mapped and ready
-        $srcfields=@()
-        foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) {
-            $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
-        }
-        $dstfields=@()
-        foreach ($field in $destlayout.fields ) { #| Where-Object {$_.field_type -ne "ListSelect"}
-            $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
-        }
-        foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
-            $fields.value | convertto-json -depth 66 | out-file $(join-path $ITGCUSTOMMAPPINGSDIR "$($fields.name)-fields.json")
-        }
-        build-templatemap -destfields $dstfields -desiredMapFilePath $desiredMapFilePath
-
-        read-host "press enter if you filled in your mapfile, $desiredMapFilePath"
-
-        while (-not $mapping -or $mapping.count -lt 1){
-            $mapping=@()
-            try {
-                . $desiredMapFilePath
-                if (-not $mapping -or $mapping.count -lt 1){
-                    Read-Host "Please adjust your mapping file, $($desiredMapFilePath), as it does not seem to have a usable or properly-formatted mapping definition. Please adjust and press ENTER when adjusted."
-                }
-            } catch {
-                $mapping=@()
-                Read-Host "Please adjust your mapping file, $($desiredMapFilePath), as it an error was encountered during import ($_). Please adjust and press ENTER when adjusted."
-            }
-            if (-not $(test-path "$desiredMapFilePath")) {
-                Write-Host "Mapfile appears to have been deleted from $desiredMapFilePath? creating again, you will still need to fill it out, however."
-                build-templatemap -destfields $dstfields -desiredMapFilePath $desiredMapFilePath
-                . $desiredMapFilePath
-            }            
-        }
-
-        if ($($destlayout.fields | Where-Object {$FieldTypesThatDisallowLayoutUpdate -contains $_.field_type}).count -lt 1){
-            # ListSelect fields in target layout prevent us from updating layouts.
-            # until bug gets solved, we can't update layouts with 'newer' field types.
-            # if there are no 'special' dest fields, however, this does work fine
-            # until this bug is fixed in hudu api, it is best to manually make sure that corresponding asset tag / itglue id fields exist
-            # if target layout doesnt have either of the currently-known disallowed types, however, it's business as usual
-
-
-            if ($true -eq $settings.IncludeITGlueID -and [bool]$($(($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"})).count -gt 0)) {
-                Write-Host "Itglue ID set to be included, injecting into dest layout"
-                $currentFields = $destlayout.fields | Where-Object {$_.field_type -ne "ListSelect"} ?? @()
-                $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
-                if ($sourceITGfield) {$currentFields += $sourceITGfield}
-                $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
-                Write-Host "added ITGLueID field, refreshing layouts"
-                $destlayout = Get-HuduAssetLayouts -id $destlayout.id
-                $mapping+=@{from="ITGlue ID"; to="ITGlue ID"; dest_type='Text'; required='False'}
-            }
-
-            foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
-                $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
-                if ($null -ne $matchingDestField) {
-                    Write-Host "source tag field $($field.label) Destination layout has corresponding tag field: $($matchingDestField.label); adding to mapping."
-                    $mapping+=@{from="$($field.label)"; to="$($matchingDestField.label)"; dest_type='AssetTag'}
-                } else {
-                    $linkableLayout=$(get-huduassetlayouts -id $field.linkable_id) ?? $null
-                    if ($null -ne $linkableLayout -and 'yes' -eq $(Select-ObjectFromList -message "Would you like to add corresponding assettag field $($field.label) from source layout $($sourceassetlayout.name) to your destination layout, $($destlayout.name)?")){
-                        $currentFields = $destlayout.fields ?? @()
-                        $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
-                        $currentFields += @{
-                            position     = $($MaxPosition+1)
-                            label        = $field.label
-                            field_type   = 'AssetTag'
-                            show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
-                            linkable_id  = $field.linkable_id
-                        }
-                        $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
-                        Write-Host "added assettag field, refreshing layouts"
-                        $destlayout = Get-HuduAssetLayouts -id $destlayout.id
-                        $mapping+=@{from="$($field.label)"; to="$($field.label)"; dest_type='AssetTag'}
-                    }
-                }
-            }
-        }
-        foreach ($entry in $mapping) {
-            if ($entry.dest_type -eq 'AddressData') {
-                $addressMapsByDest[$entry.to] = $entry.address
-                $sourcedestrequired[$entry.from] = $false
-                $sourceDestDataType[$entry.from] = 'AddressData'
-                $sourcedestlabels[$entry.from] = 'Meta'
-                continue
-            }            
-            $sourcedestStripHTML[$entry.from] = [bool]$(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
-            write-host "mapping $($entry.from) to $($entry.to) $(if ($true -eq $sourcedestStripHTML[$entry.from]) {"destination field of $($entry.to) will have HTML stripped."} else {'as-is'})"
-            $sourcedestlabels[$entry.from] = $entry.to
-            $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
-            $sourceDestDataType[$entry.from] = $($entry.dest_type ?? 'Text')
-        }
-        Write-Host "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target press enter to proceed"
-
-        # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
-        # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destlayout.id}) 
-        $destassets = $allassets
-        if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; return}
-        $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
-        if ($mappingtosmooshed) {
-            $smooshmappingto = $($mapping | where-object {$_.from="SMOOSH"}).to
-            write-host "Smooshing $SMOOSHLABELS => $mappingtosmooshed; $smooshmappingto"
-        }
-        if ($CONSTANTS) {
-            foreach ($c in $CONSTANTS){
-                write-host "Dest Labels containing $($c.to_label) will be given static value from literal $($c.literal) as literal value!"
-            }
-        } else {write-host "No constants mapped"}
+    foreach ($layout in @($destlayout)){
+        write-host "getting relinkable fields from layout $($layout.name)..."
+        $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
     }
+    if ($(test-path "$desiredMapFilePath")) {
+        write-host "backed up $desiredMapFilePath to $desiredMapFilePath.old"; Move-Item $desiredMapFilePath "$desiredMapFilePath.old" -Force
+    }
+
+    # get fields mapped and ready
+    $srcfields=@()
+    foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) {
+        $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
+    }
+    $dstfields=@()
+    foreach ($field in $destlayout.fields ) { #| Where-Object {$_.field_type -ne "ListSelect"}
+        $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
+    }
+    foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
+        $fields.value | convertto-json -depth 66 | out-file $(join-path $ITGCUSTOMMAPPINGSDIR "$($fields.name)-fields.json")
+    }
+    build-templatemap -destfields $dstfields -desiredMapFilePath $desiredMapFilePath
+
+    read-host "press enter if you filled in your mapfile, $desiredMapFilePath"
+
+    while (-not $mapping -or $mapping.count -lt 1){
+        $mapping=@()
+        try {
+            . $desiredMapFilePath
+            if (-not $mapping -or $mapping.count -lt 1){
+                Read-Host "Please adjust your mapping file, $($desiredMapFilePath), as it does not seem to have a usable or properly-formatted mapping definition. Please adjust and press ENTER when adjusted."
+            }
+        } catch {
+            $mapping=@()
+            Read-Host "Please adjust your mapping file, $($desiredMapFilePath), as it an error was encountered during import ($_). Please adjust and press ENTER when adjusted."
+        }
+        if (-not $(test-path "$desiredMapFilePath")) {
+            Write-Host "Mapfile appears to have been deleted from $desiredMapFilePath? creating again, you will still need to fill it out, however."
+            build-templatemap -destfields $dstfields -desiredMapFilePath $desiredMapFilePath
+            . $desiredMapFilePath
+        }            
+    }
+
+    if ($($destlayout.fields | Where-Object {$FieldTypesThatDisallowLayoutUpdate -contains $_.field_type}).count -lt 1){
+        # ListSelect fields in target layout prevent us from updating layouts.
+        # until bug gets solved, we can't update layouts with 'newer' field types.
+        # if there are no 'special' dest fields, however, this does work fine
+        # until this bug is fixed in hudu api, it is best to manually make sure that corresponding asset tag / itglue id fields exist
+        # if target layout doesnt have either of the currently-known disallowed types, however, it's business as usual
+
+
+        if ($true -eq $settings.IncludeITGlueID -and [bool]$($(($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"})).count -gt 0)) {
+            Write-Host "Itglue ID set to be included, injecting into dest layout"
+            $currentFields = $destlayout.fields | Where-Object {$_.field_type -ne "ListSelect"} ?? @()
+            $sourceITGfield = $($sourceassetlayout.fields | Where-Object {$_.label -eq "ITGlue ID"} | Select-Object -First 1)
+            if ($sourceITGfield) {$currentFields += $sourceITGfield}
+            $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+            Write-Host "added ITGLueID field, refreshing layouts"
+            $destlayout = Get-HuduAssetLayouts -id $destlayout.id
+            $mapping+=@{from="ITGlue ID"; to="ITGlue ID"; dest_type='Text'; required='False'}
+        }
+
+        foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and -not @($null, 0) -contains $_.linkable_id}) {
+            $matchingDestField = $($destlayout.fields | Where-Object {$_.field_type -eq "AssetTag" -and $field.linkable_id -eq $_.linkable_id} | Select-Object -First 1) ?? $null
+            if ($null -ne $matchingDestField) {
+                Write-Host "source tag field $($field.label) Destination layout has corresponding tag field: $($matchingDestField.label); adding to mapping."
+                $mapping+=@{from="$($field.label)"; to="$($matchingDestField.label)"; dest_type='AssetTag'}
+            } else {
+                $linkableLayout=$(get-huduassetlayouts -id $field.linkable_id) ?? $null
+                if ($null -ne $linkableLayout -and 'yes' -eq $(Select-ObjectFromList -message "Would you like to add corresponding assettag field $($field.label) from source layout $($sourceassetlayout.name) to your destination layout, $($destlayout.name)?")){
+                    $currentFields = $destlayout.fields ?? @()
+                    $MaxPosition = $($currentFields.position | Sort-Object -Descending | Select-Object -First) ?? 1
+                    $currentFields += @{
+                        position     = $($MaxPosition+1)
+                        label        = $field.label
+                        field_type   = 'AssetTag'
+                        show_in_list = $($field.show_in_list ?? 'false').ToString().ToLower()
+                        linkable_id  = $field.linkable_id
+                    }
+                    $null = Set-HuduAssetLayout -id $destlayout.id -fields $currentFields -name $destlayout.name
+                    Write-Host "added assettag field, refreshing layouts"
+                    $destlayout = Get-HuduAssetLayouts -id $destlayout.id
+                    $mapping+=@{from="$($field.label)"; to="$($field.label)"; dest_type='AssetTag'}
+                }
+            }
+        }
+    }
+    foreach ($entry in $mapping) {
+        if ($entry.dest_type -eq 'AddressData') {
+            $addressMapsByDest[$entry.to] = $entry.address
+            $sourcedestrequired[$entry.from] = $false
+            $sourceDestDataType[$entry.from] = 'AddressData'
+            $sourcedestlabels[$entry.from] = 'Meta'
+            continue
+        }            
+        $sourcedestStripHTML[$entry.from] = [bool]$(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
+        write-host "mapping $($entry.from) to $($entry.to) $(if ($true -eq $sourcedestStripHTML[$entry.from]) {"destination field of $($entry.to) will have HTML stripped."} else {'as-is'})"
+        $sourcedestlabels[$entry.from] = $entry.to
+        $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
+        $sourceDestDataType[$entry.from] = $($entry.dest_type ?? 'Text')
+    }
+    Write-Host "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target press enter to proceed"
+
+    # $sourceassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
+    # $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destlayout.id}) 
+    $destassets = $allassets
+    if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; return}
+    $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
+    if ($mappingtosmooshed) {
+        $smooshmappingto = $($mapping | where-object {$_.from="SMOOSH"}).to
+        write-host "Smooshing $SMOOSHLABELS => $mappingtosmooshed; $smooshmappingto"
+    }
+    if ($CONSTANTS) {
+        foreach ($c in $CONSTANTS){
+            write-host "Dest Labels containing $($c.to_label) will be given static value from literal $($c.literal) as literal value!"
+        }
+    } else {write-host "No constants mapped"}
+    
     $totalcounts = @{
         fromablescreated=0
         toablescreated=0
@@ -850,17 +853,22 @@ function Set-ITGAssetsToExistingLayout {
             $linkableToAssetInfo = Get-RelinkableRelationsForAsset -sourceAsset $originalasset -labelLinkMap $sourceassetlayout.linkables
         }
         # map custom smooshed fields ( notes, richtext, whatever we smooshed to in map)
-        if ($true -eq $mappingtosmooshed) {
-            $valueToAdd="$(Set-SmooshAssetFieldsToField -sourceAsset $originalasset -smooshsource $SMOOSHLABELS -includeBlanks $($includeblanksduringsmoosh ?? $false))"
-            # if linkables, smoosh in too.
-            if ($describeRelatedInSmoosh -and $true -eq $describeRelatedInSmoosh){
-                $describerelated=Get-SmooshedLinkableDescription -linkableObjects $linkableToAssetInfo
-                $valueToAdd="$describerelated<br>$valueToAdd"
-                if ($valueToAdd -ne "<br>") {
-                    if ($true -eq $excludeHTMLinSMOOSH){$valueToAdd = Remove-HtmlTags -InputString $valueToAdd }
-                    $transformedFields+=@{"$($sourcedestlabels["SMOOSH"])" = $valueToAdd}
-                }
-            }        
+        if ($mappingtosmooshed) {
+            $valueToAdd = Get-SmooshedValue `
+                -SourceAsset $originalasset `
+                -Labels $SMOOSHLABELS `
+                -IncludeBlanks:$includeblanksduringsmoosh `
+                -IncludeHeaders:$includeLabelInSmooshedValues `
+                -PlainText:$excludeHTMLinSMOOSH
+
+            if ($describeRelatedInSmoosh) {
+                $describerelated = Get-SmooshedLinkableDescription -linkableObjects $linkableToAssetInfo
+                $valueToAdd = if ($excludeHTMLinSMOOSH) { "$describerelated $valueToAdd" } else { "$describerelated<br>$valueToAdd" }
+            }
+            if ($true -eq $excludeHTMLinSMOOSH){$valueToAdd = Remove-HtmlTags -InputString $valueToAdd }
+            if ($valueToAdd -ne "<br>" -and -not [string]::IsNullOrWhiteSpace($valueToAdd)){
+                $transformedFields+=@{"$($sourcedestlabels["SMOOSH"])" = $valueToAdd}
+            }
         }
 
         $newAssetRequest = @{
@@ -888,7 +896,7 @@ function Set-ITGAssetsToExistingLayout {
 
         try {
             write-host "$($($newAssetRequest | ConvertTo-Json -depth 66).ToString())"
-            if ($false -eq $stagedMode) {
+            if ($false -eq $assetExists) {
                 $newAsset = $(new-huduasset @newAssetRequest).asset
                 $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'CreatedNew' -Value $true  -Force
             } else {
@@ -966,23 +974,23 @@ function Set-ITGAssetsToExistingLayout {
             }
         }
     }
-        $mappingInfo = @{
-                CONSTANTS                       =$CONSTANTS
-                SMOOSHLABELS                    =$SMOOSHLABELS
-                mapping                         =$mapping
-                includeLabelInSmooshedValues    =$includeLabelInSmooshedValues
-                describeRelatedInSmoosh         =$describeRelatedInSmoosh
-                excludeHTMLinSMOOSH             =$excludeHTMLinSMOOSH
-                includeRelationsForArchived     =$includeRelationsForArchived
-                includeblanksduringsmoosh       =$includeblanksduringsmoosh
-                sourceDestDataType              = $sourceDestDataType
-                addressMapsByDest               = $addressMapsByDest
-        }
+    $mappingInfo = @{
+        CONSTANTS                       =$CONSTANTS
+        SMOOSHLABELS                    =$SMOOSHLABELS
+        mapping                         =$mapping
+        includeLabelInSmooshedValues    =$includeLabelInSmooshedValues
+        describeRelatedInSmoosh         =$describeRelatedInSmoosh
+        excludeHTMLinSMOOSH             =$excludeHTMLinSMOOSH
+        includeRelationsForArchived     =$includeRelationsForArchived
+        includeblanksduringsmoosh       =$includeblanksduringsmoosh
+        sourceDestDataType              = $sourceDestDataType
+        addressMapsByDest               = $addressMapsByDest
+    }
 
-        return @{
-            createdAssets   =$createdAssets
-            destlayout      =$destlayout
-            counts          =$totalcounts
-            mappingInfo     =$mappingInfo
-        }
+    return @{
+        createdAssets   =$createdAssets
+        destlayout      =$destlayout
+        counts          =$totalcounts
+        mappingInfo     =$mappingInfo
+    }
 }

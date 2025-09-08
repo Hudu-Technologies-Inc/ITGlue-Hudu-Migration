@@ -503,8 +503,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
                             -desiredMapFileName "$LocMigrationName.ps1" `
                             -sourceAssets $imports `
                             -sourceAssetLayout  $mockLayout `
-                            -allrelations @() `
-                            -stagedMode $false -justMap $false -userMapping $null
+                            -allrelations @() -assetExists $false -PromptOnMatch $true
+
         $MatchedLocations = $LocationsResult.createdAssets | Where-Object {$_.ITGId -and $null -ne $_.ITGId}
         $LocationLayout   =   $LocationsResult.destlayout
         $LocImportAssetLayoutName = $LocationLayout.name
@@ -904,7 +904,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                                 -sourceAssets $configImports["config"] `
                                 -sourceAssetLayout  $mockLayout `
                                 -allrelations @() `
-                                -stagedMode $false -justMap $false -userMapping $null
+                                -assetExists $false -PromptOnMatch $true
             $MatchedConfigurations = $ConfigsResult.createdAssets
             Write-Host "Added $($ConfigsResult.counts.assetsmoved ?? 0) of $($MatchedConfigurations.count ?? 0) from mock ITG to $($ConfigsResult.destlayout.name)"
         } else {
@@ -950,7 +950,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                                     -sourceAssets $configImports["$ConfigType"] `
                                     -sourceAssetLayout  $mockLayout `
                                     -allrelations @() `
-                                    -stagedMode $false -justMap $false -userMapping $null
+                                -assetExists $false -PromptOnMatch $true
                 $MatchedConfigurations = $ConfigsResult.createdAssets
                 Write-Host "Added $($ConfigsResult.counts.assetsmoved ?? 0) of $($MatchedConfigurations.count ?? 0) from mock ITG to $($ConfigsResult.destlayout.name)"
 
@@ -1165,7 +1165,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
                             -sourceAssets $Contactimports `
                             -allrelations @() `
                             -sourceAssetLayout $mockContactsLayout `
-                            -stagedMode $false -justMap $false -userMapping $null
+                                -assetExists $false -PromptOnMatch $true
         $MatchedContacts = $ContactsResult.createdAssets
         Write-Host "Added $($ContactsResult.counts.assetsmoved ?? 0) of $($MatchedContacts.count ?? 0) from mock ITG to $($ContactsResult.destlayout.name)"
 
@@ -1442,6 +1442,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             }
             if ($UpdateLayout.CustomLayout -and $true -eq $UpdateLayout.CustomLayout) {    
                 $UpdateLayout | Add-Member -MemberType 'NoteProperty' -Name 'MockFields' -Value $($UpdateLayoutFields)
+                $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID                
                 Write-Host "Populated mock layout field data for mapping $($UpdateLayoutMockFields.count) faux fields for layout name $($UpdateLayout.Name)"
             } else {
                 $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
@@ -1732,7 +1733,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 -sourceAssets $imports `
                                 -allrelations @() `
                                 -sourceAssetLayout $MockSourceLayout `
-                                -stagedMode $true -justMap $false -userMapping $null
+                                -assetExists $true -PromptOnMatch $true
             $ParsedCustomAssets["$($Layout.name)"]=$UserAssetMapResult.createdAssets
         }
 
