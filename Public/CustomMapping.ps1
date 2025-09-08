@@ -432,7 +432,7 @@ $mapEntries = foreach ($f in $destfields) {
     $req = ([string]$($f.required ?? $false)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     if ($desttype -eq "ListSelect" -and $f.list_items) {
         "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'; striphtml='False';
-                valid_listitems=" +'@({0})' -f (($f.list_items | ForEach-Object { "'{0}'" -f ($_ -replace "'", "''") }) -join ',')
+                valid_listitems=" +'@({0})' -f (($f.list_items | ForEach-Object { "'{0}'" -f ($_ -replace "'", "''") }) -join ',')+'}'
     } 
     elseif ($desttype -eq "AddressData") {
         "@{to='$toEsc'; from='Meta'; dest_type='AddressData'; required='$req'; address=@{
@@ -565,6 +565,7 @@ function Set-ITGAssetsToExistingLayout {
         [array]$sourceassets,
         [PSCustomObject]$sourceassetlayout,
         [array]$allrelations,
+        [PSCustomObject]$destLayout=$null,
         [bool]$PromptOnMatch=$false,
         [bool]$assetExists=$false
     )
@@ -585,7 +586,7 @@ function Set-ITGAssetsToExistingLayout {
     $desiredMapFilePath = $(join-path $ITGCUSTOMMAPPINGSDIR $desiredMapFileName)
 
     write-host "$(if ($allassets -and $null -ne $allassets) {'using existing asset cache'} else {'refreshing asset cache'})"
-    $destlayout   = Select-ObjectFromList -objects $(get-huduassetlayouts) -message "Which dest / target asset layout (migrating assets from $($sourceassetlayout.name)?" -allowNull $false -inspectObjects $true
+    $destlayout = $destLayout ?? $(Select-ObjectFromList -objects $(get-huduassetlayouts) -message "Which dest / target asset layout (migrating assets from $($sourceassetlayout.name)?" -allowNull $false -inspectObjects $true)
     $allassets = $allassets ?? $(get-huduassets -AssetLayoutId $destlayout.id)
 
 
@@ -750,6 +751,7 @@ function Set-ITGAssetsToExistingLayout {
         $match = $destassets | where-object {$_.company_id -eq $originalasset.ITGObject.HuduCompanyID -and $_.name -eq "$($originalasset.name)"} | Select-Object -First 1
         if ($match -and $null -ne $match) {
             $totalcounts.assetsmatched=$totalcounts.assetsmatched+1
+            # if we are prompting user on match, allow them to select which version is kept.
             if ($true -eq $PromptOnMatch){
                 write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
                 write-host "original: $($($originalasset | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Yellow
@@ -765,6 +767,7 @@ function Set-ITGAssetsToExistingLayout {
             } else {
                 $addMatch = $true
             }
+            # if we match on a dest layout item having same company and same / similar name, update the record to that of the match for later
             if ($true -eq $addMatch) {
                 $totalcounts.assetsmatched=$totalcounts.assetsmatched+1
                 $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'HuduObject' -Value $match -Force
@@ -925,10 +928,9 @@ function Set-ITGAssetsToExistingLayout {
                 $newAsset = $(set-huduasset @newAssetRequest).asset
             }
             write-host "Created asset $($newAsset.id)"
-            archive new asset if original was archived
             
             if ($originalasset.archived -eq $true) {
-                Set-HuduAssetArchive -CompanyId $newAsset.company_id -Id $newAsset.id -Archive $true
+                Set-HuduAssetArchive -CompanyId $newAsset.company_id -Id $newAsset.id -Archived $true
                 $totalcounts.assetsarchived=$totalcounts.assetsarchived+1
             }
 

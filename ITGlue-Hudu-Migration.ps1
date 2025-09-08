@@ -1705,7 +1705,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
             if ($true -eq $UpdateAsset.IsCustomLayout) {
                 $updateAsset  | Add-Member -MemberType 'NoteProperty' -Name 'fields' -Value $AssetFields -Force
                 $updateAsset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $UpdateAsset.HuduObject.asset_layout_id -Force
-                $MatchedCustomAssets.add($UpdateAsset)
             } else {
                 $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields $AssetFields).asset
                 $UpdateAsset.HuduObject = $UpdatedHuduAsset
@@ -1718,8 +1717,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         #populate custom-layout assets 
         #We'll need to make sure we have a mapping of fields for each custom layout definition elected by user
         #for custom mappings, first go thru and make stub assets
-        foreach ($Layout in $($MatchedLayouts | Where-Object {$_.CustomLayout -and $true -eq $_.CustomLayout})){
-            $imports = $($MatchedCustomAssets | Where-Object {$_.Layout.id -eq $Layout.id})
+        $customLayoutsToProcess = $MatchedAssets.customlayout | Select-Object -ExpandProperty ITGID |
+                        Where-Object { $_ } |
+                        Sort-Object -Unique
+
+
+        foreach ($custom in $customLayoutsToProcess){
+            $layout = $MatchedAssets.customLayout | where-object {$_.ITGObject.id -eq $custom} | Select-Object -First 1
+            $imports = $MatchedAssets | where-object {$_.ITGObject.attributes.'flexible-asset-type-id' -eq $custom}
+            write-host "$($imports.count) imports for $($layout.name)"
             $MockSourceLayout =   [PSCustomObject]@{Id      = $([int]"-$(get-random -minimum 99 -maximum 999)")
                                                     name    = "Ephemeral-$($Layout.name)"
                                                     fields  = $layout.MockFields}
@@ -1733,8 +1739,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 -sourceAssets $imports `
                                 -allrelations @() `
                                 -sourceAssetLayout $MockSourceLayout `
-                                -assetExists $true -PromptOnMatch $false
-            $ParsedCustomAssets["$($Layout.name)"]=$UserAssetMapResult.createdAssets
+                                -destLayout $layout.HuduObject `
+                                -assetExists $true -PromptOnMatch $false 
+            $parsedAssets=$UserAssetMapResult.createdAssets
         }
 
         $MatchedAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Assets.json"
