@@ -310,15 +310,6 @@ $describeRelatedInSmoosh = $true
 $includeLabelInSmooshedValues = $true
 '@
 
-$labelAliases = @{
-  'Address 1'   = 'address_1'
-  'Address 2'   = 'address_2'
-  'City'        = 'city'
-  'Region'      = 'region'       # your source uses 'region' for state
-  'Postal Code' = 'postal_code'
-  'Country'     = 'country'
-}
-
 function Get-FieldValueByLabel {
     param($Fields, [string]$Label, $Aliases = $null)
     if (-not $Label) { return $null }
@@ -439,7 +430,11 @@ $mapEntries = foreach ($f in $destfields) {
     $toEsc = ([string]$f.label) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $desttype = ([string]$($f.field_type ?? $f.type)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
     $req = ([string]$($f.required ?? $false)) -replace "'", "''"  # double single-quotes inside single-quoted PS strings
-    if ($desttype -eq "AddressData") {
+    if ($desttype -eq "ListSelect" -and $f.list_items) {
+        "@{from='';to='$toEsc'; dest_type='$desttype'; required='$req'; striphtml='False';
+                valid_listitems=" +'@({0})' -f (($f.list_items | ForEach-Object { "'{0}'" -f ($_ -replace "'", "''") }) -join ',')
+    } 
+    elseif ($desttype -eq "AddressData") {
         "@{to='$toEsc'; from='Meta'; dest_type='AddressData'; required='$req'; address=@{
                 address_line_1=@{from=''}
                 address_line_2=@{from=''}
@@ -577,6 +572,7 @@ function Set-ITGAssetsToExistingLayout {
 
     $sourceDestDataType = @{}
     $addressMapsByDest    = @{} 
+    $listMapsByDest    = @{} 
 
     $createdAssets = @()    
     $sourcedestlabels = @{}
@@ -608,7 +604,12 @@ function Set-ITGAssetsToExistingLayout {
     }
     $dstfields=@()
     foreach ($field in $destlayout.fields ) { #| Where-Object {$_.field_type -ne "ListSelect"}
-        $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
+        if ($field.field_type -eq "ListSelect" -and $field.list_id) {
+            $list_items = $(get-hudulists -id 6).list_items.name
+            $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false); list_items = @($list_items)}
+        } else {
+            $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
+        }
     }
     foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
         $fields.value | convertto-json -depth 66 | out-file $(join-path $ITGCUSTOMMAPPINGSDIR "$($fields.name)-fields.json")
@@ -686,12 +687,15 @@ function Set-ITGAssetsToExistingLayout {
             $sourceDestDataType[$entry.from] = 'AddressData'
             $sourcedestlabels[$entry.from] = 'Meta'
             continue
-        }            
+        }
         $sourcedestStripHTML[$entry.from] = [bool]$(@('t','true','yes','y') -contains "$($entry.striphtml ?? 'false')".ToLower())
         write-host "mapping $($entry.from) to $($entry.to) $(if ($true -eq $sourcedestStripHTML[$entry.from]) {"destination field of $($entry.to) will have HTML stripped."} else {'as-is'})"
         $sourcedestlabels[$entry.from] = $entry.to
         $sourcedestrequired[$entry.from] = $($entry.to ?? $false)
         $sourceDestDataType[$entry.from] = $($entry.dest_type ?? 'Text')
+        if ($entry.dest_type -eq 'ListSelect' -and $entry.valid_listitems -and $entry.valid_listitems.count -gt 0){
+            $listMapsByDest[$entry.to] = $entry.valid_listitems
+        }        
     }
     Write-Host "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target press enter to proceed"
 
@@ -724,11 +728,14 @@ function Set-ITGAssetsToExistingLayout {
     $requiredNorm   = @{}
     $stripHTMLNorm  = @{}
     $destTypeNorm   = @{}
+    $listMapsByDestNorm = @{}
 
+    # make a normalized map of each source/dest key or lookup value in case of nonstandard chars
     foreach ($k in $sourcedestlabels.Keys)    { $labelsNorm[   (Normalize-Key $k) ] = $sourcedestlabels[$k] }
     foreach ($k in $sourcedestrequired.Keys)  { $requiredNorm[ (Normalize-Key $k) ] = $sourcedestrequired[$k] }
     foreach ($k in $sourcedestStripHTML.Keys) { $stripHTMLNorm[(Normalize-Key $k) ] = $sourcedestStripHTML[$k] }
     foreach ($k in $sourceDestDataType.Keys)  { $destTypeNorm[ (Normalize-Key $k) ] = $sourceDestDataType[$k] }
+    foreach ($k in $listMapsByDest.Keys)      { $listMapsByDestNorm[ (Normalize-Key $k) ] = $listMapsByDest[$k] }
 
 
 
@@ -790,18 +797,28 @@ function Set-ITGAssetsToExistingLayout {
                 required   = ([string]$requiredNorm[$keyNorm]).ToLower() -eq 'true'
                 stripHTML  = [bool]$stripHTMLNorm[$keyNorm]
                 dest_type  = $destTypeNorm[$keyNorm] ?? 'Text'
+                list_items = $null
             }
 
             if ($field.dest_type -eq 'AddressData') { continue }
 
             $transformedLabel = $labelsNorm[$keyNorm]
             if (-not $transformedLabel) { continue }
+            if ($dest_type -eq 'ListSelect' -and $null -ne $listMapsByDestNorm["$transformedLabel"]) {
+                $validListItems = $listMapsByDestNorm["$transformedLabel"]
+                # if listselect item not in valid range, default to first listitem if required otherwise skip as it's invalid
+                if (-not $validListItems -contains $field.value){
+                    if ($field.required){
+                        $field.value = $validListItems | Select-Object -first 1
+                    } else {write-host "skipping invalid value $($field.value)- not in range of list items $($($validListItems | ConvertTo-Json).ToString())"; continue}
+                }
+            }
 
             if ($null -eq $field.value -or $field.value -eq '') {
                 Write-Host "no translate for $($field.label)"
                 if ($field.required) {
                     Write-Host "no value for REQUIRED $($field.label) => $transformedLabel"
-                    $field.value = (Read-Host "target field $($field.label) => $transformedLabel is required but null, enter value") ?? "None"
+                    $field.value = (Read-Host "target field $($field.labexl) => $transformedLabel is required but null, enter value") ?? "None"
                 } else {
                     Write-Host "no value for optional $($field.label) => $transformedLabel"
                     continue
@@ -811,7 +828,10 @@ function Set-ITGAssetsToExistingLayout {
             if ($field.stripHTML) {
                 $field.value = "$(Remove-HtmlTags -InputString "$($field.value)")"
             }
+            if ($field.dest_type -eq 'ListSelect' -and $field.list) { 
 
+                
+             }
             if ($field.dest_type -eq "Email" -or
                 ($field.dest_type -eq "Text" -and $transformedLabel -like "*Email*")) {
                 $field.value = "$(Get-CleansedEmailAddresses -InputString "$($field.value)")".Trim()

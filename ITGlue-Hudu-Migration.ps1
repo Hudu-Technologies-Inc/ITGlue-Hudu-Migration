@@ -503,7 +503,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
                             -desiredMapFileName "$LocMigrationName.ps1" `
                             -sourceAssets $imports `
                             -sourceAssetLayout  $mockLayout `
-                            -allrelations @() -assetExists $false -PromptOnMatch $true
+                            -allrelations @() -assetExists $false -PromptOnMatch $false
 
         $MatchedLocations = $LocationsResult.createdAssets | Where-Object {$_.ITGId -and $null -ne $_.ITGId}
         $LocationLayout   =   $LocationsResult.destlayout
@@ -904,7 +904,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                                 -sourceAssets $configImports["config"] `
                                 -sourceAssetLayout  $mockLayout `
                                 -allrelations @() `
-                                -assetExists $false -PromptOnMatch $true
+                                -assetExists $false -PromptOnMatch $false
             $MatchedConfigurations = $ConfigsResult.createdAssets
             Write-Host "Added $($ConfigsResult.counts.assetsmoved ?? 0) of $($MatchedConfigurations.count ?? 0) from mock ITG to $($ConfigsResult.destlayout.name)"
         } else {
@@ -950,7 +950,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                                     -sourceAssets $configImports["$ConfigType"] `
                                     -sourceAssetLayout  $mockLayout `
                                     -allrelations @() `
-                                -assetExists $false -PromptOnMatch $true
+                                -assetExists $false -PromptOnMatch $false
                 $MatchedConfigurations = $ConfigsResult.createdAssets
                 Write-Host "Added $($ConfigsResult.counts.assetsmoved ?? 0) of $($MatchedConfigurations.count ?? 0) from mock ITG to $($ConfigsResult.destlayout.name)"
 
@@ -1165,7 +1165,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
                             -sourceAssets $Contactimports `
                             -allrelations @() `
                             -sourceAssetLayout $mockContactsLayout `
-                                -assetExists $false -PromptOnMatch $true
+                                -assetExists $false -PromptOnMatch $false
         $MatchedContacts = $ContactsResult.createdAssets
         Write-Host "Added $($ContactsResult.counts.assetsmoved ?? 0) of $($MatchedContacts.count ?? 0) from mock ITG to $($ContactsResult.destlayout.name)"
 
@@ -1733,7 +1733,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 -sourceAssets $imports `
                                 -allrelations @() `
                                 -sourceAssetLayout $MockSourceLayout `
-                                -assetExists $true -PromptOnMatch $true
+                                -assetExists $true -PromptOnMatch $false
             $ParsedCustomAssets["$($Layout.name)"]=$UserAssetMapResult.createdAssets
         }
 
