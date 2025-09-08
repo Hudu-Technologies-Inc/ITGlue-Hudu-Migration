@@ -763,9 +763,9 @@ function Set-ITGAssetsToExistingLayout {
             $state = Normalize-Region $state
             $zip   = Normalize-Zip    $zip
             $cntry = Normalize-CountryName $cntry
-
+            $LocationName = $($originalasset.name ?? "Location")
             if ($addr1 -or $addr2 -or $city -or $state -or $zip -or $cntry) {
-                $NewAddress = [ordered]@{
+                $LocationName = [ordered]@{
                     address_line_1 = $addr1
                     city           = $city
                     state          = $state

@@ -485,15 +485,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         MigrationName         = $LocMigrationName
         ITGImports            = $ITGLocations
     }
-    if ($true -eq $settings.AllowForCustomMapping) {
-        $customMapLocations = $customMapLocations ?? [bool]$($(Select-ObjectFromList -message "would you like to custom-map Locations to existing layout or use the standard new ITG layout? $($($LocAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
-    } else {
-        $customMapLocations = $false
-    }
+
 
 
     #Import Locations
-    if ($true -eq $customMapLocations) {
+    if ($true -eq $settings.AllowForCustomMapping -and $($true -eq $(Select-ObjectFromList -objects @($true,$false) -message "Would you like to custom-map locations to existing asset layout in Hudu? (true) or use the provided layout (false)"))) {
         $imports = Convert-ITGImportsToHuduPreview `
             -ITGImports $ITGLocations `
             -CompaniesToMigrate $CompaniesToMigrate `
@@ -893,7 +889,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             MigrationName         = $ConfigMigrationName
             ITGImports            = $ITGConfigurations
         }
-        if ($true -eq $settings.AllowForCustomMapping) {
+        if ($true -eq $settings.AllowForCustomMapping -and $($true -eq $(Select-ObjectFromList -objects @($true,$false) -message "Would you like to custom-map configs (as a whole) to existing asset layout in Hudu? (true) or use the provided layout (false)"))) {
             $configImports["config"] = Convert-ITGImportsToHuduPreview `
                 -ITGImports $ITGConfigurations `
                 -CompaniesToMigrate $CompaniesToMigrate `
@@ -939,8 +935,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                 ITGImports            = $ParsedITGConfigs
             }
         
-            if ($true -eq $settings.AllowForCustomMapping) {
-                
+        if ($true -eq $settings.AllowForCustomMapping -and $($true -eq $(Select-ObjectFromList -objects @($true,$false) -message "Would you like to custom-map configs ($ConfigType-type) to existing asset layout in Hudu? (true) or use the provided layout (false)"))) {            
                 $configImports["$ConfigType"] = Convert-ITGImportsToHuduPreview `
                     -ITGImports $ITGConfigurations `
                     -CompaniesToMigrate $CompaniesToMigrate `
@@ -1155,17 +1150,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
 
     }
 
-    #Import Locations
-
-    if ($true -eq $settings.AllowForCustomMapping) {
-        $customMapContacts = $customMapContacts ?? [bool]$($(Select-ObjectFromList -message "would you like to custom-map $ConMigrationName to existing layout or use the standard new ITG layout? $($($ConAssetLayoutFields | ConvertTo-Json -depth 65).ToString())" -objects @($true,$false) -allowNull $false) ?? $false)
-    } else {
-        $customMapContacts = $false
-    }
-
-
-    #Import Locations
-    if ($true -eq $customMapContacts) {
+    if ($true -eq $settings.AllowForCustomMapping -and $($true -eq $(Select-ObjectFromList -objects @($true,$false) -message "Would you like to custom-map contacts to existing asset layout in Hudu? (true) or use the provided layout, $ConMigrationName (false)"))) {
         $Contactimports = Convert-ITGImportsToHuduPreview `
             -ITGImports $ITGContacts `
             -CompaniesToMigrate $CompaniesToMigrate `
@@ -1442,10 +1427,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 }
 
             }
-            if ($UpdateLayout.CustomLayout -and $true -eq $UpdateLayout.CustomLayout) {
-                $UpdateLayoutMockFields = $AllFields | Where-Object {$_.LayoutName -eq $UpdateLayout.Name}
-    
-                $UpdateLayout | Add-Member -MemberType 'NoteProperty' -Name 'MockFields' -Value $($UpdateLayoutMockFields)
+            if ($UpdateLayout.CustomLayout -and $true -eq $UpdateLayout.CustomLayout) {    
+                $UpdateLayout | Add-Member -MemberType 'NoteProperty' -Name 'MockFields' -Value $($UpdateLayoutFields)
                 Write-Host "Populated mock layout field data for mapping $($UpdateLayoutMockFields.count) faux fields for layout name $($UpdateLayout.Name)"
             } else {
                 $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
@@ -1723,13 +1706,24 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         #We'll need to make sure we have a mapping of fields for each custom layout definition elected by user
         #for custom mappings, first go thru and make stub assets
         foreach ($Layout in $($MatchedLayouts | Where-Object {$_.CustomLayout -and $true -eq $_.CustomLayout})){
-
             $imports = $($MatchedCustomAssets | Where-Object {$_.Layout.id -eq $Layout.id})
-
             $MockSourceLayout =   [PSCustomObject]@{Id      = $([int]"-$(get-random -minimum 99 -maximum 999)")
-                                                    name    = $Layout.name
-                                                    fields  = $MockFields
-                                                } 
+                                                    name    = "Ephemeral-$($Layout.name)"
+                                                    fields  = $layout.MockFields}
+            # $importsAsPreview = Convert-ITGImportsToHuduPreview `
+            #     -ITGImports $imports `
+            #     -CompaniesToMigrate $CompaniesToMigrate `
+            #     -ImportAssetLayoutName $MockSourceLayout.name `
+            #     -AssetLayoutFields $layout.MockFields `
+            #     -AssetFieldsMap -- `
+            #     -Verbose
+
+
+
+                                                
+            $MockSourceLayout | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\SourceLayout-$($MockSourceLayout.name).json"
+            $imports | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\imports-$($MockSourceLayout.name).json"
+
             $UserAssetMapResult = Set-ITGAssetsToExistingLayout `
                                 -desiredMapFileName "$($Layout.name).ps1" `
                                 -sourceAssets $imports `
@@ -1741,6 +1735,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
 
         $MatchedAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Assets.json"
         $MatchedCustomAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\CustomLayoutAssets.json"
+        $ParsedCustomAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ParsedCustomAssets.json"
         $MatchedAssetPasswords | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\AssetPasswords.json"
         $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
         $RelationsToCreate | ConvertTo-Json -Depth 20 | Out-File "$MigrationLogs\RelationsToCreate.json"
