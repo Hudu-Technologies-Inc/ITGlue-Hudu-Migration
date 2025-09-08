@@ -1710,17 +1710,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
             $MockSourceLayout =   [PSCustomObject]@{Id      = $([int]"-$(get-random -minimum 99 -maximum 999)")
                                                     name    = "Ephemeral-$($Layout.name)"
                                                     fields  = $layout.MockFields}
-            # $importsAsPreview = Convert-ITGImportsToHuduPreview `
-            #     -ITGImports $imports `
-            #     -CompaniesToMigrate $CompaniesToMigrate `
-            #     -ImportAssetLayoutName $MockSourceLayout.name `
-            #     -AssetLayoutFields $layout.MockFields `
-            #     -AssetFieldsMap -- `
-            #     -Verbose
-
-
-
-                                                
+            # X- $importsAsPreview = Convert-ITGImportsToHuduPreview `
+            # => MatchedCustomAssets, no need to mock
             $MockSourceLayout | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\SourceLayout-$($MockSourceLayout.name).json"
             $imports | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\imports-$($MockSourceLayout.name).json"
 
