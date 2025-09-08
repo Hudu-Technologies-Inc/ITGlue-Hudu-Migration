@@ -896,7 +896,7 @@ function Set-ITGAssetsToExistingLayout {
 
         $newAssetRequest = @{
             Name            = $originalasset.name
-            CompanyId       = $originalasset.ITGObject.HuduCompanyID
+            CompanyId       = $originalasset.ITGObject.HuduCompanyID ?? $originalasset.HuduObject.company_id
             AssetLayoutId   = $destlayout.id
         }
         if ($transformedFields -and $transformedFields.count -gt 0){
@@ -923,7 +923,7 @@ function Set-ITGAssetsToExistingLayout {
                 $newAsset = $(new-huduasset @newAssetRequest).asset
                 $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'CreatedNew' -Value $true  -Force
             } else {
-                $newAssetRequest["id"] = $originalAsset.HuduObject.id
+                $newAssetRequest["id"] = $originalAsset.HuduID ?? $originalasset.HuduObject.id
                 $originalasset  | Add-Member -MemberType 'NoteProperty' -Name 'UpdatedAs' -Value $true  -Force
                 $newAsset = $(set-huduasset @newAssetRequest).asset
             }
