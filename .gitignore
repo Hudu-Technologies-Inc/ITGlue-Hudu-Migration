@@ -6,6 +6,9 @@ ManualActions.html
 ./debug/*
 environ*.ps1
 README.md
+checklists.json
+completed-checklists.json
+Locations.json
 *.reference
 AssetLayoutFieldsImports.json
 AssetLayoutFieldsImports.preview.json
