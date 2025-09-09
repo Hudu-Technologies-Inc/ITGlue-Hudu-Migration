@@ -1,121 +1,240 @@
-# Purpose: Move assets to new layout, mapping source and destination fields
+# Hudu Asset Layout Transfer
 
-Use: invoke via dotsourcing
-. .\transfer-assets.ps1
+Migrate assets between **Hudu** layouts while flexibly mapping fields, concatenating (“SMOOSH”) values, translating data types, and optionally relinking related objects.
 
-Select source Asset Layout
-Select destination Asset Layout
+> **TL;DR**  
+> 1) Dot-source `. .\Move-AssetsToNewLayout.ps1`  
+> 2) Pick **Source** + **Destination** layouts  
+> 3) Edit the generated `mapping.ps1` (and optionally use `SMOOSH`)  
+> 4) Run the transfer and review the summary counts
 
-files, named mapping.ps1 and source-fields.json will be generated
-use labels in source fields to map to destination fields in mapping.ps1
-It's best to match field_types to destination field_types when possivble
-That said, list select, dropdown, checkbox, website, and other fields do translate nicely to text/richtext destinations
+[Back to Main README.md](./README.md)
 
-To combine source fields into a single destination field (concatenate them), you can designate which fields you would
-like to 'Smoosh' into a pseudo-source field, labeled SMOOSH. SMOOSH field translates nicely into richtext or text fields.
+---
 
-Mapping.ps1 is generated with the target layout fields and you just need to fill in what source fields you want to place/combine into them
-Here is an example filled mapping.ps1
-# source 
-$CONSTANTS=@(
-    @{literal="Vonage";to_label="VOIP Service Provider"}
+## Features
+- **Layout → Layout** migration with interactive layout pickers  
+- **Field mapping** via generated `mapping.ps1`  
+- **Constants**: auto-fill required fields with fixed values  
+- **SMOOSH**: concatenate multiple source fields into one destination field (rich text or plain)  
+- **HTML stripping & email normalization** on demand  
+- **AddressData** helper block mapping (line1/line2/city/state/zip/country)  
+- **Relation handling**: optional relinking of related assets; control over archived relations  
+- Built-in sanity checks + per-job settings
+
+---
+
+## Requirements
+- **PowerShell** ≥ `7.5.1`
+- Hudu **API Key** and **Base URL**
+- source asset layout with assets you hope to move to another existing layout
+
+---
+
+## Quick Start
+
+```powershell
+# 1) Launch PowerShell 7+
+# 2) Dot-source the script
+. .\Move-AssetsToNewLayout.ps1
+
+# 3) Follow the prompts to select Source and Destination layouts
+#    The script generates:
+#    - mapping.ps1
+#    - source-fields.json
+#    - dest-fields.json
+
+# 4) Open mapping.ps1, fill in your mappings, save
+# 5) Press Enter in the shell to continue and execute the transfer
+```
+
+> **Tip:** You can re-run safely; the script backs up an existing `mapping.ps1` to `mapping.ps1.old`.
+
+---
+
+## How It Works
+1. **Scans layouts** and builds summaries (# required/optional fields, asset counts).  
+2. **Prompts** you to choose Source and Destination layouts.  
+3. **Emits templates**: `mapping.ps1` and `*-fields.json` (for reference).  
+4. **You edit** `mapping.ps1` to define how source fields map to destination fields.  
+5. **Transfers**: for each source asset, builds a destination payload, applies transformations, optionally **SMOOSH**es values, and creates the new asset.  
+6. **Relations**: can relink related assets; archive policies are configurable.  
+7. **Wrap-up**: optional renaming/archiving of the source layout and/or its assets; summary statistics printed.
+
+---
+
+## The Mapping File (`mapping.ps1`)
+
+The script generates `mapping.ps1` with placeholders you can fill. It contains three key blocks:
+
+### 1) `$CONSTANTS`
+Predefined pseudo-source fields to satisfy required destination fields or inject static values.
+
+```powershell
+$CONSTANTS = @(
+    # @{ literal = "const value"; to_label = "Destination Field Label" }
 )
-$SMOOSHLABELS=@(
-"Manufacturer Name","Model ID","Hostname","Default Gateway","Asset Tag","Operating System Name",
-"Installed By","Installed At",
-"Purchased By","Purchased At","Contact Name","Operating System Notes",
-"Notes","Configuration Status Name","Location Name","Contact Name"
+```
+
+**Behavior:** For each entry, the destination field named in `to_label` receives `literal`.
+
+---
+
+### 2) `$SMOOSHLABELS`
+A list of **source labels** to concatenate into a single pseudo-source field named **`SMOOSH`**. You can then map `SMOOSH` to any destination field.
+
+```powershell
+$SMOOSHLABELS = @(
+    'Manufacturer Name','Model ID','Hostname','Default Gateway','Asset Tag',
+    'Operating System Name','Installed By','Installed At','Purchased By',
+    'Purchased At','Contact Name','Operating System Notes','Notes',
+    'Configuration Status Name','Location Name'
 )
-$mapping=@(
-@{from='Model Name';to='Model'; dest_type='Text'; required='True'},
-@{from='Primary IP';to='IP Address'; dest_type='Website'; required='False'},
-@{from='MAC Address';to='Mac Address'; dest_type='Text'; required='False'},
-@{from='Serial Number';to='Serial Number / Service Tag'; dest_type='Text'; required='False'},
-@{from='Warranty Expires At';to='Warranty Expiration'; dest_type='Date'; required='False'},
-@{from='SMOOSH';to='Notes'; dest_type='RichText'; required='False'})# if fields are blank, exclude during smoosh procress?
-$includeblanksduringsmoosh = $false
+```
 
-# relate archived objects to new asset / object
-$includeRelationsForArchived = $true
+> **Tip:** `SMOOSH` renders as rich text by default; set `excludeHTMLinSMOOSH = $true` to emit a single-line, plain-text value.
 
-# set below to true if smooshing to plaintext field, otherwise leave for richtext field
-# (strip html when going to text field)
-$excludeHTMLinSMOOSH = $false
+---
 
-# include description of related objects in smoosh
-# related objects will have a 1-line description based on related object type and name
-$describeRelatedInSmoosh = $true
+### 3) `$mapping`
+The core mapping array. Each entry maps a single **source** label (`from`) to a **destination** label (`to`), with a **destination type** and options.
 
-# include label - above value in smooshed? IE - 
-# label -
-# value
-$includeLabelInSmooshedValues = $true
-
-
-
-There are a few variables in this mapping.ps1 file that you can set per-job. Here are their explanations:
-
-### 
-the $CONSTANTS variable provides an array of predefined psudo-source fields of your choosing.
-All target assets will be pre-filled with the value, literal for field to_label for however many of these you want.
-This is useful for filling required fields that dont have a source field which matches up. It's important to make sure 
-values in the to_label correspond with a value in the target layout.
-
-$CONSTANTS=@(
-    ## @{literal="constval";to_label="constfield"}
+```powershell
+$mapping = @(
+    @{ from = 'Model Name'         ; to = 'Model'                        ; dest_type = 'Text'    ; required = 'True'  ; striphtml='False' },
+    @{ from = 'Primary IP'         ; to = 'IP Address'                   ; dest_type = 'Website' ; required = 'False' ; striphtml='False' },
+    @{ from = 'MAC Address'        ; to = 'Mac Address'                  ; dest_type = 'Text'    ; required = 'False' ; striphtml='False' },
+    @{ from = 'Serial Number'      ; to = 'Serial Number / Service Tag'  ; dest_type = 'Text'    ; required = 'False' ; striphtml='False' },
+    @{ from = 'Warranty Expires At'; to = 'Warranty Expiration'          ; dest_type = 'Date'    ; required = 'False' ; striphtml='False' },
+    @{ from = 'SMOOSH'             ; to = 'Notes'                        ; dest_type = 'RichText'; required = 'False' ; striphtml='False' }
 )
+```
 
+#### Supported `dest_type` values
 
-###
+| Type         | Notes |
+|--------------|------|
+| `Text`       | Plain text. Combine with `striphtml='True'` if source may have markup. |
+| `RichText`   | HTML content preserved. |
+| `Website`    | URL/string field. (Often used for IP/URL fields.) |
+| `Date`       | ISO/parseable date values recommended. |
+| `Email`      | Extracts and normalizes emails from source value. |
+| `ListSelect` | Must match one of the destination list options; see **List Mapping** below. |
+| `AddressData`| Structured mapping block (see next section). |
 
-$includeblanksduringsmoosh [default $false]: this excludes null/blank values if present in a source smoosh field. for instance, if you have:
-Asset A: has serial number but no purchase date
-Asset B: has purchase date but no serial number
+> You can map e.g. **Dropdown/Checkbox/Website** sources to **Text/RichText** if a 1:1 dest type isn’t available.
 
-and your smoosh definition is:
-$SMOOSHLABELS=@("serial number","purchase date","Notes")
-and you mapped SMOOSH psuedo-source field to "Notes", Notes for assest A in destination layout would be:
+---
+
+## Address Mapping (`AddressData`)
+Use the built-in template to map structured address lines. The generator will emit a scaffold like:
+
+```powershell
+@{ to='Office Address'; from='Meta'; dest_type='AddressData'; required='False'; address=@{
+    address_line_1=@{from='Street 1'}
+    address_line_2=@{from='Street 2'}
+    city          =@{from='City'}
+    state         =@{from='State'}
+    zip           =@{from='ZIP'}
+    country_name  =@{from='Country'}
+}}
+```
+
+The script normalizes common state/country variants and composes an Address object only when at least one sub-field is present.
+
+---
+
+## Per-Job Settings
+These live directly in `mapping.ps1` under the **PerJob** section:
+
+| Variable | Default | Description |
+|---|---:|---|
+| `$includeblanksduringsmoosh` | `$false` | Skip blank/null values when SMOOSHing; avoids empty headers. |
+| `$includeLabelInSmooshedValues` | `$true` | Prepend label before each SMOOSHed value. For plain text SMOOSH, set this to `$false` for cleaner output. |
+| `$excludeHTMLinSMOOSH` | `$false` | When `$true`, strips HTML, collapses whitespace, joins values into a single line (semicolon-style). |
+| `$includeRelationsForArchived` | `$true` | Preserve relations even when the related asset is archived. Set to `$false` to omit. |
+| `$describeRelatedInSmoosh` | `$true` | Append 1-line descriptions/links for related items into the SMOOSH text. |
+
+### SMOOSH Examples
+**RichText (default):**
+```
 Serial Number:
 9JD2NLAL4
 Notes:
 This is a good computer
+```
 
-Notes for asset B would be:
-Purchase Date:
-01/11/2023
-Notes:
-This is a pretty decent machine
-
-###
-
-$includeLabelInSmooshedValues [default: $true]: if you turn this off, you do not get smooshed labels, so asset A would be:
-9JD2NLAL4
-This is a good computer
-
-If you are smooshing values together for a text field (not richtext), you will almost certainly want to set this to $false for that migration/job
-
-###
-
-$includeRelationsForArchived [default: $true]: if you leave this on, relations to archived assets are retained.  set this to $false to not carry over archived relationships.
-
-###
-
-$describeRelatedInSmoosh [default: $true]: if you leave this on, relations are described in addition to smooshed fields. 
-This would mean asset A looks like:
-Serial Number:
-9JD2NLAL4
-Notes:
-This is a good computer
-Related People:
-John https://huduurl.huducloud.com/a/johnsslug
-Related Location:
-Johns House https://huduurl.huducloud.com/a/houseslug
-
-###
-
-excludeHTMLinSMOOSH [default: $false]:
-If you are setting your SMOOSH field to a Text field (not richtext), you'll want to  strip HTML tags by setting
-$excludeHTMLinSMOOSH = $true in your generated mapping.ps1 file. This also sets it as a one line value with values delimited by semicolon.
-This would mean asset A looks like [in conjunction with not including labels]:
+**PlainText (`excludeHTMLinSMOOSH=$true`, `includeLabelInSmooshedValues=$false`):**
+```
 9JD2NLAL4; This is a good computer; John https://huduurl.huducloud.com/a/johnsslug; Johns House https://huduurl.huducloud.com/a/houseslug
+```
 
+---
+
+## List Mapping (`ListSelect`)[coming soon]
+
+> You can still map list-style fields to `Text`/`RichText` if you don’t need enforced list integrity.
+
+---
+
+## Matching & Relinking
+- **Existing asset matching**: before creating a destination asset, the script checks for a likely match (same company, fuzzy name). You can choose to archive/skip/continue.  
+- **Relations**: the script can re-establish relations (`Asset→Asset`, `Asset→Website`, etc.) and honors `$includeRelationsForArchived`.  
+- **Linkables**: for fields based on **AssetTag** with a `linkable_id`, the script can discover target layouts and reconstruct links.
+
+---
+
+## Outputs & Logs
+- `mapping.ps1` (and `mapping.ps1.old` backups)  
+- `source-fields.json`, `dest-fields.json` (reference only)  
+- Console logs for each mapped field and created relation  
+- Summary **counts** at the end:
+  - created, matched, archived, skipped, errors, etc.
+
+When errors occur, structured details are written via `Write-ErrorObjectsToFile` for later review.
+
+---
+
+**Emails not cleaning up**  
+Make sure `dest_type='Email'` **or** your destination label includes "Email"; the extractor runs in both cases. This makes sure to just extract the email address(es) from the source field, leaving only the good stuff for the destination field.
+
+**Weird address casing**  
+The helpers normalize US states to two-letter codes and map common country shorthands (e.g., `US`, `USA`, `United States`).
+
+---
+
+## Example: Minimal Mapping
+
+```powershell
+$CONSTANTS = @(
+  @{ literal = 'Vonage'; to_label = 'VOIP Service Provider' }
+)
+
+$SMOOSHLABELS = @('Serial Number','Notes')
+
+$mapping = @(
+  @{ from='Model Name'         ; to='Model'               ; dest_type='Text'    ; required='True'  ; striphtml='False' },
+  @{ from='Primary IP'         ; to='IP Address'          ; dest_type='Website' ; required='False' ; striphtml='False' },
+  @{ from='Warranty Expires At'; to='Warranty Expiration' ; dest_type='Date'    ; required='False' ; striphtml='False' },
+  @{ from='SMOOSH'             ; to='Notes'               ; dest_type='RichText'; required='False' ; striphtml='False' }
+)
+
+$includeblanksduringsmoosh    = $false
+$includeRelationsForArchived  = $true
+$excludeHTMLinSMOOSH          = $false
+$describeRelatedInSmoosh      = $true
+$includeLabelInSmooshedValues = $true
+```
+
+---
+
+## Conventions & Tips
+- Prefer **matching dest types** when possible; otherwise map to `Text`/`RichText`.  
+- Use **constants** to prefill required dest fields when there’s no source.
+- For **plain text** targets, set `striphtml='True'` in the mapping and consider `excludeHTMLinSMOOSH=$true` when using SMOOSH.  
+- Keep file names in the repo consistent; on GitHub, `README.md` vs `README.MD` matters on some clones.
+
+---
+
+## Changelog
+- **v0.1** – Initial public draft of SwitchingLayouts.MD, 9, Sept 2025
