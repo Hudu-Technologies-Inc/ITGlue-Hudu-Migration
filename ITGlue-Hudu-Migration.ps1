@@ -1699,10 +1699,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                 } else {
                     Write-Host "Warning $ITGParsed : $ITGValues Could not be added" -ForegroundColor Red
                 }
+
             }
             # if custom layout, just record the fields for subsequent processing.
             if ($true -eq $UpdateAsset.IsCustomLayout) {
-                $updateAsset  | Add-Member -MemberType 'NoteProperty' -Name 'fields' -Value $AssetFields -Force
+                $UpdateAsset.HuduObject = $UpdateAsset.HuduObject |
+                    Add-Member -PassThru -MemberType NoteProperty -Name 'fields' -Value $AssetFields -Force
+
                 $updateAsset  | Add-Member -MemberType 'NoteProperty' -Name 'AssetLayoutId' -Value $UpdateAsset.HuduObject.asset_layout_id -Force
             } else {
                 $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields $AssetFields).asset
@@ -1720,16 +1723,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         Write-host "Post-Processing $($customLayouts.ITGAssets.count) assits in $($customLayouts.count) layouts"
         foreach ($layout in $customLayouts){
             $huduLayout       = $layout.HuduObject
-            $updateAssets     = $layout.ITGAssets
+            $updateAssets     = $MatchedAssets | where-object {$_.AssetLayoutId -eq $huduLayout.id}
             $MockSourceLayout = [PSCustomObject]@{Id      = $([int]"-$(get-random -minimum 99 -maximum 999)")
                                                   name    = "Ephemeral-$($Layout.name)"
                                                   fields  = $layout.MockFields}
             Write-Host "$($huduLayout.name) => $($layout.name)"
-            $MockSourceLayout | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\SourceLayout-$($MockSourceLayout.name).json"
-            $updateAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\imports-$($MockSourceLayout.name).json"
 
             $UserAssetMapResult = Set-ITGAssetsToExistingLayout `
-                                -desiredMapFileName "$($huduLayout.name).ps1" `
+                                -desiredMapFileName "ITG-$($layout.name)-HUDU-$($huduLayout.name).ps1" `
                                 -sourceAssets $updateAssets `
                                 -allrelations @() `
                                 -sourceAssetLayout $MockSourceLayout `
