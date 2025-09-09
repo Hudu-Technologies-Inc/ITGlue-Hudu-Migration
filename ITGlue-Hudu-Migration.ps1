@@ -499,7 +499,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
             -Verbose
         $mockLayout =[pscustomobject]@{Id = -6; name="ephemeral-$LocMigrationName"; fields=$LocAssetLayoutFields}
         $imports | ConvertTo-Json -Depth 95 | Set-Content -Path "$LocMigrationName.json"
-        $LocationsResult = Set-ITGAssetsToExistingLayout `
+        $LocationsResult = Set-AssetsToHuduLayout `
                             -desiredMapFileName "$LocMigrationName.ps1" `
                             -sourceAssets $imports `
                             -sourceAssetLayout  $mockLayout `
@@ -899,7 +899,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                 -Verbose
             $mockLayout =[pscustomobject]@{Id = -7; name="ephemeral-configs"; fields=$ConfigAssetLayoutFields}
             $configImports["config"] | ConvertTo-Json -Depth 95 | Set-Content -Path "configsmapping.json"
-            $ConfigsResult = Set-ITGAssetsToExistingLayout `
+            $ConfigsResult = Set-AssetsToHuduLayout `
                                 -desiredMapFileName "ConfigsMap.ps1" `
                                 -sourceAssets $configImports["config"] `
                                 -sourceAssetLayout  $mockLayout `
@@ -945,7 +945,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
                     -Verbose
                 $mockLayout =[pscustomobject]@{Id = -7; name="ephemeral-$($ConfigType)"; fields=$ConfigAssetLayoutFields}
                 $configImports["$ConfigType"] | ConvertTo-Json -Depth 95 | Set-Content -Path "configs$($ConfigType)mapping.json"
-                $ConfigsResult = Set-ITGAssetsToExistingLayout `
+                $ConfigsResult = Set-AssetsToHuduLayout `
                                     -desiredMapFileName "$($ConfigType)Map.ps1" `
                                     -sourceAssets $configImports["$ConfigType"] `
                                     -sourceAssetLayout  $mockLayout `
@@ -1160,7 +1160,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             -Verbose
         $mockContactsLayout = [pscustomobject]@{Id = -12; name="ephemeral-$ConMigrationName"; fields=$ConAssetLayoutFields}
         $Contactimports | ConvertTo-Json -Depth 95 | Set-Content -Path "$ConMigrationName.json"
-        $ContactsResult = Set-ITGAssetsToExistingLayout `
+        $ContactsResult = Set-AssetsToHuduLayout `
                             -desiredMapFileName "$ConMigrationName.ps1" `
                             -sourceAssets $Contactimports `
                             -allrelations @() `
@@ -1729,7 +1729,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                                   fields  = $layout.MockFields}
             Write-Host "$($huduLayout.name) => $($layout.name)"
 
-            $UserAssetMapResult = Set-ITGAssetsToExistingLayout `
+            $UserAssetMapResult = Set-AssetsToHuduLayout `
                                 -desiredMapFileName "ITG-$($layout.name)-HUDU-$($huduLayout.name).ps1" `
                                 -sourceAssets $updateAssets `
                                 -allrelations @() `

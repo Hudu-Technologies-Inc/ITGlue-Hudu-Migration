@@ -167,27 +167,27 @@ For exmaple, the following snippets will automatically run if dot-sourcing from 
 
 ```. .\ITGlue-Hudu-Migration.ps1```
 
+# Advanced Usage Cases
 
-***set layouts as active post-run***
+## 1. Scoped Migrations - 
 
-```foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }```
+For scoped migrations, you can either set $ScopedMigration=2 in your environment file or elect for a scoped migration in the initialization questions. It's the final question before things kick off. 
 
-***populate remaining relations variables***
+Just before companies are migrated, you'll be able to select which ITGlue companies you'd like to include in transferring to Hudu. Only the companies you choose and assets/configurations/websites/contacts/locations belonging to those companies will transfer.
 
-```. .\Get-MissingRelations.ps1```
+## 2. Merging ITGlue Organization Types
 
-***adding attachments***
+If you have designated an organization type (like vendor, partner, non-profit, manufacturer, client, etc), you can elect to merge one of these ITGLue organization types to a single Hudu company. If you choose this option during startup questions (or if you include $ScopeOrgTypes = 1 in your env file), you'll first select which org type will be merged into a single company in Hudu. Then you'll enter the company ID for the target company. 
 
-```. .\Add-HuduAttachmentsViaAPI.ps1```
+Any other org types will migrate as usual, but this one org type will be centralized to one hudu company.
 
-***add any remaining relations***
+## 3. Custom-Mapping for Target Layouts ([!WARNING] Advanced)
 
-```
-$ConfigurationRelationsToCreate + $AssetRelationsToCreate | ForEach-Object {try {New-HuduRelation -FromableType  $_.FromableType -FromableID    $_.FromableID -ToableType    $_.ToableType -ToableID      $_.ToableID} catch {Write-Host "Skipped or errored: $_" -ForegroundColor Yellow}}
-```
+If you have an existing Hudu instance and you like the layouts that you have created there, you can accomplish this task in a few ways. You can either:
 
-If you used dot-sourcing to invoke the main script, "Set layouts as active," "Populate Missing Relations" (Get-MissingRelations.ps1), "Add Attachments" (Add-HuduAttachmentsViaAPI.ps1), and "Add missing Relations" should have automatically run. 
+### A. Migrate a certain type of object directly to your desired Hudu Asset Layout
 
+### B. Migrate as normal, then after completed, migrate assets from one layout to another
 
 
 # Please Read!
