@@ -167,7 +167,7 @@ For exmaple, the following snippets will automatically run if dot-sourcing from 
 
 ```. .\ITGlue-Hudu-Migration.ps1```
 
-# Advanced Usage Cases
+# Advanced / Other Use Cases
 
 ## 1. Scoped Migrations - 
 
@@ -181,11 +181,31 @@ If you have designated an organization type (like vendor, partner, non-profit, m
 
 Any other org types will migrate as usual, but this one org type will be centralized to one hudu company.
 
-## 3. Custom-Mapping for Target Layouts ([!WARNING] Advanced)
+## 3. Custom-Mapping for Target Layouts (ADVANCED)
 
 If you have an existing Hudu instance and you like the layouts that you have created there, you can accomplish this task in a few ways. You can either:
 
 ### A. Migrate a certain type of object directly to your desired Hudu Asset Layout
+
+This allows you to go from any flexible asset layout, configuration type, location/contact to whichever asset layout(s) you want. To do this directly, you can answer the startup question to allow for custom mapping (or set $settings.AllowForCustomMapping = $true in your environment file). 
+
+for each would-be-created asset layout in Hudu, you are instead prompted:
+1. do you want to allow script to create layout ($true)
+2. do you wish to instead map this to an existing Hudu layout ($false).
+
+If you choose to map directly, you will then be prompted for a target asset layout.
+
+you'll select the number corresponding to where you want this asset type to go.
+
+<img width="555" height="656" alt="image" src="https://github.com/user-attachments/assets/005e4cf3-f746-4e0b-84d6-4eb58019a8fe" />
+
+After selecting, a few files will be generated. One of them is a reference and one of them is a form that you'll fill out.
+Much like the after-the-fact transfer of assets to new layout, you'll have a source-fields.json file that is a reference for which fields we can grab information from. The other, named after your desired target layout will be in the same folder. These both will be in the project directory if you don't use an environment file, otherwise it will be in your chosen 'debug' folder. For more information on the rest of the process, please see MovingLayouts.md
+
+<img width="1266" height="466" alt="image" src="https://github.com/user-attachments/assets/d49d4ab8-11ee-4df1-b89e-15713a17b026" />
+
+
+
 
 ### B. Migrate as normal, then after completed, migrate assets from one layout to another
 
