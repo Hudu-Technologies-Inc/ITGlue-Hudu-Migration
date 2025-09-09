@@ -441,7 +441,8 @@ function Set-AssetsToHuduLayout {
         [array]$allrelations,
         [PSCustomObject]$destLayout=$null,
         [bool]$PromptOnMatch=$false,
-        [bool]$assetExists=$false
+        [bool]$assetExists=$false,
+        [array]$destassets=@()
     )
 
 

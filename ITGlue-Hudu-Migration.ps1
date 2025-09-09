@@ -1,6 +1,8 @@
 # Main settings load
 . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
 
+$global:ITGCUSTOMMAPPINGSDIR=$ITGCUSTOMMAPPINGSDIR ?? "$PSScriptRoot"
+
 # Use this to set the context of the script runs
 $FirstTimeLoad = 1
 
