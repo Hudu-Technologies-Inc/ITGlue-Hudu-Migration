@@ -200,12 +200,15 @@ you'll select the number corresponding to where you want this asset type to go.
 <img width="555" height="656" alt="image" src="https://github.com/user-attachments/assets/005e4cf3-f746-4e0b-84d6-4eb58019a8fe" />
 
 After selecting, a few files will be generated. One of them is a reference and one of them is a form that you'll fill out.
-Much like the after-the-fact transfer of assets to new layout, you'll have a source-fields.json file that is a reference for which fields we can grab information from. The other, named after your desired target layout will be in the same folder. These both will be in the project directory if you don't use an environment file, otherwise it will be in your chosen 'debug' folder. For more information on the rest of the process, please see MovingLayouts.md
+Much like the after-the-fact transfer of assets to new layout, you'll have a source-fields.json file that is a reference for which fields we can grab information from. The other, named after your desired target layout will be in the same folder. These both will be in the project directory if you don't use an environment file, otherwise it will be in your chosen 'debug' folder. 
+
+Once you fill out your form and hit enter in your active powershell session, the form will be loaded and the process will begin. SMOOSH fields are merged, constants are populated, addressdata is filled, fields are stripped of HTML per your choosing. 
+
+<img width="161" height="636" alt="image" src="https://github.com/user-attachments/assets/928139f5-13ca-4d3f-aabb-dbc07cb7a9a8" />
+
+For more information on the rest of the process, please see MovingLayouts.md
 
 <img width="1266" height="466" alt="image" src="https://github.com/user-attachments/assets/d49d4ab8-11ee-4df1-b89e-15713a17b026" />
-
-
-
 
 ### B. Migrate as normal, then after completed, migrate assets from one layout to another
 
