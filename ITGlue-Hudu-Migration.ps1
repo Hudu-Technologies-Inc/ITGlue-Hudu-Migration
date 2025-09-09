@@ -1212,7 +1212,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
         $HuduLayout = $HuduLayouts | Where-Object { $_.name -eq "$($FlexibleLayoutPrefix)$($ITGLayout.attributes.name)" } | Select-Object -First 1
         if ($customLayout -and $customLayout.id -and $customLayout.id -gt 0) {
             [PSCustomObject]@{
-                "Name"       = $customLayout.name
+                "Name"       = $ITGLayout.attributes.name
                 "ITGID"      = $ITGLayout.id
                 "HuduID"     = $customLayout.id
                 "Matched"    = $true
@@ -1442,13 +1442,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             }
             if ($UpdateLayout.IsCustomLayout -and $true -eq $UpdateLayout.IsCustomLayout) {    
                 $UpdateLayout | Add-Member -MemberType 'NoteProperty' -Name 'MockFields' -Value $($UpdateLayoutFields)
-                $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID                
-                Write-Host "Populated mock layout field data for mapping $($UpdateLayoutMockFields.count) faux fields for layout name $($UpdateLayout.Name)"
+                Write-Host "Populated mock layout field data for mapping $($UpdateLayoutFields.count) faux fields for layout name $($UpdateLayout.Name)"
             } else {
                 $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
-                $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
-                Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
             }
+            $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
+            Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
             $UpdateLayout.HuduObject = $UpdatedLayout
             $UpdateLayout.ITGAssets = $FlexAssets
             $UpdateLayout.Matched = $true
@@ -1503,7 +1502,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     'itglue_url' = $ITGAsset.attributes.'resource-url'
                     'itglue_id' = $ITGAsset.id
                 }
-                if ($true -eq $Layout.CustomLayout) {
+                if ($true -eq $Layout.IsCustomLayout) {
                     $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id).asset
                     $AssetDetails = [PSCustomObject]@{
                         "Name"       = $ITGAsset.attributes.name
@@ -1717,12 +1716,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         #populate custom-layout assets 
         #We'll need to make sure we have a mapping of fields for each custom layout definition elected by user
         #for custom mappings, first go thru and make stub assets
-        foreach ($layout in $($MatchedLayouts | where-object {$_.IsCustomLayout -eq $true})){
+        $customLayouts = $($MatchedLayouts | where-object {$_.IsCustomLayout -eq $true -and $_.ITGAssets -and $_.ITGAssets.count -gt 0})
+        Write-host "Post-Processing $($customLayouts.ITGAssets.count) assits in $($customLayouts.count) layouts"
+        foreach ($layout in $customLayouts){
             $huduLayout       = $layout.HuduObject
             $updateAssets     = $layout.ITGAssets
             $MockSourceLayout = [PSCustomObject]@{Id      = $([int]"-$(get-random -minimum 99 -maximum 999)")
                                                   name    = "Ephemeral-$($Layout.name)"
-                                                  fields  = $huduLayout.MockFields}
+                                                  fields  = $layout.MockFields}
             Write-Host "$($huduLayout.name) => $($layout.name)"
             $MockSourceLayout | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\SourceLayout-$($MockSourceLayout.name).json"
             $updateAssets | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\imports-$($MockSourceLayout.name).json"
