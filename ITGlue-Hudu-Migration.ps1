@@ -58,6 +58,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 # Add String/Filename Normalization Helper, image Normalization helper
 . $PSScriptRoot\Public\Normalize-String.ps1
 . $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1
+. $PSScriptRoot\Public\Normalize-Folders.ps1
 # initialization helper and field requirement helper, logging, selection helper
 . $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
@@ -1597,6 +1598,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
 ############################### Documents / Articles ###############################
 
 #Check for Article Resume
+
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
     Write-Host "Loading Article Migration"
     $MatchedArticles = Get-Content "$MigrationLogs\ArticleBase.json" -raw | Out-String | ConvertFrom-Json -depth 100
@@ -1644,47 +1646,52 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
 	
             }
 
-
             $company = $MatchedCompanies | Where-Object { $_.CompanyName -eq $doc.organization }
-            if (($company | Measure-Object).count -eq 1) {
+            if (($company | Measure-Object).Count -eq 1) {
 
                 $art_folder_id = $null
-                if ($company.InternalCompany -eq $false) {
-                    if (($folders | Measure-Object).count -gt 2) {
-                        # Make / Check Folders
 
-                        $art_folder_id = (Initialize-HuduFolder $folders[1..$($folders.count - 2)] -company_id $company.HuduID).id
+                if ($company.InternalCompany -eq $false) {
+                    if (($folders | Measure-Object).Count -gt 2) {
+                        $path = $folders[1..($folders.Count-2)] | Where-Object { $_ -and $_.Trim() }  # drop empties
+                        try {
+                            $target = Get-EnsuredHuduFolderPath -PathParts $path -CompanyId $company.HuduID  # add -AllowRenameSuffix if you truly want distinct dupes
+                            $art_folder_id = $target.id
+                        } catch {
+                            Write-Warning "Folder ensure failed for company '$($company.CompanyName)': $($_.Exception.Message)"
+                            # decide: continue; or set $art_folder_id = $null and let it go to root
+                            continue
+                        }
                     }
+
                     $ArticleSplat = @{
                         name       = $doc.name
-                        content    = "Migration in progress"
+                        content    = 'Migration in progress'
                         company_id = $company.HuduID
                         folder_id  = $art_folder_id
-                    }	
+                    }
+
                 } else {
-                    if (($folders | Measure-Object).count -gt 2) {
-                        # Make / Check Folders
-                        $folders = $folders[1..$($folders.count - 2)]
-                        if ($GlobalKBFolder) {
-                            $folders = @($GlobalKBFolder.name) + $folders
+                    if (($folders | Measure-Object).Count -gt 2) {
+                        $path = $folders[1..($folders.Count-2)] | Where-Object { $_ -and $_.Trim() }
+                        if ($GlobalKBFolder) { $path = @($GlobalKBFolder.name) + $path }
+                        try {
+                            $target = Get-EnsuredHuduFolderPath -PathParts $path
+                            $art_folder_id = $target.id
+                        } catch {
+                            Write-Warning "Global KB folder ensure failed: $($_.Exception.Message)"
+                            if ($GlobalKBFolder) { $art_folder_id = $GlobalKBFolder.id } else { continue }
                         }
-                        $art_folder_id = (Initialize-HuduFolder $folders).id
+                    } elseif ($GlobalKBFolder) {
+                        $art_folder_id = $GlobalKBFolder.id
                     }
-                    else {
-                        # Check for GlobalKB Folder being set
-                        if ($GlobalKBFolder) {
-                            $art_folder_id = $GlobalKBFolder.id
-                        }
-                    }
+
                     $ArticleSplat = @{
                         name      = $doc.name
-                        content   = "Migration in progress"
+                        content   = 'Migration in progress'
                         folder_id = $art_folder_id
-                    }	
+                    }
                 }
-		
-
-
 
             } else {
                 Write-Host "Company $($doc.organization) Not Found Please migrate $($doc.name) manually"
