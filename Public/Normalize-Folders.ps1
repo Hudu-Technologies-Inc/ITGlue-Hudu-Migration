@@ -112,3 +112,78 @@ function Get-EnsuredHuduFolderPath {
     }
     return $folder
 }
+
+function Get-SafeFileName {
+    param([string]$Name)
+
+    # replace invalid NTFS chars with underscore
+    $invalid = [IO.Path]::GetInvalidFileNameChars()
+    $safe = -join ($Name.ToCharArray() | ForEach-Object {
+        if ($invalid -contains $_) { '_' } else { $_ }
+    })
+
+    # trim trailing dots/spaces
+    $safe = $safe.TrimEnd('.',' ')
+
+    # collapse duplicate underscores
+    $safe = $safe -replace '_{2,}', '_'
+
+    return $safe
+}
+
+function Normalize-ForCompare {
+    param([Parameter(Mandatory)][string]$Text)
+    $s = $Text.ToLowerInvariant()
+    [regex]::Replace($s, '[^a-z0-9]+', '')
+}
+function Get-SafeFileStem {
+    param([Parameter(Mandatory)][string]$Name)
+    $invalid = [IO.Path]::GetInvalidFileNameChars()
+    $safe = -join ($Name.ToCharArray() | ForEach-Object { if ($invalid -contains $_) { '_' } else { $_ } })
+    $safe = [regex]::Replace($safe, '\s+', ' ')     # collapse whitespace
+    $safe = [regex]::Replace($safe, '_{2,}', '_')   # collapse underscores
+    $safe = $safe.TrimEnd('.',' ')                  # trim trailing dot/space
+    $safe
+}
+function Resolve-ArticleHtmlPath {
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string]$ArticleName,
+        [string]$Locator
+    )
+    $stemExact = $ArticleName
+    $stemSafe  = Get-SafeFileStem $ArticleName
+    $stemDot   = ($stemSafe -replace '\.{2,}', '.') # collapse .. in stem
+
+    $candidates = @(
+        (Join-Path $Directory "$stemExact.html"),
+        (Join-Path $Directory "$stemSafe.html"),
+        (Join-Path $Directory "$stemDot.html")
+    ) | Select-Object -Unique
+
+    foreach ($p in $candidates) { if (Test-Path -LiteralPath $p) { return (Get-Item -LiteralPath $p) } }
+
+    # fuzzy match on *.htm*
+    $targetNorm = Normalize-ForCompare $ArticleName
+    $files = @(Get-ChildItem -LiteralPath $Directory -File -Filter *.htm* -ErrorAction SilentlyContinue)
+    $hit = $files | Where-Object {
+        (Normalize-ForCompare ($_.BaseName.TrimEnd('.',' '))) -eq $targetNorm
+    } | Select-Object -First 1
+    if ($hit) { return $hit }
+
+    # locator dir fallback (e.g., 3884503)
+    if ($Locator) {
+        $locDir = Join-Path $Directory $Locator
+        if (Test-Path -LiteralPath $locDir) {
+            $idx = Join-Path $locDir 'index.html'
+            if (Test-Path -LiteralPath $idx) { return (Get-Item -LiteralPath $idx) }
+            $locFiles = @(Get-ChildItem -LiteralPath $locDir -File -Filter *.htm* -ErrorAction SilentlyContinue)
+            if ($locFiles.Count -eq 1) { return $locFiles[0] }
+            $hit = $locFiles | Where-Object {
+                (Normalize-ForCompare ($_.BaseName.TrimEnd('.',' '))) -eq $targetNorm
+            } | Select-Object -First 1
+            if ($hit) { return $hit }
+        }
+    }
+    $null
+}

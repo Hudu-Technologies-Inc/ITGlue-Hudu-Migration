@@ -1624,28 +1624,35 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
         # First lets find each article in the file system and then create blank stubs for them all so we can match relations later
         $MatchedArticles = Foreach ($doc in $ITGDocuments) {
             Write-Host "Starting $($doc.name)" -ForegroundColor Green
-            $dir = $files | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $doc.locator }
-            $RelativePath = ($dir.FullName).Substring($ITGDocumentsPath.Length)
-            $folders = $RelativePath -split '\\'
-            $FilenameFromFolder = ($folders[$folders.count - 1] -split ' ', 2)[1]
-            $Filename = $FilenameFromFolder
-
-            $pathtest = Test-Path -LiteralPath "$($dir.Fullname)\$($filename).html"
-
-            if ($pathtest -eq $false) {
-                $filename = $doc.name
-                $pathtest = Test-Path -LiteralPath "$($dir.Fullname)\$($filename).html"
-                if ($pathtest -eq $false) {
-                    $filename = $FilenameFromFolder -replace '_', '$1,$2'
-                    $pathtest = Test-Path -LiteralPath "$($dir.Fullname)\$($filename).html"
-                    if ($pathtest -eq $false) {
-                        Write-Host "Not Found $($dir.Fullname)\$($filename).html this article will need to be migrated manually" -foregroundcolor red
-                        continue
-                    }
-                }
-	
+            $dir = @($files | Where-Object { $_.PSIsContainer -and $_.Name -match $doc.locator }) | Select-Object -First 1
+            if (-not $dir) {
+                Write-Host "No directory matched locator '$($doc.locator)' for '$($doc.name)'" -ForegroundColor Red
+                continue
             }
 
+            $RelativePath = ($dir.FullName).Substring($ITGDocumentsPath.Length)
+            $folders = $RelativePath -split '\\'
+
+            # derive the folder-based title segment safely
+            $FilenameFromFolder = ($folders[$folders.count - 1] -split ' ', 2)[1]
+
+            $Filename = $FilenameFromFolder
+
+            # try resolve by folder-derived name first, then by CSV title
+            $locator = if ($doc.locator -match '(\d{4,})') { $Matches[1] } else { $null }
+
+            $hit = Resolve-ArticleHtmlPath -Directory $dir.FullName -ArticleName $FilenameFromFolder -Locator $locator
+            if (-not $hit) {
+                $hit = Resolve-ArticleHtmlPath -Directory $dir.FullName -ArticleName $doc.name -Locator $locator
+            }
+
+            if ($hit) {
+                $path = $hit.FullName
+                # continue with import using $path
+            } else {
+                Write-Host "Not Found $($dir.FullName)\<derived>.html — this article will need manual migration" -ForegroundColor Red
+                continue
+            }
             $company = $MatchedCompanies | Where-Object { $_.CompanyName -eq $doc.organization }
             if (($company | Measure-Object).Count -eq 1) {
 
