@@ -68,7 +68,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 # initialization helper and field requirement helper, logging, selection helper
 . $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
 . $PSScriptRoot\Public\JWT-Auth.ps1
-
+. $PSScriptRoot\public\Replace-DirectContentLinks.ps1
 ############################### End of Functions ###############################
 
 
@@ -2321,6 +2321,9 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
 
 $assetsUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedAssetsURL.json"
 Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Assets URLs Replaced. Continue?" -DefaultResponse "continue to Passwords Matching, please."
+
+# direct links in articles to public photos (anchors from/with img)
+$directContentLinksReplaced = Replace-DirectContentLinks -forarticles $matchedArticles.huduObject -allpublicphotos $(get-hudupublicphotos)
 
 # Passwords
 $passwordsUpdated = @()

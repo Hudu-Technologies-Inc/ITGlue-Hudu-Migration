@@ -171,7 +171,7 @@ function ReWriteAnchorsToPublicPhotos {
 }
 
 
-function Write-DirectContentLinks {
+function Replace-DirectContentLinks {
     param (
         [array]$forArticles,
         [array]$allpublicphotos,
