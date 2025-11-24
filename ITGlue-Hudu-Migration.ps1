@@ -163,6 +163,19 @@ $MergedOrganizationSettings = @{
 $MatchedPasswordFolders = @()
 $MatchedChecklists = @()
 
+#If noninteractive, grab all the JWT-Only data that we can
+if ($true -eq $NonInteractive -and $true -eq $importPasswordFolders){
+    Write-Host "Noninteractive + JWT-Auth required, pre-collecting data"
+    if (-not (Get-Command -Name Get-ITGPasswordFolders -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Get-PasswordFolders.ps1 }; $ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT;
+    $complete_passfolder_data = @{}
+    foreach ($orgID in $($(Import-CSV (Join-Path -Path $ITGlueExportPath -ChildPath "organizations.csv")).id | Select-Object -unique)){
+        $passwordFolderArray = Get-ITGPasswordFolders -JWTAuthToken $ITGlueJWT -organization_id ([string]$orgID) -ComputePaths -Separator "<FDELIM>"
+        if ($null -ne $passwordFolderArray){
+            $complete_passfolder_data["$orgId"]=$passwordFolderArray
+        } else {write-host "no password folders for $orgId"}
+    }
+}
+
 #Check for Company Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     Write-Host "Loading Previous Companies Migration"

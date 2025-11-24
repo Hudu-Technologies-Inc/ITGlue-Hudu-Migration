@@ -6,8 +6,11 @@ $GlobalPasswordFolderMode = $GlobalPasswordFolderMode ?? $([bool]$("global" -eq 
 
 if (-not (Get-Command -Name Get-ITGPasswordFolders -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Get-PasswordFolders.ps1 }
 if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\JWT-Auth.ps1 }
-$ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT
-
+if ($null -eq $complete_passfolder_data -or $complete_passfolder_data.Keys.count -lt 1){
+    $ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT
+} else {
+    Write-Host "using pre-cached password folder data ($($complete_passfolder_data.count) records)"
+}
 $PFMappings = $PFMappings ?? @{}
 # $PFMappings["Software &"]="Software & Applications"
 # $PFMappings["Software and"]="Software & Applications"
@@ -33,7 +36,6 @@ function New-HuduGlobalPasswordFolder {
 }
 
 $global_password_folders = $(get-hudupasswordfolders | where-object {-not $_.company_id -or $_.company_id -lt 1})
-
 Write-Host "Please Wait, obtaining password folders from ITGlue"
 foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-id' | Select-Object -Unique)) {
 
@@ -47,7 +49,11 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
     }
 
     # 2) Get folders for this org (paths already computed)
-    $passwordFolderArray = Get-ITGPasswordFolders -JWTAuthToken $ITGlueJWT -organization_id $itgcompanyID -ComputePaths -Separator "<FDELIM>"
+    if ($null -eq $complete_passfolder_data -or $complete_passfolder_data.Keys.count -lt 1){
+        $passwordFolderArray = Get-ITGPasswordFolders -JWTAuthToken $ITGlueJWT -organization_id $itgcompanyID -ComputePaths -Separator "<FDELIM>"
+    } else {
+        $passwordFolderArray = $complete_passfolder_data["$itgcompanyID"] ?? @()
+    }
     if (-not $passwordFolderArray -or $passwordFolderArray.Count -eq 0) {
         Write-Host "No password folders for $itgcompanyID — skipping."
         continue
