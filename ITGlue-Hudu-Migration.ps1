@@ -822,7 +822,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             field_type   = 'Date'
             show_in_list = 'true'
             position     = 24
-        }        
+        },
+        @{
+            label        = 'ITG Date Created'
+            field_type   = 'Date'
+            show_in_list = 'true'
+            position     = 25
+        }
     )
     $ConfigHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
 	
