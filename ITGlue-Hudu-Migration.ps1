@@ -824,7 +824,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             position     = 24
         },
         @{
-            label        = 'ITG Date Created'
+            label        = 'ITG Date Last Updated'
             field_type   = 'Date'
             show_in_list = 'true'
             position     = 25
