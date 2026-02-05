@@ -102,7 +102,9 @@ function Import-Items {
 	
                     $AssetFields = & $AssetFieldsMap
 
-					
+					$AssetFields.'ITG Date Created' = $(Get-CoercedDate $unmatchedImport."ITGObject".attributes.'created-at')
+					$AssetFields.'ITG Date Last Updated' = $(Get-CoercedDate $unmatchedImport."ITGObject".attributes.'updated-at')
+
 
                     Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($AssetFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
 	
