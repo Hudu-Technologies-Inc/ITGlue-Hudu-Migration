@@ -1001,6 +1001,12 @@ function Merge-HuduFieldMaps {
         $src = $SourceMap[$label]
         $dst = $DestMap[$label]
 
+        # only fetched-dest will be in non-human format when list
+        if ($dst -ilike '*list_id*'){
+            $listItemId = $(SafeDecode $dst).list_ids[0]
+            $dst = $($(get-hudulists).list_items | where-object {$_.id -eq $listItemId} | select-object -first 1).name
+        }
+        
         $srcBlank = Is-BlankValue $src
         $dstBlank = Is-BlankValue $dst
 
@@ -1247,7 +1253,7 @@ write-host "$($totallayouts - $usablelayouts) omitted and marked inactive. $tota
 $choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
 $sourceassetlayout = $choice.SourceLayout
 $destassetlayout = $choice.DestLayout
-$MergeOnMatch = [bool]$("yes" -eq $(Select-ObjectFromList -message "if an asset in source layout $($sourceassetlayout.name) has a Name that matches a Name in dest layout $($destassetlayout.name), should we merge source into dest (yes) or overwrite dest with source (no)?" -objects @("yes","no")))
+$MergeOnMatch = [bool]$("yes" -eq $(Select-ObjectFromList -message "if an asset in source layout $($sourceassetlayout.name) has a Name that matches a Name in dest layout $($destassetlayout.name), should we merge data from source into dest asset (yes) or do something else (no)?" -objects @("yes","no")))
 $SkipOnMatch = if ($MergeOnMatch -eq $true) {$false} else {[bool]$("yes" -eq $(Select-ObjectFromList -message "if an asset in source layout $($sourceassetlayout.name) has a Name that matches a Name in dest layout $($destassetlayout.name), should we skip adding source asset into dest (yes) or create both (no)?" -objects @("yes","no")))}
 $MergeMode = if ($MergeOnMatch -eq $true) {$(Select-Objectfromlist -message "which merge mode / approach for matching assets in destination?" -objects @('Merge-FillBlanks','Merge-PreferSource','Merge-Concat'))} else {$null}
 
