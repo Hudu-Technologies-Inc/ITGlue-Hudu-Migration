@@ -1,21 +1,35 @@
+param(
+    [string]$HuduBaseURL,
+    [string]$HuduAPIKey,
+    [int]$SourceLayoutId,
+    [int]$DestLayoutId,
+    [Nullable[bool]]$SkipOnMatch = $null,
+    [ValidateSet('Merge-FillBlanks','Merge-PreferSource','Merge-Concat','Skip')]
+    [string]$MergeMode,
+    [string]$MapFile = 'mapping.ps1',
+    [string]$RenameSourceLayoutTo,
+    [Nullable[bool]]$setsourceassetsarchived = $null,
+    [switch]$newlayoutname,
+    [bool]$NonInteractiveTransfer=$true
+)
+
+
 $NonInteractiveTransfer = $NonInteractiveTransfer ?? $false
 if ($true -eq $NonInteractiveTransfer){
     write-host @"
 Running in non-interactive mode with settings:
     [int]SourceLayoutId = $SourceLayoutId
     [int]DestLayoutId = $DestLayoutId
-    [Nullable[bool]]MergeOnMatch = $MergeOnMatch
     [Nullable[bool]]SkipOnMatch = $SkipOnMatch,
     [string]MergeMode = $MergeMode
-    #(one of "source wins", "destination wins", "newest wins", "oldest wins")
-    [string]PreparedMapFile = $PreparedMapFile
     [string]MapFile = $MapFile ?? 'mapping.ps1',
     [string]RenameSourceLayoutTo = $RenameSourceLayoutTo,
     [Nullable[bool]]setsourceassetsarchived = $setsourceassetsarchived,
     [switch]newlayoutname=$RenameSourceLayoutTo,
-    [bool]UIMode=$UIMode
+    [bool]NonInteractiveTransfer=$NonInteractiveTransfer
 "@
 } else {
+write-host "running interactively."
 $SourceLayoutId = $null
 $DestLayoutId = $null
 $NonInteractiveTransfer = $false
