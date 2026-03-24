@@ -23,8 +23,7 @@ $RenameSourceLayoutTo = $null
 $CONSTANTS=@(); $SMOOSHLABELS=@(); $mapping=@();
 $mapfile = "mapping.ps1"
 $inspectlayouts = $false; $archivesource = $false;
-
-
+$setsourceassetsarchived = $null
 }
 
 
@@ -447,6 +446,7 @@ function Get-HuduModule {
 }
 
 function Set-HuduInstance {
+    param ([string]$HuduBaseURL, [string]$HuduAPIKey)
     $HuduBaseURL = $HuduBaseURL ?? $((Read-Host -Prompt 'Set the base domain of your Hudu instance (e.g https://myinstance.huducloud.com)') -replace '[\\/]+$', '') -replace '^(?!https://)', 'https://'
     $HuduAPIKey = $HuduAPIKey ?? "$(read-host "Please Enter Hudu API Key")"
     while ($HuduAPIKey.Length -ne 24) {
@@ -1271,7 +1271,9 @@ $propertyDump
 }
 
 # init and vars
-Get-HuduModule; Set-HuduInstance;
+$hudubaseurl = $hudubaseurl ?? $null
+$huduapikey = $huduapikey ?? $null
+Get-HuduModule; Set-HuduInstance -HuduBaseURL $hudubaseurl -HuduAPIKey $huduapikey;
 [version]$huduVersion = [version]($(get-huduappinfo).version)
 
 # $CreateAsIPAM=$true
@@ -1395,7 +1397,12 @@ $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
 $sourceAssets = $($allAssets | Where-Object {$_.asset_layout_id -eq $sourceassetlayout.id}) 
 $destassets = $($allAssets | Where-Object {$_.asset_layout_id -eq $destassetlayout.id}) 
 if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; exit}
-read-host "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target press enter to proceed"
+$readyStatement = "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target"
+if ($true -eq $NonInteractiveTransfer){
+    write-host $readyStatement
+} else {
+    read-host "$readyStatement, press enter to proceed."
+}
 
 
 $totalcounts = @{fromablescreated=0; toablescreated=0; assetsarchived=0; assetsmoved=0;
@@ -1410,7 +1417,13 @@ if ($CONSTANTS) {
 } else {write-host "No constants mapped"}
 if ($ListSelectEquivilencyMaps.Keys.count -gt 0){Write-host "$($ListSelectEquivilencyMaps.Keys.count) listselect target items mapped for $($ListSelectEquivilencyMaps.Keys -join ",")"}
 Write-Host "Smooshing $(if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {'using plaintext value-joining'} else {'using traditional HTML value joining'})"
-read-host "$($sourceassets.count) source assets and $($destassets.count) dest assets. press enter to proceed"
+$readyStatement = "$($sourceassets.count) source assets and $($destassets.count) dest assets."
+if ($true -eq $NonInteractiveTransfer){
+    write-host $readyStatement
+} else {
+    read-host "$readyStatement, press enter to proceed."
+}
+
 
 
 $sourceassetsIDX=0
@@ -1460,7 +1473,7 @@ foreach ($originalasset in $sourceassets) {
                     continue
                 }
                 write-host "no value for REQUIRED $($field.label) => $transformedlabel"
-                $field.value = $($(read-host "target field $($field.label) => $transformedlabel is required but null, enter value") ?? "None")
+                $field.value = $(if ($true -eq $NonInteractiveTransfer) {"None"} else {$($(read-host "target field $($field.label) => $transformedlabel is required but null, enter value") ?? "None")})
             } else {
                 write-host "no value for optional $($field.label) => $transformedlabel"
                 continue
@@ -1762,6 +1775,7 @@ if (-not ([string]::IsNullOrWhiteSpace($RenameSourceLayoutTo)) -or $("yes" -eq $
     $RenameSourceLayoutTo = $RenameSourceLayoutTo ?? (read-host "what is the new name for $($sourceassetlayout.name)")
 }
 if ([string]::IsNullOrWhiteSpace($RenameSourceLayoutTo)) {$RenameSourceLayoutTo = $sourceassetlayout.name}
+$setsourceassetsarchived = $setsourceassetsarchived ?? $null
 if ($null -ne $setsourceassetsarchived -or $("yes" -eq $(Select-ObjectFromList -objects @("yes","no") -message "would you like to archive source layout's assets? ($($sourceassets.count) total)" -allowNull $false))){
     $setsourceassetsarchived = $true
 }
