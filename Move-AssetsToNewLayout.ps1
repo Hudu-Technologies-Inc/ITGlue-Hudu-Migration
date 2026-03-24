@@ -1,3 +1,33 @@
+$NonInteractiveTransfer = $NonInteractiveTransfer ?? $false
+if ($true -eq $NonInteractiveTransfer){
+    write-host @"
+Running in non-interactive mode with settings:
+    [int]SourceLayoutId = $SourceLayoutId
+    [int]DestLayoutId = $DestLayoutId
+    [Nullable[bool]]MergeOnMatch = $MergeOnMatch
+    [Nullable[bool]]SkipOnMatch = $SkipOnMatch,
+    [string]MergeMode = $MergeMode
+    #(one of "source wins", "destination wins", "newest wins", "oldest wins")
+    [string]PreparedMapFile = $PreparedMapFile
+    [string]MapFile = $MapFile ?? 'mapping.ps1',
+    [string]RenameSourceLayoutTo = $RenameSourceLayoutTo,
+    [Nullable[bool]]setsourceassetsarchived = $setsourceassetsarchived,
+    [switch]newlayoutname=$RenameSourceLayoutTo,
+    [bool]UIMode=$UIMode
+"@
+} else {
+$SourceLayoutId = $null
+$DestLayoutId = $null
+$NonInteractiveTransfer = $false
+$RenameSourceLayoutTo = $null
+$CONSTANTS=@(); $SMOOSHLABELS=@(); $mapping=@();
+$mapfile = "mapping.ps1"
+$inspectlayouts = $false; $archivesource = $false;
+
+
+}
+
+
 $RequiredPSversion = [version]'7.5.1'
 $currentPSVersion  = $PSVersionTable.PSVersion
 if ($currentPSVersion -lt $RequiredPSversion) { throw "Need PowerShell $RequiredPSversion+, you have $currentPSVersion" } else {write-host "PowerShell version $currentPSVersion is compatible." -ForegroundColor Green}
@@ -1244,9 +1274,6 @@ $propertyDump
 Get-HuduModule; Set-HuduInstance;
 [version]$huduVersion = [version]($(get-huduappinfo).version)
 
-$CONSTANTS=@(); $SMOOSHLABELS=@(); $mapping=@();
-$mapfile = "mapping.ps1"
-$inspectlayouts = $false; $archivesource = $false;
 # $CreateAsIPAM=$true
 
 # load relatables and assets for use in mapping and transfer
@@ -1266,13 +1293,15 @@ foreach ($layout in $assetlayouts) {$layout | Add-Member -NotePropertyName asset
 $assetlayouts=$assetlayouts # | where-object {$_.assetsInLayoutCount -gt 0}
 $assetlayouts = $assetlayouts | Sort-Object Name
 $usablelayouts = $assetlayouts.count
+$SourceLayoutId = $SourceLayoutId ?? $null
+$DestLayoutId = $DestLayoutId ?? $null
 write-host "$($totallayouts - $usablelayouts) omitted and marked inactive. $totallayouts available layouts."
-$choice=Set-LayoutsForTransfer -allLayouts $assetlayouts
-$sourceassetlayout = $choice.SourceLayout
-$destassetlayout = $choice.DestLayout
-$MergeOnMatch = [bool]$("yes" -eq $(Select-ObjectFromList -message "if an asset in source layout $($sourceassetlayout.name) has a Name that matches a Name in dest layout $($destassetlayout.name), should we merge data from source into dest asset (yes) or do something else (no)?" -objects @("yes","no")))
-$SkipOnMatch = if ($MergeOnMatch -eq $true) {$false} else {[bool]$("yes" -eq $(Select-ObjectFromList -message "if an asset in source layout $($sourceassetlayout.name) has a Name that matches a Name in dest layout $($destassetlayout.name), should we skip adding source asset into dest (yes) or create both (no)?" -objects @("yes","no")))}
-$MergeMode = if ($MergeOnMatch -eq $true) {$(Select-Objectfromlist -message "which merge mode / approach for matching assets in destination?" -objects @('Merge-FillBlanks','Merge-PreferSource','Merge-Concat'))} else {$null}
+$choice=if ($SourceLayoutId -eq $null -and $DestLayoutId -eq $null) { Set-LayoutsForTransfer -allLayouts $assetlayouts }
+$sourceassetlayout = $($assetlayouts | where-object {$_.id -eq $SourceLayoutId}) ?? $choice.SourceLayout
+$destassetlayout = $($assetlayouts | where-object {$_.id -eq $DestLayoutId}) ?? $choice.DestLayout
+$MergeOnMatch = $MergeOnMatch ?? $([bool]$("yes" -eq $(Select-ObjectFromList -message "if an asset in source layout $($sourceassetlayout.name) has a Name that matches a Name in dest layout $($destassetlayout.name), should we merge data from source into dest asset (yes) or do something else (no)?" -objects @("yes","no"))))
+$SkipOnMatch = $SkipOnMatch ?? $(if ($MergeOnMatch -eq $true) {$false} else {[bool]$("yes" -eq $(Select-ObjectFromList -message "if an asset in source layout $($sourceassetlayout.name) has a Name that matches a Name in dest layout $($destassetlayout.name), should we skip adding source asset into dest (yes) or create both (no)?" -objects @("yes","no")))})
+$MergeMode = $MergeMode ?? $(if ($MergeOnMatch -eq $true) {$(Select-Objectfromlist -message "which merge mode / approach for matching assets in destination?" -objects @('Merge-FillBlanks','Merge-PreferSource','Merge-Concat'))} else {$null})
 
 foreach ($layout in @($sourceassetlayout, $destassetlayout)){
     write-host "getting relinkable fields from layout $($layout.name)..."
@@ -1283,38 +1312,42 @@ if ($(test-path "$mapfile")) {
     write-host "backed up $mapfile to $mapfile.old"; Move-Item $mapfile "$mapfile.old" -Force
 }
 
-# get fields mapped and ready
-$srcfields=@()
-$sourceListItemMap = @{}
-foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) { # assettag fields are carried over as relationships
-    if ($field.field_type -ieq "ListSelect" -and $null -ne $field.list_id){
-        $typicalValues = $(Get-HuduLists -id $field.list_id).list_items ?? @()
-        $sourceListItemMap["$($field.label)"]=$typicalValues.name
-        $srcfields+=@{label = $field.label; field_type = $field.field_type; list_id=$field.list_id; typicalValues=$typicalValues; required = $($field.required ?? $false)}
-    } elseif ($field.field_type -ieq 'DropDown' -and -not ([string]::IsNullOrEmpty($field.options))){
-        $typicalValues = $(Get-NormalizedDropdownOptions $field.options) ?? @()
-        $srcfields+=@{label = $field.label; field_type = $field.field_type; typicalValues=$typicalValues; required = $($field.required ?? $false)}
-    } else {
-        $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
+# build mapfile template if not non-interactive, so user can fill in mapping and refer to field details
+if ($false -eq $NonInteractiveTransfer){
+    $srcfields=@()
+    $sourceListItemMap = @{}
+    foreach ($field in $sourceassetlayout.fields | Where-Object {$_.field_type -ne "AssetTag"}) { # assettag fields are carried over as relationships
+        if ($field.field_type -ieq "ListSelect" -and $null -ne $field.list_id){
+            $typicalValues = $(Get-HuduLists -id $field.list_id).list_items ?? @()
+            $sourceListItemMap["$($field.label)"]=$typicalValues.name
+            $srcfields+=@{label = $field.label; field_type = $field.field_type; list_id=$field.list_id; typicalValues=$typicalValues; required = $($field.required ?? $false)}
+        } elseif ($field.field_type -ieq 'DropDown' -and -not ([string]::IsNullOrEmpty($field.options))){
+            $typicalValues = $(Get-NormalizedDropdownOptions $field.options) ?? @()
+            $srcfields+=@{label = $field.label; field_type = $field.field_type; typicalValues=$typicalValues; required = $($field.required ?? $false)}
+        } else {
+            $srcfields+=@{label = $field.label; type = $field.field_type; required = $($field.required ?? $false)}
+        }
     }
-}
-$dstfields=@()
-foreach ($field in $destassetlayout.fields) {
-    if ($field.field_type -eq "ListSelect" -and $null -ne $field.list_id){
-        $dstfields+=@{label = $field.label; field_type = $field.field_type; list_id=$field.list_id; required = $($field.required ?? $false)}
-    } else {
-        $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
+    $dstfields=@()
+    foreach ($field in $destassetlayout.fields) {
+        if ($field.field_type -eq "ListSelect" -and $null -ne $field.list_id){
+            $dstfields+=@{label = $field.label; field_type = $field.field_type; list_id=$field.list_id; required = $($field.required ?? $false)}
+        } else {
+            $dstfields+=@{label = $field.label; field_type = $field.field_type; required = $($field.required ?? $false)}
+        }
     }
+
+
+    foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
+        $fields.value | convertto-json -depth 66 | out-file "$($fields.name)-fields.json"
+    }
+
+    build-templatemap -destfields $dstfields -mapfile $mapfile
+
+    read-host "press enter if you filled in your mapfile, $mapfile"
 }
 
-
-foreach ($fields in @(@{name="source"; value=$srcfields}, @{name="dest"; value=$dstfields})) {
-    $fields.value | convertto-json -depth 66 | out-file "$($fields.name)-fields.json"
-}
-build-templatemap -destfields $dstfields -mapfile $mapfile
-
-
-read-host "press enter if you filled in your mapfile, $mapfile"
+# read mapfile (always)
 while ($true) {
     if (-not $(test-path "$mapfile")) {
         read-host "mapfile not found, please ensure it is in working directory, $mapfile, and press enter to continue"
@@ -1327,6 +1360,8 @@ while ($true) {
     }
 }
 
+
+# enumerate key field infos
 $sourcedestlabels       = @{};        $sourcedestrequired      = @{};
 $sourcedestStripHTML    = @{};     $sourceDestDataType         = @{};
 $addressMapsByDest      = @{};    $ListSelectEquivilencyMaps   = @{};
@@ -1722,16 +1757,16 @@ foreach ($originalasset in $sourceassets) {
     }
 }
 Write-host "wrap-up" -ForegroundColor cyan
-$newlayoutname = $null
-if ("yes" -eq $(Select-ObjectFromList -objects @("yes","no") -message "would you like to rename source layout ($($sourceassetlayout.name))" -allowNull $false)){
-    $newlayoutname = read-host "what is the new name for $($sourceassetlayout.name)"
+
+if (-not ([string]::IsNullOrWhiteSpace($RenameSourceLayoutTo)) -or $("yes" -eq $(Select-ObjectFromList -objects @("yes","no") -message "would you like to rename source layout ($($sourceassetlayout.name))" -allowNull $false))){
+    $RenameSourceLayoutTo = $RenameSourceLayoutTo ?? (read-host "what is the new name for $($sourceassetlayout.name)")
 }
-if ([string]::IsNullOrWhiteSpace($newlayoutname)) {$newlayoutname = $sourceassetlayout.name}
-if ("yes" -eq $(Select-ObjectFromList -objects @("yes","no") -message "would you like to archive source layout's assets? ($($sourceassets.count) total)" -allowNull $false)){
+if ([string]::IsNullOrWhiteSpace($RenameSourceLayoutTo)) {$RenameSourceLayoutTo = $sourceassetlayout.name}
+if ($null -ne $setsourceassetsarchived -or $("yes" -eq $(Select-ObjectFromList -objects @("yes","no") -message "would you like to archive source layout's assets? ($($sourceassets.count) total)" -allowNull $false))){
     $setsourceassetsarchived = $true
 }
-if ($newlayoutname -ne $sourceassetlayout.name){
-    Set-HuduAssetLayout -id $sourceassetlayout.id -Name $newlayoutname
+if ($RenameSourceLayoutTo -and $RenameSourceLayoutTo -ne $sourceassetlayout.name){
+    Set-HuduAssetLayout -id $sourceassetlayout.id -Name $RenameSourceLayoutTo
 }
 if ($true -eq $setsourceassetsarchived) {
     foreach ($originalasset in $sourceassets) {
