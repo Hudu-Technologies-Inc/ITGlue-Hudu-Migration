@@ -19,3 +19,7 @@ cookiejar.json
 tempdownloads
 tempdownloads*
 tempdownloads\*
+layout2layout*
+*.log
+field_mapping,psd1
+*.psd1

@@ -238,6 +238,325 @@ $($addressLines -join "`r`n")
     }
 }
 
+function Convert-BoolToYesNo {
+    param([object]$Value)
+
+    if ([bool]$Value) { 'Yes' } else { 'No' }
+}
+
+function Get-PreviewText {
+    param(
+        [AllowNull()]
+        [object]$Value,
+
+        [int]$MaxLength = 90
+    )
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return '[blank]'
+    }
+
+    $text = ($text -replace '\r?\n', ' ') -replace '\s{2,}', ' '
+    if ($text.Length -le $MaxLength) {
+        return $text
+    }
+
+    return '{0}...' -f $text.Substring(0, $MaxLength - 3)
+}
+
+function Get-MergeOptionSummaryLabel {
+    param([string]$Value)
+
+    switch ($Value) {
+        'Merge-FillBlanks' { 'Merge-FillBlanks - only fill empty destination fields' }
+        'Merge-PreferSource' { 'Merge-PreferSource - source values win on matches' }
+        'Skip' { 'Skip - leave matching destination assets unchanged' }
+        default { 'Merge-Concat - combine values where it makes sense' }
+    }
+}
+
+function Convert-MappingEntryToSummaryLine {
+    param(
+        [Parameter(Mandatory)]
+        [psobject]$Entry
+    )
+
+    switch ([string]$Entry.dest_type) {
+        'AddressData' {
+            $parts = foreach ($partName in @($Entry.address.Keys | Sort-Object)) {
+                $partSource = [string]$Entry.address[$partName].from
+                if (-not [string]::IsNullOrWhiteSpace($partSource)) {
+                    '{0} <= {1}' -f $partName, $partSource
+                }
+            }
+
+            if (-not $parts) {
+                $parts = @('No address parts selected')
+            }
+
+            return '{0} [{1}] <= {2}' -f $Entry.to, $Entry.dest_type, ($parts -join '; ')
+        }
+
+        'ListSelect' {
+            $ruleCount = @($Entry.Mapping.Keys).Count
+            return '{0} [ListSelect] <= {1}; add missing list items: {2}; value rules: {3}' -f $Entry.to, $Entry.from, (Convert-BoolToYesNo $Entry.add_listitems), $ruleCount
+        }
+
+        default {
+            $details = @()
+            $details += '{0} [{1}] <= {2}' -f $Entry.to, $Entry.dest_type, $Entry.from
+            if ($null -ne $Entry.striphtml -and [bool]$Entry.striphtml) {
+                $details += 'strip HTML'
+            }
+            if ($null -ne $Entry.required -and [bool]$Entry.required) {
+                $details += 'required'
+            }
+
+            return ($details -join '; ')
+        }
+    }
+}
+
+function New-TransferReviewSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$BaseUrl,
+
+        [Parameter(Mandatory)]
+        [string]$ApiKey,
+
+        [Parameter(Mandatory)]
+        [psobject]$SourceLayout,
+
+        [Parameter(Mandatory)]
+        [psobject]$DestLayout,
+
+        [Parameter(Mandatory)]
+        [string]$MergeOption,
+
+        [Parameter(Mandatory)]
+        [bool]$ArchivePreference,
+
+        [Parameter(Mandatory)]
+        [string]$RenameSourceLayoutTo,
+
+        [Parameter(Mandatory)]
+        [array]$MappingEntries,
+
+        [Parameter(Mandatory)]
+        [array]$ConstantEntries,
+
+        [Parameter()]
+        [string[]]$SmooshSourceLabels = @(),
+
+        [Parameter()]
+        [psobject]$SmooshTargetEntry,
+
+        [Parameter()]
+        [string[]]$SkippedFieldLabels = @(),
+
+        [Parameter()]
+        [array]$PerJobSettingSummaries = @(),
+
+        [Parameter(Mandatory)]
+        [string]$MapFilePath
+    )
+
+    $apiKeyPreview = if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+        '[not set]'
+    } elseif ($ApiKey.Length -le 4) {
+        ('*' * $ApiKey.Length)
+    } else {
+        ('*' * ($ApiKey.Length - 4)) + $ApiKey.Substring($ApiKey.Length - 4)
+    }
+
+    $lines = @(
+        'Please review this transfer plan before anything runs.',
+        '',
+        'Transfer Overview',
+        ('- Base URL: {0}' -f $BaseUrl),
+        ('- API key: {0}' -f $apiKeyPreview),
+        ('- Source layout: {0} [ID {1}]' -f $SourceLayout.Name, $SourceLayout.id),
+        ('- Destination layout: {0} [ID {1}]' -f $DestLayout.Name, $DestLayout.id),
+        ('- Merge behavior on matched assets: {0}' -f (Get-MergeOptionSummaryLabel -Value $MergeOption)),
+        ('- Rename source layout to: {0}' -f $RenameSourceLayoutTo),
+        ('- Archive remaining source assets after transfer: {0}' -f (Convert-BoolToYesNo $ArchivePreference)),
+        ('- Mapping file: {0}' -f $MapFilePath),
+        ''
+    )
+
+    $lines += 'Direct Field Mappings'
+    if (@($MappingEntries | Where-Object { $_.from -ne 'SMOOSH' }).Count -gt 0) {
+        foreach ($entry in ($MappingEntries | Where-Object { $_.from -ne 'SMOOSH' })) {
+            $lines += '- ' + (Convert-MappingEntryToSummaryLine -Entry $entry)
+        }
+    } else {
+        $lines += '- None'
+    }
+    $lines += ''
+
+    $lines += 'Constant Values'
+    if (@($ConstantEntries).Count -gt 0) {
+        foreach ($entry in $ConstantEntries) {
+            $lines += ('- {0} <= "{1}"' -f $entry.to_label, (Get-PreviewText -Value $entry.literal))
+        }
+    } else {
+        $lines += '- None'
+    }
+    $lines += ''
+
+    $lines += 'SMOOSH Configuration'
+    if ($null -ne $SmooshTargetEntry) {
+        $lines += ('- Target field: {0}' -f $SmooshTargetEntry.to)
+        $lines += ('- Source fields: {0}' -f $(if (@($SmooshSourceLabels).Count -gt 0) { $SmooshSourceLabels -join ', ' } else { 'None' }))
+    } else {
+        $lines += '- Not used'
+    }
+    $lines += ''
+
+    $lines += 'Skipped Destination Fields'
+    if (@($SkippedFieldLabels).Count -gt 0) {
+        foreach ($fieldLabel in $SkippedFieldLabels) {
+            $lines += ('- {0}' -f $fieldLabel)
+        }
+    } else {
+        $lines += '- None'
+    }
+    $lines += ''
+
+    $lines += 'Per-Job Settings'
+    if (@($PerJobSettingSummaries).Count -gt 0) {
+        foreach ($setting in $PerJobSettingSummaries) {
+            $lines += ('- {0}: {1}' -f $setting.Name, (Convert-BoolToYesNo $setting.Value))
+        }
+    } else {
+        $lines += '- None'
+    }
+
+    return ($lines -join "`r`n")
+}
+
+function layout2layout{
+param (
+    [string]$sourceLayoutName = "",
+    [string]$targetLayoutName = ""
+)
+
+    # usage- move assets between same-field layouts
+    # particularly useful for un-splitting split-configurations from ITG
+
+    if ([string]::isnullorempty($sourceLayoutName) -or [string]::isnullorempty($targetLayoutName)) {
+        write-error "sourceLayoutName and targetLayoutName parameters are required"
+        exit 1
+    }
+    write-verbose "starting layout to layout move from '$sourceLayoutName' to '$targetLayoutName'"
+    
+    $results = $results ?? @()
+    $sourcelayout = Get-HuduASsetlayouts -name $sourceLayoutName | select-object -first 1
+    $targetLayout = Get-HuduASsetlayouts -name $targetLayoutName | select-object -first 1
+    $sourceLayout = $sourcelayout.asset_layout ?? $sourcelayout
+    $targetLayout = $targetLayout.asset_layout ?? $targetLayout
+
+    $sourceLayoutID= $sourceLayout.id
+    $targetLayoutId = $targetLayout.id
+    if (-not $sourceLayoutID -or -not $targetLayoutId) {
+        write-error "source or target layout not found"
+        exit 1
+    }
+
+    function Move-HuduAssetToNewLayout {
+        Param ([Int]$targetLayoutId,[Int]$Id)
+        $asset = Get-HuduAssets -id $Id; $asset = $asset.asset ?? $asset;
+        if (-not $asset) {throw "Asset with id $Id not found"}
+        try {$moved = $(Invoke-HuduRequest -Method put -Resource "/api/v1/companies/$($asset.company_id)/assets/$($asset.id)/move_layout" -Body $($([pscustomobject]@{asset_layout_id = $targetLayoutId}) | ConvertTo-Json -Depth 10))
+            return $moved
+        } catch {
+            throw $_
+        }
+    }
+
+    foreach ($l in $(get-huduassetlayouts -id $sourceLayoutID)){
+        write-verbose "starting movements for $($l.name), obtaining assets"
+        $allassets = Get-HuduAssets -AssetLayoutId $l.id
+        write-verbose "$($allassets.count) assets found, moving to layout id $targetLayoutId"
+        foreach ($a in $allassets){
+            try {
+            $result = $null
+            $result = Move-HuduAssetToNewLayout -id $a.id -targetLayoutId $targetLayoutId
+            } catch {
+                $result = @{
+                    assetId = $a.id
+                    companyId = $a.company_id
+                    status = "error"
+                    message = $_.exception.message
+                }
+                write-verbose "error moving asset id $($a.id) for company id $($a.company_id): $($_.exception.message)" 
+            } finally {
+                $results += $result
+            }
+
+        }
+    }
+    return $results
+}
+function Show-TransferReviewDialog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$SummaryText,
+
+        [string]$Title = 'Review Transfer Plan'
+    )
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = $Title
+    $form.StartPosition = 'CenterScreen'
+    $form.Size = New-Object System.Drawing.Size(920,700)
+    $form.MinimumSize = New-Object System.Drawing.Size(760,560)
+    $form.Topmost = $true
+
+    $intro = New-Object System.Windows.Forms.Label
+    $intro.Location = New-Object System.Drawing.Point(12,12)
+    $intro.Size = New-Object System.Drawing.Size(880,36)
+    $intro.Text = 'Review the full transfer plan below. Choose Run Transfer to continue, or Cancel to stop before any changes are made.'
+    $form.Controls.Add($intro)
+
+    $summaryBox = New-Object System.Windows.Forms.TextBox
+    $summaryBox.Location = New-Object System.Drawing.Point(12,56)
+    $summaryBox.Size = New-Object System.Drawing.Size(880,560)
+    $summaryBox.Multiline = $true
+    $summaryBox.ReadOnly = $true
+    $summaryBox.ScrollBars = 'Both'
+    $summaryBox.WordWrap = $false
+    $summaryBox.Font = New-Object System.Drawing.Font('Consolas', 9)
+    $summaryBox.Text = $SummaryText
+    $form.Controls.Add($summaryBox)
+
+    $runButton = New-Object System.Windows.Forms.Button
+    $runButton.Location = New-Object System.Drawing.Point(692,625)
+    $runButton.Size = New-Object System.Drawing.Size(95,30)
+    $runButton.Text = 'Run Transfer'
+    $runButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($runButton)
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Location = New-Object System.Drawing.Point(797,625)
+    $cancelButton.Size = New-Object System.Drawing.Size(95,30)
+    $cancelButton.Text = 'Cancel'
+    $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($cancelButton)
+
+    $form.AcceptButton = $runButton
+    $form.CancelButton = $cancelButton
+
+    return ($form.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)
+}
+
 function Show-TransferMessage {
     [CmdletBinding()]
     param(
@@ -1034,7 +1353,7 @@ function Show-InputPopup {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = $Title
-    $form.Size = New-Object System.Drawing.Size(420,190)
+    $form.Size = New-Object System.Drawing.Size(420,210)
     $form.StartPosition = 'CenterScreen'
     $form.Topmost = $true
     $form.FormBorderStyle = 'FixedDialog'
@@ -1043,16 +1362,18 @@ function Show-InputPopup {
 
     $label = New-Object System.Windows.Forms.Label
     $label.Location = New-Object System.Drawing.Point(15,15)
-    $label.Size = New-Object System.Drawing.Size(370,20)
+    $label.MaximumSize = New-Object System.Drawing.Size(370,0)
+    $label.AutoSize = $true
     $label.Text = $Prompt
     $form.Controls.Add($label)
 
+    $inputTop = $label.Bottom + 10
     $inputControl = $null
 
     switch ($InputType) {
         'Text' {
             $textBox = New-Object System.Windows.Forms.TextBox
-            $textBox.Location = New-Object System.Drawing.Point(15,45)
+            $textBox.Location = New-Object System.Drawing.Point(15,$inputTop)
             $textBox.Size = New-Object System.Drawing.Size(370,23)
             $textBox.Text = $DefaultValue
             $form.Controls.Add($textBox)
@@ -1061,7 +1382,7 @@ function Show-InputPopup {
 
         'Password' {
             $textBox = New-Object System.Windows.Forms.TextBox
-            $textBox.Location = New-Object System.Drawing.Point(15,45)
+            $textBox.Location = New-Object System.Drawing.Point(15,$inputTop)
             $textBox.Size = New-Object System.Drawing.Size(370,23)
             $textBox.Text = $DefaultValue
             $textBox.UseSystemPasswordChar = $true
@@ -1071,7 +1392,7 @@ function Show-InputPopup {
 
         'ListSelect' {
             $comboBox = New-Object System.Windows.Forms.ComboBox
-            $comboBox.Location = New-Object System.Drawing.Point(15,45)
+            $comboBox.Location = New-Object System.Drawing.Point(15,$inputTop)
             $comboBox.Size = New-Object System.Drawing.Size(370,23)
             $comboBox.DropDownStyle = 'DropDownList'
 
@@ -1091,15 +1412,18 @@ function Show-InputPopup {
         }
     }
 
+    $buttonTop = $inputTop + 45
+    $form.ClientSize = New-Object System.Drawing.Size(400,($buttonTop + 45))
+
     $okButton = New-Object System.Windows.Forms.Button
-    $okButton.Location = New-Object System.Drawing.Point(220,90)
+    $okButton.Location = New-Object System.Drawing.Point(220,$buttonTop)
     $okButton.Size = New-Object System.Drawing.Size(75,28)
     $okButton.Text = 'OK'
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.Controls.Add($okButton)
 
     $cancelButton = New-Object System.Windows.Forms.Button
-    $cancelButton.Location = New-Object System.Drawing.Point(310,90)
+    $cancelButton.Location = New-Object System.Drawing.Point(310,$buttonTop)
     $cancelButton.Size = New-Object System.Drawing.Size(75,28)
     $cancelButton.Text = 'Cancel'
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
@@ -1285,17 +1609,50 @@ function New-GuiJob {
         }
     }
 
+    $layoutToLayoutDirectPossible = $true
+    $DirectTransferWanted = $false
+    foreach ($field in $sourceLayout.fields) {
+        $directMatch = $destLayout.fields | Where-Object {
+            $_.label -eq $field.label -and $_.field_type -eq $field.field_type
+        } | Select-Object -First 1
+
+        if (-not $directMatch) {
+            $layoutToLayoutDirectPossible = $false
+            break
+        }
+    }
+
+    if ($layoutToLayoutDirectPossible) {
+        $directTransferResult = Show-InputPopup `
+            -Title 'Direct Transfer Possible Without Custom Mapping' `
+            -inputType 'YesNo' `
+            -Prompt "The source and destination layouts have matching fields that would allow for a direct transfer without field-by-field mapping.`r`nDo you want to proceed with a direct transfer?`r`nFor cases like this, it is reccomended."
+        $DirectTransferWanted = if ($directTransferResult.Success) { [bool]($directTransferResult.Value) } else { $false }
+    }
+    if ($DirectTransferWanted) {
+        $confirmed = Show-TransferReviewDialog -SummaryText "Transferring $($sourceLayout.name) to $($destLayout.name) with direct field mapping. Start Now?"
+        if ($confirmed) {
+            $L2Lresults = layout2layout -sourceLayoutName $sourceLayout.name -targetLayoutName $destLayout.name
+            $L2Lresults | convertto-json -depth 99 | Out-File -FilePath (Join-Path $script:Root "layout2layout_$(Get-Date -Format 'yyyyMMdd_HHmmss').json") -Encoding utf8
+            exit 0
+        } else {
+            Write-Verbose "Proceeding to custom-mapping workflow per user choice, even though a direct layout-to-layout transfer is possible."
+        }
+    }
+
+
     $mergeOptsResult = Show-InputPopup `
-        -Prompt "If an asset from '$($sourceLayout.Name)' matches an asset in '$($destLayout.Name)', how should it be handled?`r`nMerge-Concat is generally best if you're unsure." `
-        -Title 'Merge-Options' `
+        -Prompt ("If an asset from '{0}' matches an asset in '{1}', choose what should happen.`r`n`r`nMerge-Concat (recommended): keep both values where it makes sense.`r`nMerge-FillBlanks: only fill empty destination fields.`r`nMerge-PreferSource: let the source values win.`r`nSkip: leave matching assets unchanged." -f $sourceLayout.Name, $destLayout.Name) `
+        -Title 'Merge Options' `
         -InputType 'ListSelect' `
-        -Options @("Merge-FillBlanks','Merge-PreferSource','Merge-Concat","Skip")
+        -Options @('Merge-Concat','Merge-FillBlanks','Merge-PreferSource','Skip') `
+        -DefaultValue 'Merge-Concat'
 
     $preferredMergeOption = if ($mergeOptsResult.Success) { [string]$mergeOptsResult.Value } else { "Merge-Concat" }
 
     $sourceLayoutRenameResult = Show-InputPopup `
-        -Prompt "Do you want to rename the source layout $($sourceLayout.name) during transfer? This can help differentiate it from the destination layout after transfer, but is optional." `
-        -Title 'Source Layout Renaming - skip or cancel to keep the current name' `
+        -Prompt "Optional: enter a new name for the source layout before transfer. Leave this blank, or cancel, to keep '$($sourceLayout.Name)'." `
+        -Title 'Rename Source Layout (Optional)' `
         -InputType 'Text'
 
     $renameSourceLayoutto = if ($sourceLayoutRenameResult.Success -and -not [string]::IsNullOrWhiteSpace($sourceLayoutRenameResult.Value)) {
@@ -1305,8 +1662,8 @@ function New-GuiJob {
     }
 
     $ArchiveResult = Show-InputPopup `
-        -Prompt "Do you want to archive assets in the source layout after transfer? Archiving can help prevent confusion and duplicates, but is optional and can be done manually later if desired." `
-        -Title 'Archive Stale Source Assets After Migrating?' `
+        -Prompt "After the transfer finishes, should assets left in the source layout be archived? This is usually helpful when the old layout will no longer be used." `
+        -Title 'Archive Source Layout Assets?' `
         -InputType 'YesNo'
 
     $archivePreference = if ($ArchiveResult.Success) { [bool]($ArchiveResult.Value) } else { $false }
@@ -1323,6 +1680,7 @@ function New-GuiJob {
     $constantEntries = @()
     $smooshSourceLabels = @()
     $smooshTargetEntry = $null
+    $skippedFieldLabels = @()
 
     $sourceFieldOptions = @(
         $sourceLayout.Fields |
@@ -1353,6 +1711,7 @@ function New-GuiJob {
         }
 
         if ($fieldResult.Skip) {
+            $skippedFieldLabels += [string]$field.label
             continue
         }
 
@@ -1380,41 +1739,54 @@ function New-GuiJob {
 
 
     $PerJobSettings = ""
+    $PerJobSettingSummaries = @()
 
     foreach ($perjobQuestion in @(
         @{
-            SettingName = 'Include blank values during SMOOSH'
+            SettingName = 'Include Blank Values In SMOOSH?'
             VariableName = 'includeblanksduringsmoosh'
             DefaultValue = $false
-            Description = "If enabled, source fields that are blank/empty will still be included in the smooshing process. If disabled
-            (blank values are excluded), then only source fields with actual content will be combined into the destination field. This can help reduce clutter in the destination field when many source fields are optional or frequently empty."
+            Description = "Include empty source fields when building the SMOOSH output. Leaving this off usually keeps the combined value cleaner."
             },
         @{
-            SettingName = 'Include relations for archived objects'
+            SettingName = 'Include Relations For Archived Objects?'
             VariableName = 'includeRelationsForArchived'
             DefaultValue = $true
-            Description = "If enabled, archived objects will be related to the new asset/object during the smooshing process. If disabled, archived objects will be ignored."
+            Description = "Allow archived objects to stay related to the new asset, even if related item is Archived. Turn this off to only relate to active items."
             },
         @{
-            SettingName = 'Exclude / Strip HTML in SMOOSH'
+            SettingName = 'Strip HTML In SMOOSH Output?'
             VariableName = 'excludeHTMLinSMOOSH'
             DefaultValue = $false
-            Description = "If enabled, HTML content will be stripped when smooshing to a plaintext field. If disabled, HTML content will be preserved in richtext fields."
+            Description = "Remove HTML formatting when SMOOSHing into plain-text destinations. Leave this off to preserve formatting for rich-text fields."
             },
         @{
-            SettingName = 'Include label in SMOOSHed values'
+            SettingName = 'Include Field Labels In SMOOSH Values?'
             VariableName = 'includeLabelInSmooshedValues'
             DefaultValue = $true
-            Description = "If enabled, the label of each source field will be included in the SMOOSHed values. If disabled, only the values will be included."
+            Description = "Prefix each SMOOSHed value with its source field label. Turn this off if you only want the raw combined values."
             })){
-            $settingResult = Show-InputPopup `
-                -Prompt "$($perjobQuestion.Description) (default value is $($perjobQuestion.DefaultValue))" `
-                -Title "$($perjobQuestion.SettingName)" `
-                -InputType 'YesNo' 
+            if ($null -eq $smooshTargetEntry -and $perjobQuestion.SettingName -ilike '*SMOOSH*') {
+                    $settingResult = [pscustomobject]@{
+                        Success = $true
+                        Type    = 'YesNo'
+                        Value   = $perjobQuestion.DefaultValue
+                        Raw     = $perjobQuestion.DefaultValue.ToString()
+                    }
+            } else {
+                $settingResult = Show-InputPopup `
+                    -Prompt ("{0}`r`n`r`nRecommended default: {1}" -f $perjobQuestion.Description, $(if ($perjobQuestion.DefaultValue) { 'Yes' } else { 'No' })) `
+                    -Title "$($perjobQuestion.SettingName)" `
+                    -InputType 'YesNo' 
+            }
             if (-not $settingResult.Success) {
                 $settingResult.Value = $perjobQuestion.DefaultValue
             }
             $PerJobSettings += '$' + $perjobQuestion.VariableName + ' = ' + $settingResult.Value + "`r`n"
+            $PerJobSettingSummaries += [pscustomobject]@{
+                Name  = $perjobQuestion.SettingName.TrimEnd('?')
+                Value = [bool]$settingResult.Value
+            }
         }
 
 
@@ -1428,7 +1800,7 @@ function New-GuiJob {
 
         $reviewedFieldCount = @($destLayout.Fields | Where-Object { ($_.field_type ?? $_.type) -ne 'AssetTag' }).Count
         $configuredFieldCount = $mappingEntries.Count + $constantEntries.Count
-        $skippedFieldCount = [Math]::Max(0, $reviewedFieldCount - $configuredFieldCount)
+        $skippedFieldCount = $skippedFieldLabels.Count
         $smooshTargetLabel = if ($null -ne $smooshTargetEntry) { $smooshTargetEntry.to } else { 'None' }
         $directMappingCount = $mappingEntries.Count - $(if ($null -ne $smooshTargetEntry) { 1 } else { 0 })
 
@@ -1436,7 +1808,31 @@ function New-GuiJob {
             -Title 'Mapping Plan Ready' `
             -Kind Info `
             -Message ("Your mapping plan has been prepared for '{0}' -> '{1}'.`r`n`r`nDirect mappings: {2}`r`nConstants: {3}`r`nSMOOSH target: {4}`r`nSMOOSH source fields: {5}`r`nSkipped fields: {6}`r`n`r`nThis is a good checkpoint to pause and sanity-check the plan before any live transfer run." -f $sourceLayout.Name, $destLayout.Name, $directMappingCount, $constantEntries.Count, $smooshTargetLabel, $smooshSourceLabels.Count, $skippedFieldCount)
-        
+
+        $reviewSummaryText = New-TransferReviewSummary `
+            -BaseUrl $state.BaseUrl `
+            -ApiKey $state.ApiKey
+            -SourceLayout $sourceLayout `
+            -DestLayout $destLayout `
+            -MergeOption $preferredMergeOption `
+            -ArchivePreference $archivePreference `
+            -RenameSourceLayoutTo $renameSourceLayoutto `
+            -MappingEntries $mappingEntries `
+            -ConstantEntries $constantEntries `
+            -SmooshSourceLabels $smooshSourceLabels `
+            -SmooshTargetEntry $smooshTargetEntry `
+            -SkippedFieldLabels $skippedFieldLabels `
+            -PerJobSettingSummaries $PerJobSettingSummaries `
+            -MapFilePath $mapfile
+
+        $confirmed = Show-TransferReviewDialog -SummaryText $reviewSummaryText
+        if (-not $confirmed) {
+            Show-TransferMessage `
+                -Title 'Transfer Cancelled' `
+                -Kind Warning `
+                -Message 'The transfer was cancelled during final review. No changes were made.'
+            return $null
+        }
 
         $state.Job = [pscustomobject]@{
             BaseUrl      = $state.BaseUrl
@@ -1444,9 +1840,12 @@ function New-GuiJob {
             SourceLayout = $sourceLayout
             DestLayout   = $destLayout
             mapfile      = $mapfile
+            preferredMergeOption = $preferredMergeOption
             MergeOptions = $preferredMergeOption
+            archivePreference = $archivePreference
             ArchiveSource = $archivePreference
             RenameSourceLayout = $renameSourceLayoutto ?? $sourceLayout.name
+            ReviewSummary = $reviewSummaryText
         }
     
 
