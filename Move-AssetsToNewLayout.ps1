@@ -1375,7 +1375,7 @@ while ($true) {
         read-host "mapfile not found, please ensure it is in working directory, $mapfile, and press enter to continue"
     }    
     try {
-        . .\$mapfile
+        . $mapfile
         break
     } catch {
         if ($true -eq $NonInteractiveTransfer){

@@ -172,9 +172,9 @@ $smooshBlock + @'
 $mapping=@(
 '@ + ($mappingTextEntries -join ",`r`n") + @'
 )
-'@ + @"
+'@ + "`n" + @"
 $PerJobSettings
-"@
+"@ + "`n"
 Write-Verbose "Mapping count: $($mappingEntries.Count)"
 Write-Verbose "Constant count: $($constantEntries.Count)"
 Write-Verbose "Smoosh source label count: $($SmooshSourceLabels.Count)"
