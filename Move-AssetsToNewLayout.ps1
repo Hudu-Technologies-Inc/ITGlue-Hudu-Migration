@@ -16,6 +16,7 @@ param(
 
 $NonInteractiveTransfer = $NonInteractiveTransfer ?? $false
 if ($true -eq $NonInteractiveTransfer){
+    $MergeOnMatch = [bool]($MergeMode -ne 'Skip')
     write-host @"
 Running in non-interactive mode with settings:
     [int]SourceLayoutId = $SourceLayoutId
@@ -1287,7 +1288,8 @@ $propertyDump
 # init and vars
 $hudubaseurl = $hudubaseurl ?? $null
 $huduapikey = $huduapikey ?? $null
-Get-HuduModule; Set-HuduInstance -HuduBaseURL $hudubaseurl -HuduAPIKey $huduapikey;
+
+if ($true -ne $NonInteractiveTransfer) {Get-HuduModule; Set-HuduInstance -HuduBaseURL $hudubaseurl -HuduAPIKey $huduapikey;}
 [version]$huduVersion = [version]($(get-huduappinfo).version)
 
 # $CreateAsIPAM=$true
@@ -1323,11 +1325,11 @@ foreach ($layout in @($sourceassetlayout, $destassetlayout)){
     write-host "getting relinkable fields from layout $($layout.name)..."
     $layout | Add-Member -NotePropertyName linkables -NotePropertyValue $(Get-RelinkableAssetTagLayoutFields -fromLayoutId $layout.id) -Force
 }
-
-if ($(test-path "$mapfile")) {
-    write-host "backed up $mapfile to $mapfile.old"; Move-Item $mapfile "$mapfile.old" -Force
+if ($true -ne $NonInteractiveTransfer){
+    if ($(test-path "$mapfile")) {
+        write-host "backed up $mapfile to $mapfile.old"; Move-Item $mapfile "$mapfile.old" -Force
+    }
 }
-
 # build mapfile template if not non-interactive, so user can fill in mapping and refer to field details
 if ($false -eq $NonInteractiveTransfer){
     $srcfields=@()
@@ -1366,13 +1368,22 @@ if ($false -eq $NonInteractiveTransfer){
 # read mapfile (always)
 while ($true) {
     if (-not $(test-path "$mapfile")) {
+        if ($true -eq $NonInteractiveTransfer){
+            write-host "No mapfile, exiting"; exit 1;
+        }
+
         read-host "mapfile not found, please ensure it is in working directory, $mapfile, and press enter to continue"
     }    
     try {
         . .\$mapfile
         break
     } catch {
-        read-host "your mapfile has error: $_ please update, save, and press enter to try again."
+        if ($true -eq $NonInteractiveTransfer){
+            write-host "your mapfile has error: $_ please update, save, and try again. exiting due to non-interactive mode."
+            exit 1;
+        } else {
+            read-host "your mapfile has error: $_ please update, save, and press enter to try again."
+        }
     }
 }
 
@@ -1433,7 +1444,7 @@ if ($ListSelectEquivilencyMaps.Keys.count -gt 0){Write-host "$($ListSelectEquivi
 Write-Host "Smooshing $(if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {'using plaintext value-joining'} else {'using traditional HTML value joining'})"
 $readyStatement = "$($sourceassets.count) source assets and $($destassets.count) dest assets."
 if ($true -eq $NonInteractiveTransfer){
-    write-host $readyStatement
+    write-verbose $readyStatement
 } else {
     read-host "$readyStatement, press enter to proceed."
 }

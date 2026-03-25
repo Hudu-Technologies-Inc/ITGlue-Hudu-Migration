@@ -112,6 +112,7 @@ function Get-GuiFieldMappings {
 function Write-GuiMappingFile {
     param(
         [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
         [array]$MappingEntries,
 
         [Parameter()]
@@ -343,9 +344,11 @@ function New-TransferReviewSummary {
         [string]$RenameSourceLayoutTo,
 
         [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
         [array]$MappingEntries,
 
         [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
         [array]$ConstantEntries,
 
         [Parameter()]
@@ -586,12 +589,16 @@ function Show-TransferMessage {
         [System.Windows.Forms.MessageBoxButtons]::OK
     }
 
-    [System.Windows.Forms.MessageBox]::Show(
+    $dialogResult = [System.Windows.Forms.MessageBox]::Show(
         $Message,
         $Title,
         $buttons,
         $icon
     )
+
+    if ($YesNo) {
+        return $dialogResult
+    }
 }
 
 function Normalize-HuduBaseUrl {
@@ -1467,7 +1474,7 @@ function New-GuiJob {
         ApiKey       = ''
         BaseUrl      = ''
     }
-    $mapfile = Join-Path $script:Root 'field_mapping.psd1'
+    $mapfile = Join-Path $script:Root 'mapping.ps1'
 
     $Mainform = New-Object System.Windows.Forms.Form
     $Mainform.Text = 'Hudu Asset Layout Transfer'
@@ -1782,7 +1789,7 @@ function New-GuiJob {
             if (-not $settingResult.Success) {
                 $settingResult.Value = $perjobQuestion.DefaultValue
             }
-            $PerJobSettings += '$' + $perjobQuestion.VariableName + ' = ' + $settingResult.Value + "`r`n"
+            $PerJobSettings += '$' + $perjobQuestion.VariableName + ' = $' + $settingResult.Value + "`r`n"
             $PerJobSettingSummaries += [pscustomobject]@{
                 Name  = $perjobQuestion.SettingName.TrimEnd('?')
                 Value = [bool]$settingResult.Value
@@ -1811,7 +1818,7 @@ function New-GuiJob {
 
         $reviewSummaryText = New-TransferReviewSummary `
             -BaseUrl $state.BaseUrl `
-            -ApiKey $state.ApiKey
+            -ApiKey $state.ApiKey `
             -SourceLayout $sourceLayout `
             -DestLayout $destLayout `
             -MergeOption $preferredMergeOption `
@@ -1834,7 +1841,7 @@ function New-GuiJob {
             return $null
         }
 
-        $state.Job = [pscustomobject]@{
+        return @{
             BaseUrl      = $state.BaseUrl
             ApiKey       = $state.ApiKey
             SourceLayout = $sourceLayout
@@ -1847,45 +1854,45 @@ function New-GuiJob {
             RenameSourceLayout = $renameSourceLayoutto ?? $sourceLayout.name
             ReviewSummary = $reviewSummaryText
         }
-    
-
-        return $state.Job
-    
 }
 
 function Invoke-Transfer {
     param(
         [Parameter(Mandatory)]
-        [hashtable]$Job
+        [pscustomobject]$Job
     )
-    $jobFolder = Split-Path -Parent (resolve-path $job.mapfile).Path
-    set-location $jobFolder
-    try {
-        $invokeParams = @{
-            HuduBaseURL = $Job.BaseUrl
-            HuduAPIKey = $job.APIkey
-            SourceLayoutId = [int]$Job.sourceLayout.id
-            DestLayoutId = [int]$Job.destLayout.id
-            MergeMode = $job.preferredMergeOption ?? "Merge-Concat"
-            SkipOnMatch = [bool]$($job.preferredMergeOption -eq 'Skip') ?? $false
-            MapFile = $job.mapfile
-            ArchiveSourceLayoutAssets = [bool]$Job.archivePreference
-            newlayoutname = $job.RenameSourceLayout
-            NonInteractiveTransfer = $true
-        }
-        write-verbose "Invoking transfer script with parameters: $($($invokeParams | convertto-json -depth 99).ToString())"
 
-        & $script:UpstreamScriptPath @invokeParams
+    $jobFolder = Split-Path -Parent (Resolve-Path $job.mapfile).Path
+    Push-Location $jobFolder
+    try {
+    .\Move-AssetsToNewLayout.ps1 `
+        -HuduBaseURL 'YOUR_BASE_URL' `
+        -HuduAPIKey 'YOUR_API_KEY' `
+        -SourceLayoutId 4 `
+        -DestLayoutId 2 `
+        -MergeOnMatch:$true `
+        -SkipOnMatch:$false `
+        -MergeMode 'Merge-PreferSource' `
+        -MapFile 'C:\Users\Administrator\Documents\GitHub\ITGlue-Hudu-Migration\mapping.ps1' `
+        -RenameSourceLayoutTo 'lh\,' `
+        -setsourceassetsarchived:$true `
+        -NonInteractiveTransfer:$true `
+        -ErrorAction Stop
     }
-    finally {
-        Pop-Location
+    catch {
+    $_ | Format-List * -Force
+    $_.Exception | Format-List * -Force
+    $_.ScriptStackTrace
+    read-host
     }
+    
 }
+
 
 write-verbose "starting GUI job creation with upstream script path: $script:UpstreamScriptPath"
 $job = New-GuiJob
 if ($null -ne $job) {
-    write-verbose "GUI job creation completed. Job details: $($job | convertto-json -depth 99).ToString()"
-    $invokeResult = Invoke-Transfer -Job $job
-    write-verbose "Transfer invocation completed. Result: $($($invokeResult | convertto-json -depth 99).ToString()))"
+    Invoke-Transfer -Job $job
 }
+
+read-host
