@@ -13,7 +13,15 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 > Depending on the size of your ITGlue instance, the migration script can take several hours to run (we've seen it take as long as 24 hours). As such, it's highly recommended to run the migration script on a Windows Server or a machine that has ***Windows Update and Sleep [temporarily] disabled***
 
 > [!IMPORTANT]
-> You must be on the ITGlue **Enterprise Plan** (or a legacy plan with API Access) to be able to run the script.
+> You must be on the ITGlue **Enterprise Plan** (or a legacy plan with API Access) to be able to run the migration.
+
+## Windows executable (recommended)
+
+**This is how most people run the migration.** The repository includes a pre-built Windows app at **`release/ITGlue-Hudu-Migration.exe`**. It runs the same interactive flow as the main PowerShell script and uses the same default settings location.
+
+- **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need your ITGlue export ZIP, API keys, and a compatible Hudu instance—work through **What you'll need** and **Prerequisites** later in this document before you start.
+- **Settings:** Stored by default under `%APPDATA%\HuduMigration`, same as the PowerShell workflow.
+- **Use PowerShell instead** if you rely on a customized **`environ.example`**, want full session control over variables, or need post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** (these are not launched by the executable). See **Prerequisites - Migration Script Setup** below.
 
 ## What the script can migrate currently:
 - Companies
@@ -124,14 +132,6 @@ If presented with a checkbox asking whether or not to include passwords, be sure
 6. Store the API key in a safe place as Hudu will only show you the key once.
 
 <img width="750" alt="IT_Glue_Migration_Guide" src="https://github.com/user-attachments/assets/bf81c7fc-0d0b-4555-b698-1e25fd7da7d3" />
-
-## Windows executable
-
-This repository includes a pre-built Windows executable at **`release/ITGlue-Hudu-Migration.exe`**. It runs the same interactive migration as the main PowerShell script and uses the same default settings location.
-
-- **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need your ITGlue export ZIP, API keys, and a compatible Hudu instance—see the prerequisites above.
-- **Settings:** Stored by default under `%APPDATA%\HuduMigration`, same as the PowerShell workflow.
-- **When to use PowerShell instead:** Use the **clone + dot-sourcing** flow below if you rely on a customized **`environ.example`**, want full session control over variables, or need post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** (these are not launched by the executable).
 
 ## Prerequisites - ***Migration Script Setup***
 
