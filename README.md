@@ -2,7 +2,7 @@
 > **Please Read this entire document before you begin**
 
 # Getting Started
-You'll want to make sure your Hudu instance is prepared for migration and that your machine designated to run this script is also properly prepared.
+You'll want to make sure your Hudu instance is prepared for migration and that the machine you use to run this migration (executable or PowerShell) is also properly prepared.
 
 > [!NOTE]
 > This is the Hudu Technologies Fork of an amazing open-source project.
@@ -26,26 +26,25 @@ You'll want to make sure your Hudu instance is prepared for migration and that y
 - Documents with folder structure
 - Passwords (with OTP codes)
 - Document Links
-- * Password Folders [these are flattened into a single level of folders]*
-- * Checklists/Checklist Templates [add your users to Hudu first to persist user assignment]
+- ! Password folders (optional, JWT): recreated as a **flattened** single level—not full hierarchical folder structure from ITGlue
+- ! Checklists / checklist templates (optional, JWT): imported as **Hudu procedures**; add users to Hudu first so assignees can be matched where possible
 
-`!` Items with a double-bullet require JWT authentication and are generally for more-advanced users. Extracting JWT token requires web access and developer cosole in your web browser. If you're unsure, best to just skip these.
+Items marked with **!** require **JWT** authentication (ITGlue session token from your browser) and are intended for advanced users. Extracting a JWT requires web access and your browser’s developer tools. If you are unsure, skip these options.
 
 ## What the script cannot migrate:
-- Checklists - This is a limitation in the ITGlue API and export lacking functionality for checklists, so there currently is not a workaround.
+- **Checklist/tag fidelity:** Relations from flexible assets or other fields to checklists or checklist templates are not migrated automatically (those references need manual follow-up).
 - SSL Certificates
-- Password Folders
- - Unforunately, the IT Glue API does not expose password folders, so there currently isn't a way to bring folders over)
+- **Password folder hierarchy via API key alone:** the standard ITGlue API does not expose password folders; the optional JWT path only supports a flattened folder layout (see above).
 - Personal Passwords
 - Permissions (Folders, Companies, Passwords, KBs, etc.)
 - List of share links (external articles, passwords, etc.)
- - To our knowledge, there isn't a way to know if/where/how many external share links you are using. Hudu supports external sharing as well, so you'll have to enable those on the Hudu side and get the new links shared out. 
+  - To our knowledge, there isn't a way to know if/where/how many external share links you are using. Hudu supports external sharing as well, so you'll have to enable those on the Hudu side and get the new links shared out.
 
 
 ## What you'll need
 - An ITGlue API Key with password access (API access is generally limited to the Enterprise plan)
 - Your IT Glue API URL
-- A full export of your IT Glue tenant (it's recommended to put a hault on IT Glue data updates once you initiate an export)
+- A full export of your IT Glue tenant (it's recommended to put a halt on IT Glue data updates once you initiate an export)
 - A Hudu instance (either self-hosted or cloud hosted)
 - A Hudu API Key
 - Your Hudu URL
@@ -55,11 +54,13 @@ You'll want to make sure your Hudu instance is prepared for migration and that y
 
 It's recommended to have a fresh Hudu install with no integrations setup. You'll want to sync things like companies and contacts from your PSA and configurations from your RMM **after** the migration is completed. Don’t setup any custom Asset Layouts and let the migration create the initial assets.
 
-If you have an existing asset layouts in Hudu, it's recommended to rename them all (i.e. suffixed "-original") before you begin or instruction the migration script to 
+If you have existing asset layouts in Hudu, rename them (for example suffix `"-original"`) before you begin, or use a **layout prefix** in the migration prompts so new ITGlue layouts do not collide with existing Hudu layouts.
 
-**1. Make sure you are on a known-compatible Hudu version--**
+**1. Make sure you are on a known-compatible Hudu version**
 
-At this point in time, the ideal version to be on when using this fork is at least `2.39.1` image. Up to `2.39.0` has been tested to be stable thus far.
+This fork requires **Hudu `2.39.6` or newer**. Version **`2.37.0` is blocked** (incompatible). Upgrade self-hosted instances before running the migration.
+
+**Optional — flags and flag types:** If you choose to migrate flags during setup, that path expects **Hudu `2.40.0` or later** (the script will prompt accordingly).
 
 **2 (optional).** If you're self hosted, It's best to set ratelimit to be high. To do so, you can add this to your .env file and perform a docker compose down/up. If you're Cloud/Hudu hosted, the script will automatically wait if it hits the rate limit and will continue automatically.
 
@@ -78,7 +79,7 @@ Contact Hudu support [support@hudu.com](support@hudu.com) and we can reset your 
 
 # Prerequisites - ***ITGlue Instance***
 
-It's highly encouraged to perform a clean up of you IT Glue environment, such as removing any duplicate records and deleting any old data you don’t want to migrate.
+It's highly encouraged to perform a clean up of your IT Glue environment, such as removing any duplicate records and deleting any old data you don’t want to migrate.
 
 Check that your Flexible Layouts don’t have any fields named the same thing on the same layout. For example, if you have two fields called Pre-Shared Key on the "Wireless" asset (One for primary one for guest), rename one of them to prevent script errors. 
 
@@ -124,13 +125,21 @@ If presented with a checkbox asking whether or not to include passwords, be sure
 
 <img width="750" alt="IT_Glue_Migration_Guide" src="https://github.com/user-attachments/assets/bf81c7fc-0d0b-4555-b698-1e25fd7da7d3" />
 
+## Windows executable
+
+This repository includes a pre-built Windows executable at **`release/ITGlue-Hudu-Migration.exe`**. It runs the same interactive migration as the main PowerShell script and uses the same default settings location.
+
+- **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need your ITGlue export ZIP, API keys, and a compatible Hudu instance—see the prerequisites above.
+- **Settings:** Stored by default under `%APPDATA%\HuduMigration`, same as the PowerShell workflow.
+- **When to use PowerShell instead:** Use the **clone + dot-sourcing** flow below if you rely on a customized **`environ.example`**, want full session control over variables, or need post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** (these are not launched by the executable).
+
 ## Prerequisites - ***Migration Script Setup***
 
 1. **Ensure the machine you're running the migration from has PowerShell 7+**
 You can [download newest powershell release here](https://github.com/powershell/powershell/releases)
 
 >[!IMPORTANT]
->You must run the script using PowerShell 7+ (**pwsh.exe**), it _will not_ run with ps.exe
+>You must run the script using **PowerShell 7+** (`pwsh.exe`). It will _not_ run in **Windows PowerShell 5.x** (`powershell.exe`).
 >
 >*Currently, the script has only been tested on x86_64 Windows systems. Although Windows ARM, macOS, and Linux have PowerShell available to them, the script has not been tested on those Operating Systems and is not recommended as the script has a lot of dependencies*
 
@@ -177,12 +186,13 @@ Just before companies are migrated, you'll be able to select which ITGlue compan
 
 ## 2. Merging ITGlue Organization Types
 
-If you have designated an organization type (like vendor, partner, non-profit, manufacturer, client, etc), you can elect to merge one of these ITGLue organization types to a single Hudu company. If you choose this option during startup questions (or if you include $ScopeOrgTypes = 1 in your env file), you'll first select which org type will be merged into a single company in Hudu. Then you'll enter the company ID for the target company. 
+If you have designated an organization type (like vendor, partner, non-profit, manufacturer, client, etc), you can elect to merge one of these ITGlue organization types to a single Hudu company. If you choose this option during startup questions (or if you include $ScopeOrgTypes = 1 in your env file), you'll first select which org type will be merged into a single company in Hudu. Then you'll enter the company ID for the target company. 
 
 Any other org types will migrate as usual, but this one org type will be centralized to one hudu company.
 
-## 3. Checklists [coming soon] - Checklists from IT Glue currently do not come over
+## 3. Checklists and checklist templates (optional, JWT)
 
+When you opt in during the migration, checklists and templates are imported as **Hudu procedures** using a **JWT** from ITGlue (see the **!** items at the top of this document under **What the script can migrate currently**). Tag-style relations to checklists from other assets are still not migrated—plan for manual cleanup where needed.
 
 ## 4. Custom-Mapping for Target Layouts (ADVANCED)
 
@@ -226,7 +236,7 @@ Using the labels in the 'sourcefields.json', you'll fill out the from='label' fi
 
 Just about any source field_type can be mapped to a richtext field or a text field. Just be sure to enable HTML-stripping when targeting a text field with richtext data.
 
-You can also add multiple source field labls to the SMOOSHLABELS array, which will combine data from said fields into a richtext field or a text field.
+You can also add multiple source field labels to the SMOOSHLABELS array, which will combine data from said fields into a richtext field or a text field.
 
 For filling out locationdata fields, just be sure to fill those out as if they were their own fields, even though they are themselves a singular field. 
 For more information on this specific tool, please see [Switching layouts guide](./SwitchingLayouts.md)
@@ -245,13 +255,13 @@ These are used only when the image extension was not properly retained in the ex
 # Known Issues
  - Password Relations to Articles, Password Folders, and SSL Certificates are not currently included
 
-Password relations are only available from ITGlue when querying the API directly for each password individually. Since this will increase the runtime of the script by hours or days potentially we'll be making a script to run at the end which will loop through passwords and update the relations at that time. For right now relationships between Passwords and any entity that is not available in the API (Articles, and SSL Certificates) is completely invisbile to this migration script.
+Password relations are only available from ITGlue when querying the API directly for each password individually. Since this will increase the runtime of the script by hours or days potentially we'll be making a script to run at the end which will loop through passwords and update the relations at that time. For right now relationships between Passwords and any entity that is not available in the API (Articles, and SSL Certificates) are completely invisible to this migration script.
 
 # Disclaimer
 
-This PowerShell script, and all items contained within the repository, is provided "as-is" without any warranties or guarantees, express or implied. The authors and Hudu Technologies make no guarantees regarding the accuracy, reliability, or suitability of the script for any purpose.
+This migration tool (PowerShell scripts, packaged executable, and all other items in the repository) is provided "as-is" without any warranties or guarantees, express or implied. The authors and Hudu Technologies make no guarantees regarding the accuracy, reliability, or suitability of the script for any purpose.
 
-By using this script, you acknowledge that you do so at your own risk. The authors and Hudu Technologies shall not be liable for any damages, losses, or issues that may arise from its use, including but not limited to data loss, system failures, or security breaches. Always review the code thoroughly and test it in a safe environment before deploying it in a production setting.
+By using this tool, you acknowledge that you do so at your own risk. The authors and Hudu Technologies shall not be liable for any damages, losses, or issues that may arise from its use, including but not limited to data loss, system failures, or security breaches. Always review the code thoroughly and test it in a safe environment before deploying it in a production setting.
 
 # Release Notes
 ## Get-MissingRelations.ps1 added
@@ -264,8 +274,9 @@ This version of the script brings an interactive migration process, settings wil
 
 Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can modify the settings.json file directly as long as you use values that are expected. 
 
-**Settings that are not saved include the migration preferences (such as what entites to migrate)**
-*TIP: Load the script through DOT SOURCING `. .\migration\ITGlue-Hudu-Migration.ps1` so that the session saves the answers in context and you can re-run as necessary.*
+**Settings that are not saved include the migration preferences (such as what entities to migrate)**
+
+*TIP: Dot-source the main script from the repo root, for example `. .\ITGlue-Hudu-Migration.ps1`, so the session keeps answers in context and you can re-run as necessary.*
 
 - Powershell Secure Strings are used in Settings to encrypt sensitive API Keys
 - modify the `$resumeQuestion` variable from `yes` to `no` to change if you would like to continue or start over.
@@ -279,17 +290,18 @@ Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can
 
 
 ___
-- `Replace-HuduBase64images.ps1` has been updated to use the API and will be fully adapted for fixing completed imports that placed base64 images in articles.
+- `Replace-HuduBase64Images.ps1` has been updated to use the API and will be fully adapted for fixing completed imports that placed base64 images in articles.
 ___
 ## Version 1.2
 Small bug fixes
 ## Version 1.1
 Small bug fixes
-## Version 2.0.0-beta
-This is under development right now and should not be used.
+## Version 2.0.0-beta (historical)
+
+Older documentation referred to a **2.0.0-beta** line; the current **2.x** interactive migration on `main` is the supported path. The notes below still apply to companion utilities.
 
 ### Replace Base64 Images
-Use this script to replace previous migrations that embedded Base64 images into your articles. If your Hudu is crashing or running out of memory trying to retrieve articles, this wil generally fix it. If API isn't sufficient for collecting the articles you can switch to direct database access with an older version of this script.
+Use this script to replace previous migrations that embedded Base64 images into your articles. If your Hudu is crashing or running out of memory trying to retrieve articles, this will generally fix it. If API isn't sufficient for collecting the articles you can switch to direct database access with an older version of this script.
 
 
 ### Attachment Uploads
