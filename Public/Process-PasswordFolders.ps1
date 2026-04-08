@@ -9,17 +9,7 @@ $GlobalPasswordFolderMode = $GlobalPasswordFolderMode ?? $([bool]$("global" -eq 
 if (-not $MatchedCompanies -or $matchedCompanies.count -lt 1){
     write-host "Can't preload password folders without matched companies, skipping preload of password folders."
     return
-} else {
-$MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders = $preloadedPassFolders ?? @{};
-foreach ($company in $MatchedCompanies) {
-    $ITGcompanyID = $company.ITGID ?? $company.ITGCompanyObject.id
-    if (-not $ITGcompanyID){continue}
-    $PasswordFoldersForCompany =  Get-ITGPasswordFolders -ITGKEY $ITGKey -organization_id $ITGcompanyID -ComputePaths -Separator "<FDELIM>"
-    if ($PasswordFoldersForCompany -and $PasswordFoldersForCompany.Count -gt 0) {
-        $preloadedPassFolders["$($ITGcompanyID)"] = $PasswordFoldersForCompany
-    }
-}
-}
+} 
 
 # $PFMappings["Software &"]="Software & Applications"
 # $PFMappings["Software and"]="Software & Applications"
