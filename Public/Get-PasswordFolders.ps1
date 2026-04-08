@@ -2,7 +2,7 @@ function Get-ITGPasswordFolders {
     [CmdletBinding()]
     Param (
         [Parameter(Mandatory = $true)]
-        [String]$JWTAuthToken,
+        [String]$ITGKey,
 
         [Parameter()]
         [Nullable[Int64]]$organization_id = $null,
@@ -22,8 +22,10 @@ function Get-ITGPasswordFolders {
     } else {
         '/password_folders'
     }
-
-    $headers = @{ Authorization = "Bearer $JWTAuthToken" }
+    #"Bearer $ITGKey"
+    # ->
+    #x-api-key: {{api-token}}
+    $headers = @{ "x-api-key" = "$ITGKey" }
     $uri = $script:ITGlue_Base_URI + $resource_uri
 
     $folders = @()

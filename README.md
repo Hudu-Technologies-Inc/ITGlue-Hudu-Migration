@@ -37,15 +37,11 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 - Documents with folder structure
 - Passwords (with OTP codes)
 - Document Links
-- ! Password folders (optional, JWT): recreated as a **flattened** single level—not full hierarchical folder structure from ITGlue
-- ! Checklists / checklist templates (optional, JWT): imported as **Hudu procedures**; add users to Hudu first so assignees can be matched where possible
-
-Items marked with **!** require **JWT** authentication (ITGlue session token from your browser) and are intended for advanced users. Extracting a JWT requires web access and your browser’s developer tools. If you are unsure, skip these options.
+- Password folders
+- Checklists / checklist templates
 
 ## What the script cannot migrate:
 - **Checklist/tag fidelity:** Relations from flexible assets or other fields to checklists or checklist templates are not migrated automatically (those references need manual follow-up).
-- SSL Certificates
-- **Password folder hierarchy via API key alone:** the standard ITGlue API does not expose password folders; the optional JWT path only supports a flattened folder layout (see above).
 - Personal Passwords
 - Permissions (Folders, Companies, Passwords, KBs, etc.)
 - List of share links (external articles, passwords, etc.)
@@ -193,9 +189,9 @@ If you have designated an organization type (like vendor, partner, non-profit, m
 
 Any other org types will migrate as usual, but this one org type will be centralized to one hudu company.
 
-## 3. Checklists and checklist templates (optional, JWT)
+## 3. Checklists and checklist templates
 
-When you opt in during the migration, checklists and templates are imported as **Hudu procedures** using a **JWT** from ITGlue (see the **!** items at the top of this document under **What the script can migrate currently**). Tag-style relations to checklists from other assets are still not migrated—plan for manual cleanup where needed.
+When you opt in during the migration, checklists and templates are imported as **Hudu procedures** from ITGlue (see the **!** items at the top of this document under **What the script can migrate currently**). Tag-style relations to checklists from other assets are still not migrated—plan for manual cleanup where needed.
 
 ## 4. Custom-Mapping for Target Layouts (ADVANCED)
 

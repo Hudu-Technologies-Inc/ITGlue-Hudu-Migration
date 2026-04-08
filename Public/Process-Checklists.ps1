@@ -1,15 +1,60 @@
 
 
+if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . .\Public\Init-OptionsAndLogs.ps1 }
+if (-not (Get-Command -Name Get-ITGlueCheckLists -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Get-Checklists.ps1 }
+
 $HuduCompanies  = $HuduCompanies ?? $(Get-HuduCompanies)
 $huduUsers      = $huduUsers ?? $(Get-HuduUsers)    
-$userIndex = @{}
+$userIndex = @{}; 
 $MatchedChecklists = $MatchedChecklists ?? @()
-foreach ($u in $huduUsers) {$key = "$($u.first_name) $($u.last_name)".ToLower(); $userIndex[$key] = $u;}
 
-if (-not (Get-Command -Name Get-ITGlueCheckLists -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Get-Checklists.ps1 }
-if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\JWT-Auth.ps1 }
-$ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
-$ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT
+
+foreach ($u in $huduUsers) {$key = "$($u.first_name) $($u.last_name)".ToLower(); $userIndex[$key] = $u;}
+$MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
+$PageSize = 1000
+$PageNum = 0
+while ($true) {
+    $ITGlueRawChecklists = $(Get-ITGlueCheckLists -ITGKEY $ITGKey -page_size $PageSize -page_number $PageNum).data
+    foreach ($checklistEntry in $ITGlueRawChecklists) {
+        $ITGChecklistItems=$null
+        try {
+            $checklistEntry | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $false -Force
+            $ITGChecklistItems=$(Get-ITGlueChecklistItems -ITGKEY $ITGKey -filter_checklist_id $checklistEntry.id)
+            $checklistEntry | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
+        }catch{
+            Write-host "Error getting checklist items $_"
+        }
+        $ITGLueChecklists.Add($checklistEntry)
+    }
+    $PageNum = $PageNum +1
+    if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
+}
+$PageNum = 0
+Write-Host "Retrieving all checklist templates from ITGlue"
+while ($true) {
+    $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -ITGKEY $ITGKey -page_size $PageSize -page_number $PageNum).data
+    foreach ($checklistTemplate in $ITGlueRawChecklists | Where-Object {$_}) {
+        $ITGChecklistItems=$null
+        try {
+            $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $true -Force
+            $ITGChecklistItems=$(Get-ITGlueChecklistItems -ITGKEY $ITGKey -filter_checklist_id $checklistTemplate.id)
+            $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
+        }catch{
+            Write-host "Error getting checklist template items $_"
+        }
+
+        $ITGLueChecklists.Add($checklistTemplate)
+    }
+    $PageNum = $PageNum +1
+    if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
+}
+Write-Host "Got $($($ITGLueChecklists | where-object {$_.IsTemplate -eq $false}).count) and $($($ITGLueChecklists | where-object {$_.IsTemplate -eq $true}).count) checklist templates with $($ITGlueRawChecklists.ITGChecklistItems.count) Checklist Items."
+if ($ITGLueChecklists.Count -gt 0) {
+    $ITGLueChecklists | convertto-json -depth 99 | Out-File "$MigrationLogs\RetrievedChecklists.json"
+} else {
+    Write-Host "No checklists retrieved from ITGlue, skipping saving to file."
+}
+
 
 if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     Write-Host "No preloaded checklists found. attempting second-line retrieval"
@@ -17,12 +62,12 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     $PageSize = 1000
     $PageNum = 0
     while ($true) {
-        $ITGlueRawChecklists = $(Get-ITGlueCheckLists -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum).data
+        $ITGlueRawChecklists = $(Get-ITGlueCheckLists -ITGKEY $ITGKey -page_size $PageSize -page_number $PageNum).data
         foreach ($checklistEntry in $ITGlueRawChecklists) {
             $ITGChecklistItems=$null
             try {
                 $checklistEntry | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $false -Force
-                $ITGChecklistItems=$(Get-ITGlueChecklistItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistEntry.id)
+                $ITGChecklistItems=$(Get-ITGlueChecklistItems -ITGKEY $ITGKey -filter_checklist_id $checklistEntry.id)
                 $checklistEntry | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
             }catch{
                 Write-host "Error getting checklist items $_"
@@ -35,12 +80,12 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     $PageNum = 0
     Write-Host "Retrieving all checklist templates from ITGlue"
     while ($true) {
-        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum).data
+        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -ITGKEY $ITGKey -page_size $PageSize -page_number $PageNum).data
         foreach ($checklistTemplate in $ITGlueRawChecklists | Where-Object {$_}) {
             $ITGChecklistItems=$null
             try {
                 $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $true -Force
-                $ITGChecklistItems=$(Get-ITGlueChecklistItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistTemplate.id)
+                $ITGChecklistItems=$(Get-ITGlueChecklistItems -ITGKEY $ITGKey -filter_checklist_id $checklistTemplate.id)
                 $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
             }catch{
                 Write-host "Error getting checklist template items $_"

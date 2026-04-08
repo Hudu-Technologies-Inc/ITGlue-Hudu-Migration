@@ -85,7 +85,7 @@ $OptionalImageAnchorReplace = 1
 # If you want to have script wait for user interaction between steps. Select 1 for yes, 2 for noninteractive/no
 $NonInteractive             = 2
 
-# these require JWT authentication to perform [default is 1/false; 2 for true]
+#  [default is 1/false; 2 for true]
 $importChecklists           = 1
 $importPasswordFolders      = 1
 $GlobalPasswordFolderMode = $true # or $false

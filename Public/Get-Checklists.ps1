@@ -3,29 +3,26 @@
     Retrieves checklists from IT Glue using the Checklists API endpoint.
 
 .DESCRIPTION
-    This function queries the IT Glue Checklists endpoint, which requires a JWT token for authentication.
+    This function queries the IT Glue Checklists endpoint, which requires an ITG api key for authentication.
     The token can be obtained from browser developer tools when logged into the IT Glue web interface.
     Supports filtering, sorting, pagination, and including related resources.
 
-.PARAMETER JWTAuthToken
-    The JWT token required for authenticating to the Checklists endpoint.
+.PARAMETER ITGKey
+    The API key required for authenticating to the Checklists endpoint.
 
 .PARAMETER organization_id
     The ID of the organization to retrieve checklists for. If specified, uses the /organizations/{id}/relationships/checklists endpoint.
 
 .EXAMPLE
-    Get-ITGlueCheckLists -JWTAuthToken "your_jwt_token" -organization_id 12345
+    Get-ITGlueCheckLists -ITGKEY "yourapikey" -organization_id 12345
     Retrieves all checklists for the specified organization.
-
-.NOTES
-    This endpoint requires a JWT token, not an API key. Ensure the token is valid and not expired.
 #>
 
 function Get-ITGlueCheckLists {
     [CmdletBinding(DefaultParameterSetName = 'index')]
     Param (
         [Parameter(Mandatory = $true)]
-        [String]$JWTAuthToken,
+        [String]$ITGKey,
 
         [Parameter(ParameterSetName = 'index')]
         [Nullable[Int64]]$organization_id = $null,
@@ -86,12 +83,12 @@ function Get-ITGlueCheckLists {
     }
 
     try {
-        $ITGlueAuthHeaders = @{'Authorization' = "Bearer $JWTAuthToken"}
+        $ITGlueAuthHeaders = @{'x-api-key' = "$ITGKey"}
         $rest_output = Invoke-RestMethod -method 'GET' -uri ($ITGlue_Base_URI + $resource_uri) -headers $ITGlueAuthHeaders -body $body
     } catch {
         Write-Error $_
     } finally {
-        [void] $ITGlueAuthHeaders.Remove('Authorization') # Quietly clean up scope so the API key doesn't persist
+        [void] $ITGlueAuthHeaders.Remove('x-api-key') # Quietly clean up scope so the API key doesn't persist
     }
 
 
@@ -107,11 +104,10 @@ function Get-ITGlueCheckLists {
 
 .DESCRIPTION
     This function queries the IT Glue Checklist Tasks endpoint to retrieve items for a specific checklist.
-    It requires a JWT token for authentication, which can be obtained from browser developer tools when logged into the IT Glue web interface.
     Supports filtering by checklist ID, sorting, and pagination.
 
-.PARAMETER JWTAuthToken
-    The JWT token required for authenticating to the Checklist Tasks endpoint.
+.PARAMETER ITGKEY
+    The ITG api key required for authenticating to the Checklist Tasks endpoint.
 
 .PARAMETER filter_checklist_id
     The ID of the checklist to retrieve items for. This parameter is mandatory.
@@ -126,22 +122,22 @@ function Get-ITGlueCheckLists {
     The number of results per page (max 1000, as per IT Glue API limits).
 
 .EXAMPLE
-    Get-ITGlueChecklistItems -JWTAuthToken "your_jwt_token" -filter_checklist_id 3510640306421985
+    Get-ITGlueChecklistItems -ITGKEY "$ITGKey" -filter_checklist_id 3510640306421985
     Retrieves all checklist items for the specified checklist ID.
 
 .EXAMPLE
-    Get-ITGlueChecklistItems -JWTAuthToken "your_jwt_token" -filter_checklist_id 3510640306421985 -page_size 1000
+    Get-ITGlueChecklistItems -ITGKEY "$ITGKey" -filter_checklist_id 3510640306421985 -page_size 1000
     Retrieves up to 1000 checklist items for the specified checklist ID.
 
 .NOTES
-    This endpoint requires a JWT token, not an API key. Ensure the token is valid and not expired.
+    This endpoint requires an ITG api key- Ensure the token is valid and not expired.
     The function respects IT Glue's API rate limits (10 requests/second, 10,000/day).
 #>
 function Get-ITGlueChecklistItems {
     [CmdletBinding(DefaultParameterSetName = 'index')]
     Param (
         [Parameter(Mandatory = $true)]
-        [String]$JWTAuthToken,
+        [String]$ITGKey,
 
         [Parameter(Mandatory = $true)]
         [Nullable[Int64]]$filter_checklist_id,
@@ -174,7 +170,8 @@ function Get-ITGlueChecklistItems {
     $uri = if ($query_string) { "$ITGlue_Base_URI$resource_uri`?$query_string" } else { "$ITGlue_Base_URI$resource_uri" }
 
     try {
-        $ITGlueAuthHeaders = @{ 'Authorization' = "Bearer $JWTAuthToken" }
+        $ITGlueAuthHeaders = @{ "x-api-key" = "$ITGKey" }
+
         $rest_output = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $ITGlueAuthHeaders -ErrorAction Stop
         return $rest_output.data
     }
@@ -188,7 +185,7 @@ function Get-ITGlueChecklistItems {
         }
     }
     finally {
-        [void] $ITGlueAuthHeaders.Remove('Authorization')
+        [void] $ITGlueAuthHeaders.Remove('x-api-key')
     }
 }
 <#
@@ -196,12 +193,11 @@ function Get-ITGlueChecklistItems {
     Retrieves checklist templates from IT Glue using the Checklist Templates API endpoint.
 
 .DESCRIPTION
-    This function queries the IT Glue Checklist Templates endpoint, which requires a JWT token for authentication.
     The token can be obtained from browser developer tools when logged into the IT Glue web interface.
     Supports filtering by organization ID, sorting, and pagination.
 
-.PARAMETER JWTAuthToken
-    The JWT token required for authenticating to the Checklist Templates endpoint.
+.PARAMETER ITGKEY
+    The API key required for authenticating to the Checklist Templates endpoint.
 
 .PARAMETER filter_organization_id
     The ID of the organization to retrieve checklist templates for.
@@ -216,18 +212,16 @@ function Get-ITGlueChecklistItems {
     The number of results per page (max 1000, as per IT Glue API limits).
 
 .EXAMPLE
-    Get-ITGlueChecklistTemplates -JWTAuthToken "your_jwt_token" -filter_organization_id 3404663151263944 -page_size 1 -sort "-updated_at"
     Retrieves one checklist template for the specified organization, sorted by updated_at in descending order.
 
 .NOTES
-    This endpoint requires a JWT token, not an API key. Ensure the token is valid and not expired.
     The function respects IT Glue's API rate limits (10 requests/second, 10,000/day).
 #>
 function Get-ITGlueChecklistTemplates {
     [CmdletBinding(DefaultParameterSetName = 'index')]
     Param (
         [Parameter(Mandatory = $true)]
-        [String]$JWTAuthToken,
+        [String]$ITGKey,
 
         [Parameter(ParameterSetName = 'index')]
         [Nullable[Int64]]$filter_organization_id = $null,
@@ -261,7 +255,8 @@ function Get-ITGlueChecklistTemplates {
     $uri = if ($query_string) { "$ITGlue_Base_URI$resource_uri`?$query_string" } else { "$ITGlue_Base_URI$resource_uri" }
 
     try {
-        $ITGlueAuthHeaders = @{ 'Authorization' = "Bearer $JWTAuthToken" }
+        $ITGlueAuthHeaders = @{ "x-api-key" = "$ITGKey" }
+
         $rest_output = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $ITGlueAuthHeaders -ErrorAction Stop
         return $rest_output.data
     }
@@ -275,6 +270,6 @@ function Get-ITGlueChecklistTemplates {
         }
     }
     finally {
-        [void] $ITGlueAuthHeaders.Remove('Authorization')
+        [void] $ITGlueAuthHeaders.Remove('x-api-key')
     }
 }

@@ -1,6 +1,5 @@
 
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . .\Public\Init-OptionsAndLogs.ps1 }
-if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . .\Public\Jwt-Auth.ps1 }
 if (-not (Get-Command -Name Get-ITGlueSslCertificates -ErrorAction SilentlyContinue)) { . .\Public\Get-ITGlueSslCertificates.ps1 }
 if (-not (Get-Command -Name Get-ITGlueChecklists -ErrorAction SilentlyContinue)) { . .\Public\Get-Checklists.ps1 }
 
@@ -8,11 +7,8 @@ if (-not (Get-Command -Name Get-ITGlueChecklists -ErrorAction SilentlyContinue))
 # Note that the script will attempt to download the PDF for each certificate and if the download fails (for example due to auth issues) it will skip that certificate and continue with the next ones, so you can re-run the script after fixing any issues and it will only process the certificates that were not successfully processed in previous runs.
 # If you have issue saving your session cookies with cookie-manager extension, you can also download a certificate in chrome browser with developer console (f12) open, locate the request for the certificate PDF, right-click and "Copy as powershell", then paste that where the session cookies are added below.
 
-$ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
-$ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT
-
 Write-Host "Retrieving all certificates from ITGlue"
-$ITglueSSLCerts = $ITglueSSLCerts ?? $(Get-ITGlueSslCertificates -JWTAuthToken $ITGlueJWT)
+$ITglueSSLCerts = $ITglueSSLCerts ?? $(Get-ITGlueSslCertificates -ITGKEY $ITGKEY)
 if ($ITglueSSLCerts.Count -lt 1) {
     Write-Host "No SSL Certificates found in ITGlue, exiting."
     exit

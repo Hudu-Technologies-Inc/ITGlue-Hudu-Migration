@@ -2,7 +2,7 @@ function Get-ITGlueSslCertificates {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [string]$JWTAuthToken,
+        [string]$ITGKEY,
 
         [Nullable[Int64]]$OrganizationId = $null,
 
@@ -12,7 +12,7 @@ function Get-ITGlueSslCertificates {
 
     $baseUri = 'https://api.itglue.com/ssl_certificates'
     $headers = @{
-        Authorization = "Bearer $JWTAuthToken"
+        "x-api-key" = "$ITGKey"
         Accept        = 'application/json'
     }
 

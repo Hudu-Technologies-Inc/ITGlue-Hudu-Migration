@@ -58,7 +58,6 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 # Add migration scope helper
 . $PSScriptRoot\Public\Set-MigrationScope.ps1
 
-# Other JWT-Auth / Advanced Post-Run Imports
 . $PSScriptRoot\Public\Get-Checklists.ps1
 . $PSScriptRoot\Public\Get-PasswordFolders.ps1
 
@@ -67,7 +66,6 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1
 # initialization helper and field requirement helper, logging, selection helper
 . $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
-. $PSScriptRoot\Public\JWT-Auth.ps1
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
 ############################### End of Functions ###############################
@@ -387,11 +385,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 }
 $CompaniesToMigrate = $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.Matched -eq $true }
 $HuduCompanies = Get-HuduCompanies
-
-if (-not ([string]::IsNullOrWhiteSpace($ItglueJWT)) -and ($true -eq $importPasswordFolders -or $true -eq $importChecklists)) {
-    Write-Host "Since you have provided a JWT token and have checklist or password folder import enabled, we will preload these items from ITGlue before your credential becomes stale." -ForegroundColor Green
-    . $PSScriptRoot\Public\Preload-JWTOnlyItems.ps1
-}
 
 ############################### Locations ###############################
 #Check for Location Resume

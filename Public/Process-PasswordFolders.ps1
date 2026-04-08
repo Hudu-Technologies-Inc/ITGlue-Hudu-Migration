@@ -1,34 +1,26 @@
+if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . .\Public\Init-OptionsAndLogs.ps1 }
+if (-not (Get-Command -Name Get-ITGPasswordFolders -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Get-PasswordFolders.ps1 }
 
 $global_password_folders = @()
+$PFMappings = $PFMappings ?? @{}
 $ITGPasswordFolders =  @{}; $MatchedPasswordFolders = @()
 $GlobalPasswordFolderMode = $GlobalPasswordFolderMode ?? $([bool]$("global" -eq $(Select-ObjectFromList -message "Password folder import mode-" -objects @("global","per-company"))))
-if ((-not $preloadedPassFolders -or $preloadedPassFolders.Count -eq 0) -and
-    (Test-Path "$MigrationLogs\PreloadedPasswordFolders.json")) {
-    Write-Host "Found preloaded password folders file, loading..."
-    try {
-        $rawFolders = Get-Content "$MigrationLogs\PreloadedPasswordFolders.json" -Raw | ConvertFrom-Json -Depth 99 -AsHashtable
-        $preloadedPassFolders = @{}
-        foreach ($k in $rawFolders.Keys) {
-            $preloadedPassFolders[$k] = $rawFolders[$k]
-        }
+
+if (-not $MatchedCompanies -or $matchedCompanies.count -lt 1){
+    write-host "Can't preload password folders without matched companies, skipping preload of password folders."
+    return
+} else {
+$MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders = $preloadedPassFolders ?? @{};
+foreach ($company in $MatchedCompanies) {
+    $ITGcompanyID = $company.ITGID ?? $company.ITGCompanyObject.id
+    if (-not $ITGcompanyID){continue}
+    $PasswordFoldersForCompany =  Get-ITGPasswordFolders -ITGKEY $ITGKey -organization_id $ITGcompanyID -ComputePaths -Separator "<FDELIM>"
+    if ($PasswordFoldersForCompany -and $PasswordFoldersForCompany.Count -gt 0) {
+        $preloadedPassFolders["$($ITGcompanyID)"] = $PasswordFoldersForCompany
     }
-    catch {
-        Write-Warning "Failed to load preloaded password folders from JSON: $_"
-        $preloadedPassFolders = @{}
-    }
+}
 }
 
-if ($preloadedPassFolders -and $preloadedPassFolders.Count -gt 0) {
-    Write-Host "Using preloaded password folders for processing, count of orgs with preloaded folders: $($preloadedPassFolders.Keys.Count)"
-}
-else {
-    Write-Host "No preloaded password folders provided or found, will fetch on demand during processing. Checking JWT now."
-    if (-not (Get-Command -Name Get-ITGPasswordFolders -ErrorAction SilentlyContinue)) { . "$PSScriptRoot\Public\Get-PasswordFolders.ps1" }
-    if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . "$PSScriptRoot\Public\JWT-Auth.ps1" }
-    $ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT
-}
-
-$PFMappings = $PFMappings ?? @{}
 # $PFMappings["Software &"]="Software & Applications"
 # $PFMappings["Software and"]="Software & Applications"
 
@@ -71,14 +63,10 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
         Write-Host "No matched passwords for ITG org $itgcompanyID — skipping."
         continue
     }
-    $passwordFolderArray = $null
     # 2) Get folders for this org (paths already computed)
-    if ($null -ne $preloadedPassFolders){            # preloaded
-        $passwordFolderArray = $preloadedPassFolders["$itgcompanyID"]
-    } else {                                         #fetch raw
-        $passwordFolderArray = Get-ITGPasswordFolders -JWTAuthToken $ITGlueJWT -organization_id $itgcompanyID -ComputePaths -Separator "<FDELIM>"
-    }
-
+    $passwordFolderArray = $null
+    $passwordFolderArray = Get-ITGPasswordFolders -ITGKEY $ITGKey -organization_id $itgcompanyID -ComputePaths -Separator "<FDELIM>"
+    
     if (-not $passwordFolderArray -or $passwordFolderArray.Count -eq 0) {
         Write-Host "No password folders for company $itgcompanyID — skipping."
         continue
