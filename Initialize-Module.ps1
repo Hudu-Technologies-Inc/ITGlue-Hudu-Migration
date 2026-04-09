@@ -637,7 +637,7 @@ if ($InitType -eq 'Full') {
     }
 
     ############################ PasswordFolders ############################
-    while ($importPasswordFolders -notin (1,2)) {$importPasswordFolders = Read-Host "[ADVANCED, default 1/$false] Would you like to import Password Folders? (requires web access to ITGlue).`n 1) Yes`n 2) No, Skip Password Folders`n(1/2)"}
+    while ($importPasswordFolders -notin (1,2)) {$importPasswordFolders = Read-Host "[default is 2/$true] Would you like to import Password Folders?.`n 1) No, skip password folders`n 2) Yes, include password folders, please.`n(1/2)"}
     switch ($importPasswordFolders) {
         "2" {$importPasswordFolders = $true; 
             $GlobalPasswordFolderMode =  $GlobalPasswordFolderMode ?? $([bool]$("global" -eq $(Select-ObjectFromList -message "Password folder import mode-" -objects @("global","per-company"))))
@@ -668,7 +668,14 @@ if ($InitType -eq 'Full') {
             "2" {$allowSettingFlagsAndTypes = $false}
         }
     }
-    $IncludeIgnoredFirstDirectory = $IncludeIgnoredFirstDirectory ?? [bool]('y' -eq ((Select-ObjectFromList -objects @("y","n") -message "Would you like to include the base directory for articles? Default behavior is no.") ?? 'n'))
+    while ($IncludeIgnoredFirstDirectory -notin @(1,2, $true, $false)) {
+        $includeIgnoredFirstDirectoryInput = Read-Host "Would you like to include the base directory for articles? Default behavior is no.`n 1) Yes`n 2) No`n(y/n or 1/2)"
+        switch ($includeIgnoredFirstDirectoryInput.ToString().Trim().ToLower()) {
+            { $_ -in @('y','yes','1') } { $IncludeIgnoredFirstDirectory = $true }
+            { $_ -in @('n','no','2','') } { $IncludeIgnoredFirstDirectory = $false }
+            default { Write-Host "Please re-enter y or n." -ForegroundColor Yellow }
+        }
+    }
         
 }
 if ($InitType -eq 'Full') {
@@ -679,17 +686,18 @@ $MigrationLogs = $environmentSettings.MigrationLogs
 
 # Now that ITGlue export jobs require a user to elect to include passwords via checkbox, we need to check for the presence of the passwords.csv and warn user in relation to their migration strategy.
 $passwordsCSVvalidated = $false
+$passwordsCsvPath = Join-Path -Path $ITGLueExportPath -ChildPath "passwords.csv"
 
 while ($passwordsCSVvalidated -eq $false) {
-    if (Test-Path -Path $(join-path -path $settings.ITGLueExportPath -childpath "passwords.csv") -ErrorAction SilentlyContinue) {
-        Write-Host "Password CSV found at $(join-path -path $settings.ITGLueExportPath -childpath "passwords.csv")" -ForegroundColor Cyan
+    if (Test-Path -Path $passwordsCsvPath -ErrorAction SilentlyContinue) {
+        Write-Host "Password CSV found at $passwordsCsvPath" -ForegroundColor Cyan
         $passwordsCSVvalidated = $true
     } elseif ((2,$false) -contains $ImportPasswords -and (2,$false) -contains $ImportFlexibleAssets) {
-        write-host "passwords.csv not found at $(join-path -path $settings.ITGLueExportPath -childpath "passwords.csv"), but since you have chosen to skip both flexible assets and passwords, this file is not needed specifically for your migration. If you later choose to migrate either of those sections, make sure to have a passwords.csv in your export folder." -ForegroundColor Yellow; start-sleep -seconds 2;
+        write-host "passwords.csv not found at $passwordsCsvPath, but since you have chosen to skip both flexible assets and passwords, this file is not needed specifically for your migration. If you later choose to migrate either of those sections, make sure to have a passwords.csv in your export folder." -ForegroundColor Yellow; start-sleep -seconds 2;
         $passwordsCSVvalidated = $true
     } else {
-        Write-Host "passwords.csv not found at $(join-path -path $settings.ITGLueExportPath -childpath "passwords.csv"). You'll want to take another export, this time ensuring that passwords are included. Failure to do so will result in missing password data. Passwords.csv is used in both flexible assets and passwords portions of the migration." -ForegroundColor Red;  start-sleep -seconds 2;
-        $overrideNoPassCSV = read-host "Press Enter to re-check for the file if you have extracted a new export to $($settings.ITGLueExportPath), or Ctrl+C to exit. To continue anyway without passwords CSV (not reccomended), please enter this phrase exactly with no quotes: 'migrate-anyway'"
+        Write-Host "passwords.csv not found at $passwordsCsvPath. You'll want to take another export, this time ensuring that passwords are included. Failure to do so will result in missing password data. Passwords.csv is used in both flexible assets and passwords portions of the migration." -ForegroundColor Red;  start-sleep -seconds 2;
+        $overrideNoPassCSV = read-host "Press Enter to re-check for the file if you have extracted a new export to $ITGLueExportPath, or Ctrl+C to exit. To continue anyway without passwords CSV (not reccomended), please enter this phrase exactly with no quotes: 'migrate-anyway'"
         if ($overrideNoPassCSV -ieq 'migrate-anyway') {
             Write-Host "Continuing without passwords.csv. Password data will be missing from the migration." -ForegroundColor Yellow
             $passwordsCSVvalidated = $true
