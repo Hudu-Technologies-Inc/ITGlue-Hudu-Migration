@@ -151,7 +151,7 @@ You can [download newest powershell release here](https://github.com/powershell/
 > - The script will prompt you on what data types you would like to move (you don't have to migrate everything if you don't want to)
 > - The script will prompt you to run the script unattended--it can take several hours for the script to run start-to-finish, so unattended mode allows you to set it to run autonomously. If you choose not to run unattended, it _does not_ time out, so you can "continue" the script at any time
 
-Settings will get saved by default to %APPDATA%\HuduMigration. Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can modify the settings.json file directly as long as you use expected values.
+Settings will get saved by default to %APPDATA%\HuduMigration. Settings that will be saved include API Keys, URLs, Prefixes, and migration job preferences in the `jobsettings` section. You can modify the settings.json file directly as long as you use expected values.
 
 
 1. Download/Clone the _entire_ repo into a folder on your computer.
@@ -272,9 +272,9 @@ It will save two variables `$ConfigurationRelationsToCreate` and `$AssetRelation
 ## Version 2.x - Well tested but still beta version
 This version of the script brings an interactive migration process, settings will get saved by default to `%APPDATA%\HuduMigration` although they can be moved and then re-imported from a different path after creation.
 
-Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can modify the settings.json file directly as long as you use values that are expected. 
+Settings that will be saved include API Keys, URLs, Prefixes, and migration job preferences in the `jobsettings` section. You can modify the settings.json file directly as long as you use values that are expected.
 
-**Settings that are not saved include the migration preferences (such as what entities to migrate)**
+Migration preferences, such as what entities to migrate, are still accepted as flat variables in environment files and are also saved back to `settings.json` for traceability. If both an environment file variable and `settings.json` value exist, the environment file value wins for that run.
 
 *TIP: Dot-source the main script from the repo root, for example `. .\ITGlue-Hudu-Migration.ps1`, so the session keeps answers in context and you can re-run as necessary.*
 

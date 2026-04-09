@@ -61,12 +61,201 @@ function ConvertSecureStringToPlainText {
     return $plainText
 }
 
+$script:MigrationJobSettingNames = @(
+    'resumeQuestion',
+    'ImportCompanies',
+    'ImportLocations',
+    'ImportDomains',
+    'MergedOrganizationTypes',
+    'DisableWebsiteMonitoring',
+    'ImportConfigurations',
+    'ImportContacts',
+    'ImportFlexibleAssetLayouts',
+    'ImportFlexibleAssets',
+    'ImportArticles',
+    'ImportPasswords',
+    'NonInteractive',
+    'ScopedMigration',
+    'importChecklists',
+    'importPasswordFolders',
+    'GlobalPasswordFolderMode',
+    'companyPasswordFolderAttributionMove',
+    'OptionalImageAnchorReplace',
+    'skipIntegratorLayouts',
+    'allowSettingFlagsAndTypes',
+    'IncludeIgnoredFirstDirectory',
+    'LocImportAssetLayoutName',
+    'ConImportAssetLayoutName',
+    'ITGPrimaryLocationNames',
+    'HuduPrimaryLocationNames',
+    'Prescoped'
+)
+
+$script:MigrationJobSettingPromptChoiceMap = @{
+    ImportCompanies            = @{ TrueValue = 1; FalseValue = 2 }
+    ImportLocations            = @{ TrueValue = 1; FalseValue = 2 }
+    ImportDomains              = @{ TrueValue = 1; FalseValue = 2 }
+    ImportConfigurations       = @{ TrueValue = 1; FalseValue = 2 }
+    ImportContacts             = @{ TrueValue = 1; FalseValue = 2 }
+    ImportFlexibleAssetLayouts = @{ TrueValue = 1; FalseValue = 2 }
+    ImportFlexibleAssets       = @{ TrueValue = 1; FalseValue = 2 }
+    ImportArticles             = @{ TrueValue = 1; FalseValue = 2 }
+    ImportPasswords            = @{ TrueValue = 1; FalseValue = 2 }
+    MergedOrganizationTypes    = @{ TrueValue = 2; FalseValue = 1 }
+    DisableWebsiteMonitoring   = @{ TrueValue = 2; FalseValue = 1 }
+    NonInteractive             = @{ TrueValue = 2; FalseValue = 1 }
+    ScopedMigration            = @{ TrueValue = 2; FalseValue = 1 }
+    importChecklists           = @{ TrueValue = 2; FalseValue = 1 }
+    importPasswordFolders      = @{ TrueValue = 2; FalseValue = 1 }
+}
+
+function Get-SettingsMemberValue {
+    param(
+        $SettingsObject,
+        [Parameter(Mandatory=$true)]
+        [string]$Name
+    )
+
+    if ($null -eq $SettingsObject) {
+        return $null
+    }
+
+    if ($SettingsObject -is [System.Collections.IDictionary]) {
+        if ($SettingsObject.Contains($Name)) {
+            return $SettingsObject[$Name]
+        }
+        return $null
+    }
+
+    $property = $SettingsObject.PSObject.Properties[$Name]
+    if ($property) {
+        return $property.Value
+    }
+
+    return $null
+}
+
+function Set-SettingsMemberValue {
+    param(
+        [Parameter(Mandatory=$true)]
+        $SettingsObject,
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        $Value
+    )
+
+    if ($SettingsObject -is [System.Collections.IDictionary]) {
+        $SettingsObject[$Name] = $Value
+        return
+    }
+
+    $property = $SettingsObject.PSObject.Properties[$Name]
+    if ($property) {
+        $property.Value = $Value
+    } else {
+        $SettingsObject | Add-Member -MemberType NoteProperty -Name $Name -Value $Value
+    }
+}
+
+function Ensure-MigrationJobSettings {
+    param(
+        [Parameter(Mandatory=$true)]
+        $SettingsObject
+    )
+
+    $jobSettings = Get-SettingsMemberValue -SettingsObject $SettingsObject -Name 'jobsettings'
+    if ($null -eq $jobSettings) {
+        $jobSettings = [ordered]@{}
+        Set-SettingsMemberValue -SettingsObject $SettingsObject -Name 'jobsettings' -Value $jobSettings
+    }
+
+    return $jobSettings
+}
+
+function Test-MigrationVariableHasValue {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name
+    )
+
+    $variable = Get-Variable -Name $Name -Scope Script -ErrorAction SilentlyContinue
+    return ($null -ne $variable -and $null -ne $variable.Value)
+}
+
+function ConvertFrom-SavedJobSettingValue {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $choiceMap = $script:MigrationJobSettingPromptChoiceMap[$Name]
+    if ($choiceMap -and $Value -is [bool]) {
+        if ($Value) {
+            return $choiceMap.TrueValue
+        }
+        return $choiceMap.FalseValue
+    }
+
+    return $Value
+}
+
+function Import-MigrationJobSettings {
+    param(
+        $SettingsObject
+    )
+
+    $jobSettings = Get-SettingsMemberValue -SettingsObject $SettingsObject -Name 'jobsettings'
+    if ($null -eq $jobSettings) {
+        return
+    }
+
+    foreach ($settingName in $script:MigrationJobSettingNames) {
+        if (Test-MigrationVariableHasValue -Name $settingName) {
+            continue
+        }
+
+        $savedValue = Get-SettingsMemberValue -SettingsObject $jobSettings -Name $settingName
+        if ($null -ne $savedValue) {
+            $restoredValue = ConvertFrom-SavedJobSettingValue -Name $settingName -Value $savedValue
+            Set-Variable -Name $settingName -Value $restoredValue -Scope Script
+        }
+    }
+}
+
+function Save-MigrationJobSettings {
+    param(
+        $SettingsObject
+    )
+
+    if ($null -eq $SettingsObject) {
+        return
+    }
+
+    $jobSettings = Ensure-MigrationJobSettings -SettingsObject $SettingsObject
+
+    foreach ($settingName in $script:MigrationJobSettingNames) {
+        $variable = Get-Variable -Name $settingName -Scope Script -ErrorAction SilentlyContinue
+        if ($null -ne $variable -and $null -ne $variable.Value) {
+            Set-SettingsMemberValue -SettingsObject $jobSettings -Name $settingName -Value $variable.Value
+        }
+    }
+
+    Set-SettingsMemberValue -SettingsObject $SettingsObject -Name 'jobsettings' -Value $jobSettings
+    UpdateSavedSettings -newSettings $SettingsObject
+}
+
 
 
 # Prompt the user for various settings and save the responses
 function CollectAndSaveSettings {
     # Create a hash table to store the settings
     $settings = $settings ?? @{}
+    $settings.jobsettings = $settings.jobsettings ?? @{}
 
     # 1. Unser Entry- Urls
     Write-Host "Settings- URLs:" -ForegroundColor Yellow
@@ -149,6 +338,7 @@ function CollectAndSaveSettings {
     # Ensure folder is created for settings file
     if (!(Test-Path -Path "$settingsTop\HuduMigration\$instance")) { New-Item "$settingsTop\HuduMigration\$instance" -ItemType Directory }
 
+    $settings.PlaceInternalDocsInInternalCompany = $settings.PlaceInternalDocsInInternalCompany ?? [bool]('y' -eq ((Select-ObjectFromList -objects @("y","n") -message "Would you like to place your internal company documents $($settings.internalcompany) in global/central kb? Usually this is how it's done.") ?? 'y'))
 
     # Verify settings, save or exit and retry
     $reenterChoice = $reenterChoice ?? 
@@ -156,7 +346,7 @@ function CollectAndSaveSettings {
     if ($reenterChoice -eq "Continue") {
         Write-Host "Saving Settings to $defaultSettingsPath"
         # Convert the hash table to JSON
-        $json = $settings | ConvertTo-Json
+        $json = $settings | ConvertTo-Json -Depth 50
         $json | Out-File -FilePath $defaultSettingsPath
     } else {
         Clear-Host
@@ -173,12 +363,12 @@ function UpdateSavedSettings {
         if (Test-Path $settingsPath) {
             # Convert the hash table to JSON
             Write-Host "️Overwriting existing settings file with updated settings." -ForegroundColor Cyan
-            $json = $newSettings | ConvertTo-Json
+            $json = $newSettings | ConvertTo-Json -Depth 50
             $json | Out-File -FilePath $settingsPath
         }
         else {
             Write-Host "Creating new settings file in $settingsPath" -ForegroundColor Yellow
-            $json = $newSettings | ConvertTo-Json
+            $json = $newSettings | ConvertTo-Json -Depth 50
             $json | Out-File -FilePath $settingsPath
         }
     }
@@ -187,12 +377,12 @@ function UpdateSavedSettings {
         if (Test-Path $defaultSettingsPath) {
             # Convert the hash table to JSON
             Write-Host "️Overwriting existing settings file with updated settings." -ForegroundColor Cyan
-            $json = $newSettings | ConvertTo-Json
+            $json = $newSettings | ConvertTo-Json -Depth 50
             $json | Out-File -FilePath $defaultSettingsPath
         }
         else {
             Write-Host "Creating new settings file in $defaultSettingsPath" -ForegroundColor Yellow
-            $json = $newSettings | ConvertTo-Json
+            $json = $newSettings | ConvertTo-Json -Depth 50
             $json | Out-File -FilePath $defaultSettingsPath
         }
     }
@@ -269,6 +459,9 @@ if ($environmentSettings -and $InitType -eq 'Lite') {
             throw 'Invalid choice. Please choose (I)mport or (N)ew '
         }
     }
+}
+if ($environmentSettings) {
+    Import-MigrationJobSettings -SettingsObject $environmentSettings
 }
 ############################### API Settings ###############################
 # Hudu
@@ -473,9 +666,13 @@ if ($InitType -eq 'Full') {
         switch ($allowSettingFlagsAndTypes) {
             "1" {$allowSettingFlagsAndTypes = $true}
             "2" {$allowSettingFlagsAndTypes = $false}
+        }
     }
+    $IncludeIgnoredFirstDirectory = $IncludeIgnoredFirstDirectory ?? [bool]('y' -eq ((Select-ObjectFromList -objects @("y","n") -message "Would you like to include the base directory for articles? Default behavior is no.") ?? 'n'))
         
 }
+if ($InitType -eq 'Full') {
+    Save-MigrationJobSettings -SettingsObject $environmentSettings
 }
 ############################ Migration Logs Path ##############################
 $MigrationLogs = $environmentSettings.MigrationLogs
