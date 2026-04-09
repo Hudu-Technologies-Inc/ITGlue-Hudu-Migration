@@ -29,24 +29,19 @@ if ((get-host).version.major -ne 7) {
     Write-Host "Powershell 7 Required" -foregroundcolor Red
     exit 1
 }
-############################### Settings ###############################
-# Define the path to the settings.json file in the user's AppData folder
+$project_workdir=$project_workdir ?? "$PSScriptRoot"
 
-# Determine top part of settings path
-if($IsWindows){
-    $settingsTop = $env:APPDATA
-} else {
-    $settingsTop = Join-Path "$home" ".config"
-}
+############################### Settings ###############################
+# Define the path to the settings.json file whether appdata folder or local debug dir
+
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-$debugfolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
+
+$debugfolder = $debugfolder ?? $(join-path "$project_workdir" "debug")
+$settings_folder = $settings_folder ?? $(join-path "$project_workdir" "debug\settings")
+foreach ($path in @($debugfolder, $settings_folder)){Get-EnsuredPath -path $path -neverdelete $true}
 
 # Define the path to the settings.json file in the detected platform's folder:
-# Running on Windows will save to the user's AppData
-# Running on Linux/macOS will save to `.config` in the user's HOME directory
-  # Something awesome will be here soon.
-$settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json")
-$defaultSettingsPath = $defaultSettingsPath ?? "$settingsTop\HuduMigration\settings.json"
+$defaultSettingsPath = $defaultSettingsPath ?? $(join-path "$settings_folder" "settings.json")
 
 # Function to read back securely stored keys used in the settings.json file
 function ConvertSecureStringToPlainText {
@@ -249,6 +244,43 @@ function Save-MigrationJobSettings {
     UpdateSavedSettings -newSettings $SettingsObject
 }
 
+function Backup-SettingsFile {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+
+    $settingsBackupFolder = Join-Path -Path (Split-Path -Path $Path -Parent) -ChildPath "backups"
+    $null = New-Item -ItemType Directory -Path $settingsBackupFolder -Force
+
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+    $backupPath = Join-Path -Path $settingsBackupFolder -ChildPath "$((Split-Path -Path $Path -Leaf)).$timestamp.bak"
+    Copy-Item -LiteralPath $Path -Destination $backupPath -Force
+    Write-Host "Backed up existing settings to $backupPath" -ForegroundColor Cyan
+}
+
+function Write-SettingsJson {
+    param(
+        [Parameter(Mandatory=$true)]
+        $SettingsObject,
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+
+    $settingsParent = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($settingsParent)) {
+        $null = New-Item -ItemType Directory -Path $settingsParent -Force
+    }
+
+    Backup-SettingsFile -Path $Path
+    $json = $SettingsObject | ConvertTo-Json -Depth 50
+    $json | Out-File -FilePath $Path
+}
+
 
 
 # Prompt the user for various settings and save the responses
@@ -330,13 +362,13 @@ function CollectAndSaveSettings {
     $settings.ITGLueExportPath = $settings.ITGLueExportPath ?? 
         $(Read-Host 'Enter the path of the ITGLue Export. (e.g. C:\Temp\ITGlue\Export) ️')
     $settings.MigrationLogs = $settings.MigrationLogs ??
-        $(Read-Host "Enter the path for the migration logs, or press enter to accept the Default path ($settingsTop\HuduMigration\$instance\MigrationLogs)")
+        $(Read-Host "Enter the path for the migration logs, or press enter to accept the Default path ($settings_folder\HuduMigration\$instance\MigrationLogs)")
     # Fallback for Migrationlogs setting
     if (!($settings.MigrationLogs)) {
-        $settings.MigrationLogs = "$settingsTop\HuduMigration\$instance\MigrationLogs"
+        $settings.MigrationLogs = "$settings_folder\HuduMigration\$instance\MigrationLogs"
     }
     # Ensure folder is created for settings file
-    if (!(Test-Path -Path "$settingsTop\HuduMigration\$instance")) { New-Item "$settingsTop\HuduMigration\$instance" -ItemType Directory }
+    if (!(Test-Path -Path "$settings_folder\HuduMigration\$instance")) { New-Item "$settings_folder\HuduMigration\$instance" -ItemType Directory }
 
     $settings.PlaceInternalDocsInInternalCompany = $settings.PlaceInternalDocsInInternalCompany ?? [bool]('y' -eq ((Select-ObjectFromList -objects @("y","n") -message "Would you like to place your internal company documents $($settings.internalcompany) in global/central kb? Usually this is how it's done.") ?? 'y'))
 
@@ -345,9 +377,7 @@ function CollectAndSaveSettings {
         $(Select-ObjectFromList -message "Do these settings look alright? $(($settings | ConvertTo-Json -depth 4).ToString())\n-If you choose to re-enter, changes made will not be saved" -objects @("Continue", "Re-Enter"))
     if ($reenterChoice -eq "Continue") {
         Write-Host "Saving Settings to $defaultSettingsPath"
-        # Convert the hash table to JSON
-        $json = $settings | ConvertTo-Json -Depth 50
-        $json | Out-File -FilePath $defaultSettingsPath
+        Write-SettingsJson -SettingsObject $settings -Path $defaultSettingsPath
     } else {
         Clear-Host
         Write-Host "reinvoke script when you're ready!..." -ForegroundColor Yellow
@@ -361,29 +391,23 @@ function UpdateSavedSettings {
     )
     if ($settingsPath) {
         if (Test-Path $settingsPath) {
-            # Convert the hash table to JSON
             Write-Host "️Overwriting existing settings file with updated settings." -ForegroundColor Cyan
-            $json = $newSettings | ConvertTo-Json -Depth 50
-            $json | Out-File -FilePath $settingsPath
+            Write-SettingsJson -SettingsObject $newSettings -Path $settingsPath
         }
         else {
             Write-Host "Creating new settings file in $settingsPath" -ForegroundColor Yellow
-            $json = $newSettings | ConvertTo-Json -Depth 50
-            $json | Out-File -FilePath $settingsPath
+            Write-SettingsJson -SettingsObject $newSettings -Path $settingsPath
         }
     }
     else {
         
         if (Test-Path $defaultSettingsPath) {
-            # Convert the hash table to JSON
             Write-Host "️Overwriting existing settings file with updated settings." -ForegroundColor Cyan
-            $json = $newSettings | ConvertTo-Json -Depth 50
-            $json | Out-File -FilePath $defaultSettingsPath
+            Write-SettingsJson -SettingsObject $newSettings -Path $defaultSettingsPath
         }
         else {
             Write-Host "Creating new settings file in $defaultSettingsPath" -ForegroundColor Yellow
-            $json = $newSettings | ConvertTo-Json -Depth 50
-            $json | Out-File -FilePath $defaultSettingsPath
+            Write-SettingsJson -SettingsObject $newSettings -Path $defaultSettingsPath
         }
     }
 }

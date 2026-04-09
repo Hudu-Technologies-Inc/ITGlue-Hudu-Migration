@@ -23,7 +23,7 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 
 
 - **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need your ITGlue export ZIP, API keys, and a compatible Hudu instance—work through **What you'll need** and **Prerequisites** later in this document before you start.
-- **Settings:** Stored by default under `%APPDATA%\HuduMigration`, same as the PowerShell workflow.
+- **Settings:** Stored by default under the local `debug\settings` folder, same as the PowerShell workflow.
 - **Use PowerShell instead** if you rely on a customized **`environ.example`**, want full session control over variables, or need to manually invoke post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** -note, these are ran as part of the main script and are always ran, so you likely wont need to consider post-run scripts.
 
 ## What the script does migrate:
@@ -151,7 +151,7 @@ You can [download newest powershell release here](https://github.com/powershell/
 > - The script will prompt you on what data types you would like to move (you don't have to migrate everything if you don't want to)
 > - The script will prompt you to run the script unattended--it can take several hours for the script to run start-to-finish, so unattended mode allows you to set it to run autonomously. If you choose not to run unattended, it _does not_ time out, so you can "continue" the script at any time
 
-Settings will get saved by default to %APPDATA%\HuduMigration. Settings that will be saved include API Keys, URLs, Prefixes, and migration job preferences in the `jobsettings` section. You can modify the settings.json file directly as long as you use expected values.
+Settings will get saved by default to the local `debug\settings` folder. Settings that will be saved include API Keys, URLs, Prefixes, and migration job preferences in the `jobsettings` section. Existing settings files are backed up under `debug\settings\backups` before they are overwritten. You can modify the settings.json file directly as long as you use expected values.
 
 
 1. Download/Clone the _entire_ repo into a folder on your computer.
@@ -270,7 +270,7 @@ This script should be run at the very end, with the Matched* variables existing 
 It will save two variables `$ConfigurationRelationsToCreate` and `$AssetRelationsToCreate` that can be used to build relations in Hudu using the `New-HuduRelation` command. Duplicate relations won't be created as it'll throw an error so it's safe to re-run.
 
 ## Version 2.x - Well tested but still beta version
-This version of the script brings an interactive migration process, settings will get saved by default to `%APPDATA%\HuduMigration` although they can be moved and then re-imported from a different path after creation.
+This version of the script brings an interactive migration process. Settings are saved by default to the local `debug\settings` folder, although they can be moved and then re-imported from a different path after creation.
 
 Settings that will be saved include API Keys, URLs, Prefixes, and migration job preferences in the `jobsettings` section. You can modify the settings.json file directly as long as you use values that are expected.
 
@@ -280,7 +280,7 @@ Migration preferences, such as what entities to migrate, are still accepted as f
 
 - Powershell Secure Strings are used in Settings to encrypt sensitive API Keys
 - modify the `$resumeQuestion` variable from `yes` to `no` to change if you would like to continue or start over.
-- MigrationLogs are stored by default in `%APPDATA%\HuduMigration` make sure you keep these safe!
+- MigrationLogs are stored by default under the local `debug\settings\HuduMigration` folder. Make sure you keep these safe.
 - URL Rewrites have been updated to apply to all Rich Text asset fields, articles, Company Quick Notes, and Password notes
 - Image Upload has been improved to use the Hudu API endpoint instead of Base64 and will include the best quality image available
 - `Add-HuduAttachmentsViaAPI.ps1` can be used to upload attachments to Hudu. This no longer uses the direct database connection although if you run the script more than once it'll upload duplicate attachments.
