@@ -79,6 +79,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\JWT-Auth.ps1
 . $PSScriptRoot\Public\NetworkInformation.ps1
 . $PSScriptRoot\Public\PreFlightTests.ps1
+. $PSScriptRoot\Public\Add-UntrackedImagesToArticles.ps1
 ############################### End of Functions ###############################
 
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
@@ -2316,8 +2317,8 @@ Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Company Notes URLs Repla
 Write-Host "Replacing links to hosted public photos in Hudu Articles"
 if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
 . $PSScriptRoot\Public\Replace-HardCodedImages.ps1
-
 Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
+Add-UntrackedImagesToArticles -ForArticles $(get-huduarticles)
 
 ############################### Wrap-Up ###############################
 
