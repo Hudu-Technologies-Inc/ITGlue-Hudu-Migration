@@ -30,6 +30,13 @@ function Set-ReleaseArtifact {
     Remove-Item -Path "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\*.txt" -Force -ErrorAction SilentlyContinue
     Get-GitCheckoutInfo | Out-File "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\$($(Get-Date -Format o | ForEach-Object { $_ -replace ":", "." })).txt" -Encoding utf8
 }
+function Get-ReleaseArtifact {
+    $artifact = (Get-ChildItem -Path "." -Recurse -Directory "artifacts" | Select-Object -First 1 | Get-ChildItem -Filter "*.txt" | Select-Object -First 1)
+    if (-not $(test-path $artifact.FullName)) {
+        return $null
+    }
+    return "$(Get-Content -Path $artifact.FullName)"
+}
 
 
 function Get-GitCheckoutInfo {
@@ -38,7 +45,7 @@ function Get-GitCheckoutInfo {
         [string]$Path = (Get-Location).Path
     )
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        return "No Git installation found, cannot discern checkout info"
+        return ($(Get-ReleaseArtifact) ?? "No Git installation found, cannot discern checkout info")
     }
     Push-Location -LiteralPath $Path
     try {
