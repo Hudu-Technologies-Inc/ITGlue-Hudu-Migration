@@ -2318,7 +2318,6 @@ Write-Host "Replacing links to hosted public photos in Hudu Articles"
 if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
 . $PSScriptRoot\Public\Replace-HardCodedImages.ps1
 Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
-Add-UntrackedImagesToArticles -ForArticles $(get-huduarticles)
 
 ############################### Wrap-Up ###############################
 
@@ -2328,6 +2327,8 @@ if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitor
 
 write-host "wrapup 2/10... adding attachments (this can take a while)"
 . .\Add-HuduAttachmentsViaAPI.ps1
+Add-UntrackedImagesToArticles -ForArticles $(get-huduarticles)
+
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
 if ($true -eq $ImportConfigInterfaces){
