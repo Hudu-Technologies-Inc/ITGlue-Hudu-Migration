@@ -87,6 +87,9 @@ function New-HuduGlobalPasswordFolder {
         Write-Warning "Failed to create new password folder '$Name'- $_"; return $null;
     }
 }
+$ITGAPIEndpoint = $settings.ITGAPIEndpoint ?? 
+    $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
+
 
 $global_password_folders = $(get-hudupasswordfolders | where-object {-not $_.company_id -or $_.company_id -lt 1})
 
@@ -103,7 +106,7 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
     }
     # 2) Get folders for this org (paths already computed)
     $passwordFolderArray = $null
-    $passwordFolderArray = Get-ITGPasswordFolders -ITGKEY $ITGKey -organization_id $itgcompanyID -ComputePaths -Separator $PasswordFolderPathDelimiter -PageSize $PWFPageSize
+    $passwordFolderArray = Get-ITGPasswordFolders -ITGKEY $ITGKey -organization_id $itgcompanyID -ComputePaths -Separator $PasswordFolderPathDelimiter -PageSize $PWFPageSize -ITGBaseuRI $ITGAPIEndpoint
     
     if (-not $passwordFolderArray -or $passwordFolderArray.Count -eq 0) {
         Write-Host "No password folders for company $itgcompanyID — skipping."
