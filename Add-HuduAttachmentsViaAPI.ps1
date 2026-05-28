@@ -107,7 +107,8 @@ param(
         }
     }
     
-    $Results |ConvertTo-Json -Compress -Depth 10 |Out-File "$($MigrationLogs)\$($UploadType)-$($FileSuffix)-attachments-upload.json"
+    $SuffixSegment = if ([string]::IsNullOrWhiteSpace($FileSuffix)) { "" } else { "-$FileSuffix" }
+    $Results |ConvertTo-Json -Compress -Depth 10 |Out-File "$($MigrationLogs)\$($UploadType)$SuffixSegment-attachments-upload.json"
 
 }
 
