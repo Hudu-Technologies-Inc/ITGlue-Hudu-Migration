@@ -12,13 +12,11 @@ function Get-ITGPasswordFolders {
         [string]$Separator = '<FDELIM>',
 
         [ValidateRange(1, 1000)]
-        [int]$PageSize = 1000
-    )
+        [int]$PageSize = 1000,
 
-    if (-not $script:ITGlue_Base_URI -or [string]::IsNullOrWhiteSpace($script:ITGlue_Base_URI)) {
-        $script:ITGlue_Base_URI = 'https://api.itglue.com'
-        Write-Warning "ITGlue_Base_URI not set. Using default: $script:ITGlue_Base_URI"
-    }
+        [Parameter(Mandatory = $true)]
+        [String]$ITGBaseuRI
+    )
 
     $resource_uri = if ($organization_id) {
         "/organizations/$organization_id/relationships/password_folders"
@@ -50,7 +48,7 @@ function Get-ITGPasswordFolders {
     $totalPages = $null
     try {
         do {
-            $uri = New-ITGPasswordFolderUri -BaseUri $script:ITGlue_Base_URI -ResourceUri $resource_uri -PageNumber $page -PageSize $PageSize
+            $uri = New-ITGPasswordFolderUri -BaseUri $ITGBaseuRI -ResourceUri $resource_uri -PageNumber $page -PageSize $PageSize
             $resp = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers -ErrorAction Stop
             $data = if ($resp -and $resp.data) { @($resp.data) } else { @() }
             if ($data.Count -gt 0) { $folders += $data }
