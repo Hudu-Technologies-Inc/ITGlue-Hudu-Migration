@@ -15,7 +15,7 @@ function Get-ITGPasswordFolders {
         [int]$PageSize = 1000,
 
         [Parameter(Mandatory = $true)]
-        [String]$ITGBaseuRI
+        [String]$ITGBaseURI
     )
 
     $resource_uri = if ($organization_id) {

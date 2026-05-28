@@ -8,8 +8,13 @@ foreach ($u in $huduUsers) {$key = "$($u.first_name) $($u.last_name)".ToLower();
 
 if (-not (Get-Command -Name Get-ITGlueCheckLists -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "Get-Checklists.ps1" | Select-Object -first 1).fullname)" }
 if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "JWT-Auth.ps1" | Select-Object -first 1).fullname)" }
+$ITGAPIEndpoint = $settings.ITGAPIEndpoint ?? 
+    $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
+
 $ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
-$ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT
+$ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT -ITGBaseURI $ITGAPIEndpoint
+
+
 
 if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     Write-Host "No preloaded checklists found. attempting second-line retrieval"
@@ -22,7 +27,7 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
             $ITGChecklistItems=$null
             try {
                 $checklistEntry | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $false -Force
-                $ITGChecklistItems=$(Get-ITGlueChecklistItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistEntry.id)
+                $ITGChecklistItems=$(Get-ITGlueChecklistItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistEntry.id -ITGBaseURI $ITGAPIEndpoint)
                 $checklistEntry | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
             }catch{
                 Write-host "Error getting checklist items $_"
