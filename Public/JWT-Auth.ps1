@@ -6,7 +6,7 @@ function Get-ITGlueJWTAuth{
     while ($true){
         Write-Host "Testing provided JWT"
         try {
-            $null = Get-ITGlueCheckLists -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint
+            $null = Get-ITGlueCheckLists -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGBaseURI
             Write-host "successful authentication"
             return $ITglueJWT   
         } catch {
