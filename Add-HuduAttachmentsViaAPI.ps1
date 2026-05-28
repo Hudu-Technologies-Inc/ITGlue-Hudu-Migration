@@ -59,7 +59,8 @@ Write-Host "#######################################################" -Foreground
 function Add-HuduAttachment {
 param(
     $FoundAssetsToAttach,
-    $UploadType
+    $UploadType,
+    [string]$FileSuffix=""
 )
     $HuduUpload = @()
 
@@ -106,7 +107,8 @@ param(
         }
     }
     
-    $Results |ConvertTo-Json -Compress -Depth 10 |Out-File "$($MigrationLogs)\$($UploadType)-attachments-upload.json"
+    $SuffixSegment = if ([string]::IsNullOrWhiteSpace($FileSuffix)) { "" } else { "-$FileSuffix" }
+    $Results |ConvertTo-Json -Compress -Depth 10 |Out-File "$($MigrationLogs)\$($UploadType)$SuffixSegment-attachments-upload.json"
 
 }
 
@@ -188,22 +190,22 @@ $AttachmentsToUpload = Get-ChildItem -Path $AttachmentsPath -Recurse -File
 $filesById = $AttachmentsToUpload | Group-Object { $_.Directory.Name } -AsHashTable -AsString
 
 $foundContactsToAttach = $MatchedContacts | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
-if ($foundContactsToAttach -and $foundContactsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $foundContactsToAttach -UploadType "Asset"}
+if ($foundContactsToAttach -and $foundContactsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $foundContactsToAttach -UploadType "Asset" -FileSuffix "Contacts"}
 
 $FoundConfigurationsToAttach = $MatchedConfigurations | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
-if ($FoundConfigurationsToAttach -and $FoundConfigurationsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundConfigurationsToAttach -UploadType "Asset"}
+if ($FoundConfigurationsToAttach -and $FoundConfigurationsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundConfigurationsToAttach -UploadType "Asset" -FileSuffix "Configurations"}
 
 $FoundDocumentsToAttach = $MatchedArticles | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
 if ($FoundDocumentsToAttach -and $FoundDocumentsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundDocumentsToAttach -UploadType "Article"}
 
 $FoundLocationsToAttach = $MatchedLocations | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
-if ($FoundLocationsToAttach -and $FoundLocationsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundLocationsToAttach -UploadType "Asset"}
+if ($FoundLocationsToAttach -and $FoundLocationsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundLocationsToAttach -UploadType "Asset" -FileSuffix "Locations"}
 
 $FoundPasswordsToAttach = $MatchedPasswords| Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
 if ($FoundPasswordsToAttach -and $FoundPasswordsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundPasswordsToAttach -UploadType "AssetPassword"}
 
 $MatchedAssetsToAttach = $MatchedAssets | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
-if ($MatchedAssetsToAttach -and $MatchedAssetsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $MatchedAssetsToAttach -UploadType "Asset"}
+if ($MatchedAssetsToAttach -and $MatchedAssetsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $MatchedAssetsToAttach -UploadType "Asset" -FileSuffix "FlexibleAssets"}
 
 $FoundWebsitesToAttach = $MatchedWebsites | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
 if ($FoundWebsitesToAttach -and $FoundWebsitesToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundWebsitesToAttach -UploadType "Website"}
