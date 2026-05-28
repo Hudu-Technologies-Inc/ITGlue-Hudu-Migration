@@ -140,7 +140,7 @@ foreach ($file in $AllUploadCandidateFiles) {
     if (-not $AttachFilesByAssetType.ContainsKey($assetType)) { $AttachFilesByAssetType[$assetType] = New-Object System.Collections.ArrayList }
     [void]$AttachFilesByAssetType[$assetType].Add($file)
 }
-$wouldUpload = @()
+
 $MatchedUploadFields = @{}
 $UnresolvedUploadFields = @{}
 foreach ($UploadAsset in $MatchedAssets | Where-Object { $_.HuduID -and $_.HuduID -gt 0 }) {
@@ -201,7 +201,19 @@ foreach ($UploadAsset in $MatchedAssets | Where-Object { $_.HuduID -and $_.HuduI
         write-host "Matched '$filename' to '$($match.File.FullName)' with score $($match.Score) for asset ID $($UploadAsset.HuduID)"
 
         $matchedFile = $match.File
-
+        $newUpload = $null; $newUpload = New-HuduUpload -uploadable_id $UploadAsset.HuduID -filePath $matchedFile.FullName -uploadable_type "Asset"; $newUpload = $newUpload.upload ?? $newUpload;
+        if ($null -eq $newUpload) {
+            Write-Warning "Failed to create upload for '$filename' at '$($matchedFile.FullName)' for asset ID $($UploadAsset.HuduID)"
+            $UnresolvedUploadFields["$($UploadAsset.HuduID):$name"] = @{
+                UploadAsset = $UploadAsset
+                FieldName   = $name
+                FilePath    = $null
+                ITGFileUrl  = $value.url
+                ITGFileName = $filename
+                MatchScore  = 0
+            }            
+            continue
+        }
 
         if ($matchedFile) {
             $MatchedUploadFields["$($UploadAsset.HuduID):$name"] = @{
@@ -211,8 +223,7 @@ foreach ($UploadAsset in $MatchedAssets | Where-Object { $_.HuduID -and $_.HuduI
                 ITGFileUrl  = $value.url
                 ITGFileName = $filename
                 MatchScore  = $match.Score
-                uploadable_id = $UploadAsset.HuduID
-                uploadable_type = "Asset"
+                Upload      = $newUpload
             }
         }
         else {
