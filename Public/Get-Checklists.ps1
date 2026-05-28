@@ -247,7 +247,10 @@ function Get-ITGlueChecklistTemplates {
 
         [Parameter(ParameterSetName = 'index')]
         [ValidateRange(1, 1000)]
-        [Nullable[int]]$page_size = $null
+        [Nullable[int]]$page_size = $null,
+
+        [Parameter(Mandatory = $true)]
+        [String]$ITGBaseURI
     )
 
     if (-not $ITGBaseuRI) {
