@@ -1357,9 +1357,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                         switch (($ITGField.Attributes."tag-type").split(":")[0]) {
                             "AccountsUsers" { Write-Host "Tags to Account Users are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!" ; $supported = $false }
                             "Checklists" { 
-                                Write-Host "Tags to Checklists are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false 
+                                Write-Host "Tags to Checklists are computed later, if migrating checklists is enabled."; $supported = $false 
                             }
-                            "ChecklistTemplates" { Write-Host "Tags to Checklists Templates are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
+                            "ChecklistTemplates" { Write-Host "Tags to Checklists Templates are computed later, if migrating checklists is enabled"; $supported = $false }
                             "Contacts" {
                                 $ContactLayout = Get-HuduAssetLayouts -name $ConImportAssetLayoutName
                                 $LayoutField.add("field_type", "AssetTag")
@@ -1370,15 +1370,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                                 $LayoutField.add("field_type", "AssetTag")
                                 $LayoutField.add("linkable_id", $ConfigLayout.ID)
                             }
-                            "Documents" { Write-Host "Tags to Documents are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false } 
-                            "Domains" { Write-Host "Tags to Websites are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
-                            "Passwords" { Write-Host "Tags to Passwords are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
+                            "Documents" { Write-Host "Tags to Documents are computed later, if migrating documents is enabled"; $supported = $false } 
+                            "Domains" { Write-Host "Tags to websites are computed later, if migrating websites is enabled"; $supported = $false }
+                            "Passwords" { Write-Host "Tags to Passwords are computed later, if migrating passwords is enabled"; $supported = $false }
                             "Locations" {
                                 $LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
                                 $LayoutField.add("field_type", "AssetTag")
                                 $LayoutField.add("linkable_id", $LocationLayout.ID)
                             }
-                            "Organizations" { Write-Host "Tags to Companies are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
+                            "Organizations" { Write-Host "Tags to Companies are computed later."; $supported = $false }
                             "SslCertificates" { Write-Host "Tags to SSL Certificates are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "Tickets" { Write-Host "Tags to Tickets are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "FlexibleAssetType" {	
