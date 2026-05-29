@@ -204,7 +204,7 @@ When you opt in during the migration, checklists and templates are imported as *
 
 In Chrome, you'll need the "JWT Inspector:"
 
-https://uploads.linear.app/dd20e52a-b761-4065-b6be-dffb157fc523/3356634e-58f3-472c-9a40-147512f50bd7/a54c7019-2cf2-436a-b47d-a4f157a2f38e
+<img width="206" height="276" alt="image" src="https://github.com/user-attachments/assets/fcd43f21-0c6e-47fe-a0af-d3356ebbcc6b" />
 <img width="1502" height="650" alt="image" src="https://github.com/user-attachments/assets/7432610f-2899-4aa8-8b2b-33abee9596b4" />
 (You might have to refresh the page to get it to show). 
 
