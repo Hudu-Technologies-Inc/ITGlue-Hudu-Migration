@@ -80,7 +80,6 @@ foreach ($checklist in $ITGLueChecklists) {
     $HuduProcedureTasks = @()
     $procedureRequest = @{
         Name = [System.Net.WebUtility]::UrlDecode("$($checklist.attributes.name ?? 'Unnamed Procedure')")
-        CompanyTemplate = $checklist.IsTemplate ?? $false
         Description =  $($($checklist.attributes.description ?? "No description found for procedure.") + "`n" + 
             "Imported from ITGlue. <a href='$($checklist.attributes.'resource-url')'>itglue checklist url</a>")
     }
