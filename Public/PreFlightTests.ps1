@@ -290,6 +290,143 @@ function Test-ITGlueAPIKeyPasswordScope {
     return $result.Success
 }
 
+function ConvertTo-ReadableByteSize {
+    param(
+        [Parameter(Mandatory = $true)]
+        [double]$Bytes
+    )
+
+    $units = @('B', 'KB', 'MB', 'GB', 'TB', 'PB')
+    $value = [double]$Bytes
+    $unitIndex = 0
+
+    while ($value -ge 1024 -and $unitIndex -lt ($units.Count - 1)) {
+        $value = $value / 1024
+        $unitIndex++
+    }
+
+    return ('{0:N2} {1}' -f $value, $units[$unitIndex])
+}
+
+function Resolve-ExistingFilesystemPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $candidate = $Path
+    while (-not [string]::IsNullOrWhiteSpace($candidate)) {
+        if (Test-Path -LiteralPath $candidate -ErrorAction SilentlyContinue) {
+            $item = Get-Item -LiteralPath $candidate -ErrorAction Stop
+            if ($item.PSProvider.Name -ne 'FileSystem') {
+                throw "Path '$Path' resolved to non-filesystem provider '$($item.PSProvider.Name)'."
+            }
+            return $item
+        }
+
+        $parent = Split-Path -Path $candidate -Parent
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $candidate) {
+            break
+        }
+        $candidate = $parent
+    }
+
+    throw "Could not resolve '$Path' or any parent directory to an existing filesystem path."
+}
+
+function Test-ITGlueExportDiskSpace {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ExportPath,
+
+        [AllowNull()]
+        [string]$TargetPath,
+
+        [ValidateRange(0, 1000)]
+        [double]$BufferPercent = 15,
+
+        [switch]$Detailed,
+        [switch]$ThrowOnFailure
+    )
+
+    $resolvedExport = $null
+    $resolvedTarget = $null
+    $result = $null
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($ExportPath)) {
+            throw "IT Glue export path is blank."
+        }
+
+        $resolvedExport = Get-Item -LiteralPath $ExportPath -ErrorAction Stop
+        if (-not $resolvedExport.PSIsContainer) {
+            throw "IT Glue export path '$ExportPath' is not a directory."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($TargetPath)) {
+            $TargetPath = $resolvedExport.FullName
+        }
+
+        $measureErrors = @()
+        $measure = Get-ChildItem -LiteralPath $resolvedExport.FullName -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable +measureErrors |
+            Measure-Object -Property Length -Sum
+
+        $exportBytes = [int64]($measure.Sum ?? 0)
+        $requiredBytes = [int64][Math]::Ceiling($exportBytes * (1 + ($BufferPercent / 100)))
+        $resolvedTarget = Resolve-ExistingFilesystemPath -Path $TargetPath
+        $drive = Get-PSDrive -Name $resolvedTarget.PSDrive.Name -ErrorAction Stop
+        $freeBytes = [int64]($drive.Free ?? 0)
+        $success = $freeBytes -ge $requiredBytes
+        $message = if ($success) {
+            "Disk space check passed. Export is $(ConvertTo-ReadableByteSize $exportBytes); required free space with $BufferPercent% buffer is $(ConvertTo-ReadableByteSize $requiredBytes); available on $($drive.Name): is $(ConvertTo-ReadableByteSize $freeBytes)."
+        } else {
+            "Disk space check failed. Export is $(ConvertTo-ReadableByteSize $exportBytes); required free space with $BufferPercent% buffer is $(ConvertTo-ReadableByteSize $requiredBytes); available on $($drive.Name): is only $(ConvertTo-ReadableByteSize $freeBytes)."
+        }
+
+        $result = [pscustomobject]@{
+            Success                 = $success
+            ExportPath              = $resolvedExport.FullName
+            TargetPath              = $TargetPath
+            CheckedPath             = $resolvedTarget.FullName
+            DriveName               = $drive.Name
+            ExportBytes             = $exportBytes
+            RequiredFreeBytes       = $requiredBytes
+            AvailableFreeBytes      = $freeBytes
+            BufferPercent           = $BufferPercent
+            EnumerationErrorCount   = @($measureErrors).Count
+            Message                 = $message
+        }
+    } catch {
+        $result = [pscustomobject]@{
+            Success                 = $false
+            ExportPath              = $ExportPath
+            TargetPath              = $TargetPath
+            CheckedPath             = if ($resolvedTarget) { $resolvedTarget.FullName } else { $null }
+            DriveName               = $null
+            ExportBytes             = $null
+            RequiredFreeBytes       = $null
+            AvailableFreeBytes      = $null
+            BufferPercent           = $BufferPercent
+            EnumerationErrorCount   = $null
+            Message                 = "Disk space check failed: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not $result.Success) {
+        Write-Warning $result.Message
+        if ($ThrowOnFailure) {
+            throw $result.Message
+        }
+    }
+
+    if ($Detailed) {
+        return $result
+    }
+
+    return $result.Success
+}
+
 function Get-HuduAssetLayoutManagementUrl {
     [CmdletBinding()]
     param(

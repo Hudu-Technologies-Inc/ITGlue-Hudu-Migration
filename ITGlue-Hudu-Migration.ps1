@@ -106,6 +106,19 @@ if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
     exit 1
 }
 
+write-host "Checking available disk space for migration artifacts" -ForegroundColor DarkCyan
+$preflightExportPath = $settings.ITGLueExportPath ?? $environmentSettings.ITGLueExportPath ?? $ITGLueExportPath
+$preflightTargetPath = $settings.MigrationLogs ?? $environmentSettings.MigrationLogs ?? $MigrationLogs ?? $preflightExportPath
+$diskSpaceCheck = Test-ITGlueExportDiskSpace -ExportPath $preflightExportPath -TargetPath $preflightTargetPath -BufferPercent 15 -Detailed
+Write-Host $diskSpaceCheck.Message -ForegroundColor $(if ($diskSpaceCheck.Success) { 'Green' } else { 'Red' })
+if (-not $diskSpaceCheck.Success) {
+    Write-Host "Exiting before making migration changes. Free up space on the target drive or move MigrationLogs to a drive with enough space." -ForegroundColor Red
+    exit 1
+}
+if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
+    Write-Warning "Could not read $($diskSpaceCheck.EnumerationErrorCount) item(s) while estimating export size. Disk space estimate may be low."
+}
+
 write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
 $PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightCollisionFound = $false;
 . .\public\Check-LayoutCollisions.ps1
