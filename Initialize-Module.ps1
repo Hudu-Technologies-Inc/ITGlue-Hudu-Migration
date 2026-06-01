@@ -277,7 +277,31 @@ catch {
 $HuduBaseDomain = $environmentSettings.HuduBaseDomain
 
 # IT Glue - MAKE SURE TO USE AN API KEY WITH PASSWORD ACCESS
-$ITGAPIEndpoint = $environmentSettings.ITGAPIEndpoint
+$ITGAPIEndpoint = @(
+    $ITGAPIEndpoint
+    $environmentSettings.ITGAPIEndpoint
+    $settings.ITGAPIEndpoint
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+if ([string]::isNullOrWhiteSpace($ITGAPIEndpoint)){
+    $ITGAPIEndpoint = $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
+}
+$ITGAPIEndpoint = $ITGAPIEndpoint.Trim() -replace '[\\/]+$', ''
+if ($environmentSettings) {
+    $savedITGAPIEndpoint = if ($environmentSettings -is [hashtable]) {
+        $environmentSettings['ITGAPIEndpoint']
+    } else {
+        $environmentSettings.ITGAPIEndpoint
+    }
+
+    if ($savedITGAPIEndpoint -ne $ITGAPIEndpoint) {
+        if ($environmentSettings -is [hashtable]) {
+            $environmentSettings['ITGAPIEndpoint'] = $ITGAPIEndpoint
+        } else {
+            $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGAPIEndpoint -Value $ITGAPIEndpoint -Force
+        }
+        UpdateSavedSettings -newSettings $environmentSettings
+    }
+}
 
 try {
     $ITGKey = ConvertSecureStringToPlainText -SecureString ($environmentSettings.ITGKey|ConvertTo-SecureString)
@@ -335,7 +359,7 @@ if ($InitType -eq 'Full') {
     ############################### Configuration Settings ###############################
     $ImportConfigurations = $ImportConfigurations ?? $(Select-ObjectFromList -message "Import Configurations?" -objects @($true, $false) -allowNull $false)
 
-    $ConfigurationPrefix = $environmentSettings.ConPromptPrefix
+    $ConfigurationPrefix = $settings.ConPromptPrefix ?? $environmentSettings.ConPromptPrefix ?? ""
     $FlexibleLayoutPrefix = $environmentSettings.FAPromptPrefix
 
     ############################### Contact Settings ###############################

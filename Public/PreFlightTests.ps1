@@ -289,3 +289,148 @@ function Test-ITGlueAPIKeyPasswordScope {
 
     return $result.Success
 }
+
+function Get-HuduAssetLayoutManagementUrl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$HuduAssetLayout,
+
+        [AllowNull()]
+        [string]$HuduBaseUrl
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HuduBaseUrl)) { return $null }
+    if (-not $HuduAssetLayout.PSObject.Properties['slug']) { return $null }
+
+    $slug = "$($HuduAssetLayout.slug)"
+    if ([string]::IsNullOrWhiteSpace($slug)) { return $null }
+
+    return "$($HuduBaseUrl.TrimEnd('/'))/admin/asset_layouts/$slug"
+}
+
+function Test-HuduAssetLayoutTargetNameCollision {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object[]]$TargetLayouts,
+
+        [object[]]$HuduAssetLayouts = $(Get-HuduAssetLayouts),
+
+        [AllowNull()]
+        [string]$HuduBaseUrl,
+
+        [switch]$Detailed,
+        [switch]$ThrowOnCollision
+    )
+
+    $huduLayoutNames = @{}
+
+    foreach ($layout in @($HuduAssetLayouts | Where-Object { $_ })) {
+        $name = "$($layout.name)"
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+
+        $key = $name.Trim().ToLowerInvariant()
+        if (-not $huduLayoutNames.ContainsKey($key)) {
+            $huduLayoutNames[$key] = @()
+        }
+
+        $huduLayoutNames[$key] += $layout
+    }
+
+    $collisions = foreach ($targetLayout in @($TargetLayouts | Where-Object { $_ })) {
+        $targetName = $targetLayout.TargetName
+        if ([string]::IsNullOrWhiteSpace($targetName)) { continue }
+
+        $targetKey = $targetName.Trim().ToLowerInvariant()
+
+        if ($huduLayoutNames.ContainsKey($targetKey)) {
+            foreach ($huduLayout in @($huduLayoutNames[$targetKey])) {
+                [pscustomobject]@{
+                    SourceType        = $targetLayout.SourceType
+                    SourceName        = $targetLayout.SourceName
+                    TargetName        = $targetName
+                    SourceId          = $targetLayout.SourceId
+                    HuduLayoutName    = $huduLayout.name
+                    HuduLayoutId      = $huduLayout.id
+                    HuduManagementUrl = Get-HuduAssetLayoutManagementUrl -HuduAssetLayout $huduLayout -HuduBaseUrl $HuduBaseUrl
+                }
+            }
+        }
+    }
+
+    $result = [pscustomobject]@{
+        Success    = (@($collisions).Count -eq 0)
+        Collisions = @($collisions)
+    }
+
+    if (-not $result.Success) {
+        $message = "One or more target asset layout names would collide with existing Hudu asset layouts."
+        Write-Warning $message
+
+        if ($ThrowOnCollision) {
+            throw $message
+        }
+    }
+
+    if ($Detailed) {
+        return $result
+    }
+
+    return $result.Success
+}
+
+function Test-HuduFlexibleAssetLayoutNameCollision {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object[]]$ITGlueFlexibleAssetLayouts,
+
+        [object[]]$HuduAssetLayouts = $(Get-HuduAssetLayouts),
+
+        [AllowNull()]
+        [string]$FlexibleLayoutPrefix = "",
+
+        [AllowNull()]
+        [string]$HuduBaseUrl,
+
+        [switch]$Detailed,
+        [switch]$ThrowOnCollision
+    )
+
+    $prefix = $FlexibleLayoutPrefix ?? ""
+    $targetLayouts = foreach ($itgLayout in @($ITGlueFlexibleAssetLayouts | Where-Object { $_ })) {
+        $sourceName = $null
+        if ($itgLayout.PSObject.Properties['attributes'] -and $itgLayout.attributes) {
+            $sourceName = $itgLayout.attributes.name
+        }
+        if ([string]::IsNullOrWhiteSpace($sourceName) -and $itgLayout.PSObject.Properties['name']) {
+            $sourceName = $itgLayout.name
+        }
+        if ([string]::IsNullOrWhiteSpace($sourceName)) { continue }
+
+        [pscustomobject]@{
+            SourceType = "Flexible Asset Layout"
+            SourceName = $sourceName
+            TargetName = "$prefix$sourceName"
+            SourceId   = $itgLayout.id
+        }
+    }
+
+    $result = Test-HuduAssetLayoutTargetNameCollision `
+        -TargetLayouts $targetLayouts `
+        -HuduAssetLayouts $HuduAssetLayouts `
+        -HuduBaseUrl $HuduBaseUrl `
+        -Detailed
+
+    if ($ThrowOnCollision -and -not $result.Success) {
+        throw "One or more IT Glue flexible asset layout names would collide with existing Hudu asset layouts."
+    }
+
+    if ($Detailed) {
+        $result | Add-Member -MemberType NoteProperty -Name Prefix -Value $prefix -Force
+        return $result
+    }
+
+    return $result.Success
+}
