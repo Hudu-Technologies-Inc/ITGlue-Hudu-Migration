@@ -101,6 +101,20 @@ $itglueScopeOk = Test-ITGlueAPIKeyPasswordScope
 $huduScopeOk = Test-HuduAPIKeyScope
 write-host "Hudu API Key Scope for Password Access: $huduScopeOk"
 write-host "IT Glue API Key Scope for Password Access: $itglueScopeOk"
+$PreflightFlexLayouts = $null
+$PreflightHuduLayouts = $null
+$PreflightFlexibleTargetLayouts = @()
+$PreflightITGConfigurations = $null
+$PreflightConfigurationTargetLayouts = @()
+$PreflightCollisionFound = $false
+
+. .\public\Check-LayoutCollisions.ps1
+
+if ($PreflightCollisionFound) {
+    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
+    exit 1
+}
+
 
 if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
     Write-Host "One or both of your API keys do not have the required scope for password access. Please update the key scopes and try again." -ForegroundColor Red
@@ -141,137 +155,6 @@ $MergedOrganizationSettings = @{Types        = @(); TargetCompany = $null;}
 $MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders = $preloadedPassFolders ?? @{}; $ITGlueSSLCerts = @(); $objectFlagMap = $objectFlagMap ?? @{};
 $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@(); 
 $ErroredItemsFolder = if ($ErroredItemsFolder) {$ErroredItemsFolder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
-$PreflightFlexLayouts = $null
-$PreflightHuduLayouts = $null
-$PreflightFlexibleTargetLayouts = @()
-$PreflightITGConfigurations = $null
-$PreflightConfigurationTargetLayouts = @()
-$PreflightCollisionFound = $false
-
-if ($true -eq $ImportFlexibleAssetLayouts -and -not ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json"))) {
-    Write-Host "Pre-flight: checking IT Glue flexible asset layout names against existing Hudu asset layouts." -ForegroundColor Green
-    $previousMigrationName = $MigrationName
-    $MigrationName = "Flexible Asset Layouts"
-    try {
-        $PreflightFlexLayoutSelect = { (Get-ITGlueFlexibleAssetTypes -page_size 1000 -page_number $i -include related_items).data }
-        $PreflightFlexLayouts = Import-ITGlueItems -ItemSelect $PreflightFlexLayoutSelect
-    } finally {
-        $MigrationName = $previousMigrationName
-    }
-
-    $PreflightFlexibleTargetLayouts = foreach ($ITGLayout in @($PreflightFlexLayouts | Where-Object { $_ })) {
-        if ([string]::IsNullOrWhiteSpace($ITGLayout.attributes.name)) { continue }
-        [pscustomobject]@{
-            SourceType = "Flexible Asset Layout"
-            SourceName = $ITGLayout.attributes.name
-            TargetName = "$($FlexibleLayoutPrefix)$($ITGLayout.attributes.name)"
-            SourceId   = $ITGLayout.id
-        }
-    }
-
-    $PreflightHuduLayouts = Get-HuduAssetLayouts
-    $layoutCollisionCheck = Test-HuduFlexibleAssetLayoutNameCollision `
-        -ITGlueFlexibleAssetLayouts $PreflightFlexLayouts `
-        -HuduAssetLayouts $PreflightHuduLayouts `
-        -FlexibleLayoutPrefix $FlexibleLayoutPrefix `
-        -HuduBaseUrl $HuduBaseDomain `
-        -Detailed
-
-    if (-not $layoutCollisionCheck.Success) {
-        $PreflightCollisionFound = $true
-        Write-Host "The following IT Glue flexible asset layout target names already exist in Hudu:" -ForegroundColor Red
-        Write-Host ($layoutCollisionCheck.Collisions |
-            Sort-Object TargetName |
-            Select-Object SourceName, TargetName, SourceId, HuduLayoutId, HuduManagementUrl |
-            Format-Table -AutoSize -Wrap |
-            Out-String -Width 4096)
-        Write-Host "Resolve these by renaming the existing Hudu asset layout(s), changing the FA prefix, or disabling flexible asset layout import before retrying." -ForegroundColor Red
-    } else {
-        Write-Host "Pre-flight layout collision check passed." -ForegroundColor Green
-    }
-}
-
-if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json"))) {
-    Write-Host "Pre-flight: checking configuration asset layout names against existing Hudu asset layouts." -ForegroundColor Green
-
-    $ConfigurationPrefix = $settings.ConPromptPrefix ?? $ConfigurationPrefix ?? ""
-    $SplitConfigurations = [bool]($settings.SplitConfigurations ?? $false)
-    $ConfigurationOption = if ($SplitConfigurations) { 2 } else { 1 }
-
-    $previousMigrationName = $MigrationName
-    $MigrationName = "Configurations"
-    try {
-        $PreflightConfigurationsSelect = { (Get-ITGlueConfigurations -page_size 1000 -page_number $i -include related_items).data }
-        $PreflightITGConfigurations = Import-ITGlueItems -ItemSelect $PreflightConfigurationsSelect
-    } finally {
-        $MigrationName = $previousMigrationName
-    }
-
-    $PreflightConfigurationTargetLayouts = if (-not $SplitConfigurations -and @($PreflightITGConfigurations).Count -gt 0) {
-        [pscustomobject]@{
-            SourceType = "Configurations"
-            SourceName = "Configurations"
-            TargetName = "$($ConfigurationPrefix)Configurations"
-            SourceId   = $null
-        }
-    } else {
-        $ITGConfigTypes = $PreflightITGConfigurations.attributes."configuration-type-name" |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Sort-Object -Unique
-
-        foreach ($ConfigType in $ITGConfigTypes) {
-            [pscustomobject]@{
-                SourceType = "Configuration Type"
-                SourceName = $ConfigType
-                TargetName = "$($ConfigurationPrefix)$($ConfigType)"
-                SourceId   = $null
-            }
-        }
-    }
-
-    $PreflightHuduLayouts = $PreflightHuduLayouts ?? $(Get-HuduAssetLayouts)
-    $configurationCollisionCheck = Test-HuduAssetLayoutTargetNameCollision `
-        -TargetLayouts $PreflightConfigurationTargetLayouts `
-        -HuduAssetLayouts $PreflightHuduLayouts `
-        -HuduBaseUrl $HuduBaseDomain `
-        -Detailed
-
-    if (-not $configurationCollisionCheck.Success) {
-        $PreflightCollisionFound = $true
-        Write-Host "The following configuration asset layout target names already exist in Hudu:" -ForegroundColor Red
-        Write-Host ($configurationCollisionCheck.Collisions |
-            Sort-Object TargetName |
-            Select-Object SourceType, SourceName, TargetName, HuduLayoutId, HuduManagementUrl |
-            Format-Table -AutoSize -Wrap |
-            Out-String -Width 4096)
-        Write-Host "Resolve these by renaming the existing Hudu asset layout(s), changing the configuration prefix, or disabling configuration import before retrying." -ForegroundColor Red
-    } else {
-        Write-Host "Pre-flight configuration layout collision check passed." -ForegroundColor Green
-    }
-}
-
-$plannedLayoutTargets = @($PreflightFlexibleTargetLayouts) + @($PreflightConfigurationTargetLayouts)
-$plannedTargetCollisions = $plannedLayoutTargets |
-    Where-Object { -not [string]::IsNullOrWhiteSpace($_.TargetName) } |
-    Group-Object { $_.TargetName.Trim().ToLowerInvariant() } |
-    Where-Object { $_.Count -gt 1 }
-
-if ($plannedTargetCollisions) {
-    $PreflightCollisionFound = $true
-    Write-Host "The following planned asset layout target names would collide during this migration:" -ForegroundColor Red
-    foreach ($collision in $plannedTargetCollisions) {
-        Write-Host ($collision.Group |
-            Select-Object SourceType, SourceName, TargetName, SourceId |
-            Format-Table -AutoSize -Wrap |
-            Out-String -Width 4096)
-    }
-    Write-Host "Resolve these by changing the FA prefix, configuration prefix, or source layout/type names before retrying." -ForegroundColor Red
-}
-
-if ($PreflightCollisionFound) {
-    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
-    exit 1
-}
 
 ############################### Companies ###############################
 
