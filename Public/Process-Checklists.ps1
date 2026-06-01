@@ -6,17 +6,16 @@ $userIndex = @{}
 $MatchedChecklists = $MatchedChecklists ?? @()
 foreach ($u in $huduUsers) {$key = "$($u.first_name) $($u.last_name)".ToLower(); $userIndex[$key] = $u;}
 
-if (-not (Get-Command -Name Get-ITGlueCheckLists -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "Get-Checklists.ps1" | Select-Object -first 1).fullname)" }
-if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "JWT-Auth.ps1" | Select-Object -first 1).fullname)" }
-$ITGAPIEndpoint = @(
-    $ITGAPIEndpoint
-    $environmentSettings.ITGAPIEndpoint
-    $settings.ITGAPIEndpoint
-) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
-if ([string]::isNullOrWhiteSpace($ITGAPIEndpoint)){ 
-    $ITGAPIEndpoint = $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
-}
-$ITGAPIEndpoint = $ITGAPIEndpoint.Trim() -replace '[\\/]+$', ''
+$checklistCommands = @(
+    'Get-ITGlueCheckLists',
+    'Get-ITGlueChecklistItems',
+    'Get-ITGlueChecklistTemplates',
+    'Get-ITGlueChecklistTemplateItems'
+)
+if ($checklistCommands | Where-Object { -not (Get-Command -Name $_ -ErrorAction SilentlyContinue) }) { . (Join-Path $PSScriptRoot "Get-Checklists.ps1") }
+if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot "JWT-Auth.ps1") }
+if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot "Init-OptionsAndLogs.ps1") }
+$ITGAPIEndpoint = Resolve-ITGlueAPIEndpoint -ITGBaseURI $ITGAPIEndpoint
 $ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
 $ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT -ITGBaseURI $ITGAPIEndpoint
 
@@ -38,7 +37,7 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
             }catch{
                 Write-host "Error getting checklist items $_"
             }
-            $ITGLueChecklists.Add($checklistEntry)
+            [void]$ITGLueChecklists.Add($checklistEntry)
         }
         $PageNum = $PageNum +1
         if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
@@ -57,7 +56,7 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
                 Write-host "Error getting checklist template items $_"
             }
 
-            $ITGLueChecklists.Add($checklistTemplate)
+            [void]$ITGLueChecklists.Add($checklistTemplate)
         }
         $PageNum = $PageNum +1
         if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}

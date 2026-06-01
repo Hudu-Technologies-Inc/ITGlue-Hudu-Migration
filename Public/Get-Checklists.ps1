@@ -341,13 +341,17 @@ function Get-ITGlueChecklistTemplateItems {
 
         [Parameter(ParameterSetName = 'index')]
         [ValidateRange(1, 1000)]
-        [Nullable[int]]$page_size = $null
+        [Nullable[int]]$page_size = $null,
+
+        [Parameter(Mandatory = $true)]
+        [String]$ITGBaseURI
     )
 
-    if (-not $ITGlue_Base_URI) {
-        $ITGlue_Base_URI = 'https://api.itglue.com'
-        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGlue_Base_URI"
+    if (-not $ITGBaseuRI) {
+        $ITGBaseuRI = 'https://api.itglue.com'
+        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGBaseuRI"
     }
+
 
     $resource_uri = '/checklist_template_tasks'
 
@@ -357,7 +361,7 @@ function Get-ITGlueChecklistTemplateItems {
     if ($page_size) { $body['page[size]'] = $page_size }
 
     $query_string = ($body.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&'
-    $uri = if ($query_string) { "$ITGlue_Base_URI$resource_uri`?$query_string" } else { "$ITGlue_Base_URI$resource_uri" }
+    $uri = if ($query_string) { "$ITGBaseuRI$resource_uri`?$query_string" } else { "$ITGBaseuRI$resource_uri" }
 
     try {
         $ITGlueAuthHeaders = @{ 'Authorization' = "Bearer $JWTAuthToken" }
