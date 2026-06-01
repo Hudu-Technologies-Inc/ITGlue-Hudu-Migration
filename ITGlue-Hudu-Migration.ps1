@@ -96,31 +96,23 @@ $CurrentVersion =  Set-ExternalModulesInitialized `
 $ScriptStartTime = $(Get-Date)
 
 
-write-host "Checking your API keys to make sure they are scoped for password access"
+write-host "Checking your API keys to make sure they are scoped for password access" -ForegroundColor DarkCyan
 $itglueScopeOk = Test-ITGlueAPIKeyPasswordScope
 $huduScopeOk = Test-HuduAPIKeyScope
 write-host "Hudu API Key Scope for Password Access: $huduScopeOk"
 write-host "IT Glue API Key Scope for Password Access: $itglueScopeOk"
-$PreflightFlexLayouts = $null
-$PreflightHuduLayouts = $null
-$PreflightFlexibleTargetLayouts = @()
-$PreflightITGConfigurations = $null
-$PreflightConfigurationTargetLayouts = @()
-$PreflightCollisionFound = $false
-
-. .\public\Check-LayoutCollisions.ps1
-
-if ($PreflightCollisionFound) {
-    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
-    exit 1
-}
-
-
 if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
     Write-Host "One or both of your API keys do not have the required scope for password access. Please update the key scopes and try again." -ForegroundColor Red
     exit 1
 }
 
+write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
+$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightCollisionFound = $false;
+. .\public\Check-LayoutCollisions.ps1
+if ($PreflightCollisionFound) {
+    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
+    exit 1
+}
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
