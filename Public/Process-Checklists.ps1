@@ -40,12 +40,12 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     $PageNum = 0
     Write-Host "Retrieving all checklist templates from ITGlue"
     while ($true) {
-        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint)
+        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint).data
         foreach ($checklistTemplate in $ITGlueRawChecklists | Where-Object {$_}) {
             $ITGChecklistItems=$null
             try {
                 $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $true -Force
-                $ITGChecklistItems=$(Get-ITGlueChecklistTemplateItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistTemplate.id -ITGBaseURI $ITGAPIEndpoint)
+                $ITGChecklistItems=$(Get-ITGlueChecklistItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistTemplate.id -ITGBaseURI $ITGAPIEndpoint)
                 $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
             }catch{
                 Write-host "Error getting checklist template items $_"
@@ -80,6 +80,7 @@ foreach ($checklist in $ITGLueChecklists) {
     $HuduProcedureTasks = @()
     $procedureRequest = @{
         Name = [System.Net.WebUtility]::UrlDecode("$($checklist.attributes.name ?? 'Unnamed Procedure')")
+        CompanyTemplate = $checklist.IsTemplate ?? $false
         Description =  $($($checklist.attributes.description ?? "No description found for procedure.") + "`n" + 
             "Imported from ITGlue. <a href='$($checklist.attributes.'resource-url')'>itglue checklist url</a>")
     }
