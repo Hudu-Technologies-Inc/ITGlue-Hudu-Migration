@@ -6,16 +6,16 @@ $userIndex = @{}
 $MatchedChecklists = $MatchedChecklists ?? @()
 foreach ($u in $huduUsers) {$key = "$($u.first_name) $($u.last_name)".ToLower(); $userIndex[$key] = $u;}
 
-$checklistCommands = @(
-    'Get-ITGlueCheckLists',
-    'Get-ITGlueChecklistItems',
-    'Get-ITGlueChecklistTemplates',
-    'Get-ITGlueChecklistTemplateItems'
-)
-if ($checklistCommands | Where-Object { -not (Get-Command -Name $_ -ErrorAction SilentlyContinue) }) { . (Join-Path $PSScriptRoot "Get-Checklists.ps1") }
-if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot "JWT-Auth.ps1") }
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot "Init-OptionsAndLogs.ps1") }
-$ITGAPIEndpoint = Resolve-ITGlueAPIEndpoint -ITGBaseURI $ITGAPIEndpoint
+if (-not (Get-Command -Name Get-ITGlueCheckLists -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "Get-Checklists.ps1" | Select-Object -first 1).fullname)" }
+if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "JWT-Auth.ps1" | Select-Object -first 1).fullname)" }
+
+
+$ITGAPIEndpoint = @($ITGBaseURI,$ITGAPIEndpoint, $settings.ITGAPIEndpoint) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+if ([string]::IsNullOrWhiteSpace($ITGAPIEndpoint)) {
+    $ITGAPIEndpoint = Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region"
+}
+$ITGAPIEndpoint= ($ITGAPIEndpoint.Trim() -replace '[\\/]+$', '')
+
 $ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
 $ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT -ITGBaseURI $ITGAPIEndpoint
 
@@ -37,7 +37,7 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
             }catch{
                 Write-host "Error getting checklist items $_"
             }
-            [void]$ITGLueChecklists.Add($checklistEntry)
+            $ITGLueChecklists.Add($checklistEntry)
         }
         $PageNum = $PageNum +1
         if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
@@ -45,18 +45,18 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     $PageNum = 0
     Write-Host "Retrieving all checklist templates from ITGlue"
     while ($true) {
-        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint)
+        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint).data
         foreach ($checklistTemplate in $ITGlueRawChecklists | Where-Object {$_}) {
             $ITGChecklistItems=$null
             try {
                 $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $true -Force
-                $ITGChecklistItems=$(Get-ITGlueChecklistTemplateItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistTemplate.id -ITGBaseURI $ITGAPIEndpoint)
+                $ITGChecklistItems=$(Get-ITGlueChecklistItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistTemplate.id -ITGBaseURI $ITGAPIEndpoint)
                 $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
             }catch{
                 Write-host "Error getting checklist template items $_"
             }
 
-            [void]$ITGLueChecklists.Add($checklistTemplate)
+            $ITGLueChecklists.Add($checklistTemplate)
         }
         $PageNum = $PageNum +1
         if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
@@ -85,6 +85,7 @@ foreach ($checklist in $ITGLueChecklists) {
     $HuduProcedureTasks = @()
     $procedureRequest = @{
         Name = [System.Net.WebUtility]::UrlDecode("$($checklist.attributes.name ?? 'Unnamed Procedure')")
+        CompanyTemplate = $checklist.IsTemplate ?? $false
         Description =  $($($checklist.attributes.description ?? "No description found for procedure.") + "`n" + 
             "Imported from ITGlue. <a href='$($checklist.attributes.'resource-url')'>itglue checklist url</a>")
     }
