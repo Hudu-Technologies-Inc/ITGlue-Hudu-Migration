@@ -1484,7 +1484,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
-        foreach ($UpdateAsset in $MatchedAssets) {
+        
+        foreach ($UpdateAsset in $MatchedAssets | where-object {$_.ITGObject.attributes.archived -ne $true}) {
             Write-Host "Populating $($UpdateAsset.Name)"
 		
             $AssetFields = @{ 

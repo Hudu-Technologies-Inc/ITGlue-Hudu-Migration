@@ -38,6 +38,56 @@ param(
     return ConvertTo-AttachmentUrlHashtable -MapObject $MapObject
 }
 
+function Get-AttachmentUrlReplacementCandidates {
+param(
+    [string]$OriginalUrl
+)
+    $Candidates = @($OriginalUrl)
+
+    try {
+        $ParsedUrl = [Uri]$OriginalUrl
+        if ($ParsedUrl.IsAbsoluteUri) {
+            $Candidates += $ParsedUrl.PathAndQuery
+
+            if ($ParsedUrl.AbsolutePath -match '/(?:files|attachments)/(?<AttachmentId>\d{1,20})(?:/|$)') {
+                $AttachmentId = $Matches.AttachmentId
+                $AttachmentPaths = @(
+                    "/attachments/$AttachmentId"
+                    "/attachments/$AttachmentId`?preview=1"
+                )
+
+                foreach ($AttachmentPath in $AttachmentPaths) {
+                    $Candidates += $AttachmentPath
+                    $Candidates += "$($ParsedUrl.GetLeftPart([UriPartial]::Authority))$AttachmentPath"
+                }
+            }
+        }
+        elseif ($OriginalUrl -match '/(?:files|attachments)/(?<AttachmentId>\d{1,20})(?=$|[/?#])') {
+            $AttachmentId = $Matches.AttachmentId
+            $Candidates += "/attachments/$AttachmentId"
+            $Candidates += "/attachments/$AttachmentId`?preview=1"
+        }
+    }
+    catch {}
+
+    foreach ($Candidate in @($Candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique | Sort-Object Length -Descending)) {
+        [pscustomobject]@{
+            Url           = $Candidate
+            IsHtmlEncoded = $false
+            IsRelative    = $Candidate.StartsWith('/')
+        }
+
+        $HtmlEncodedCandidate = [System.Net.WebUtility]::HtmlEncode($Candidate)
+        if ($HtmlEncodedCandidate -and $HtmlEncodedCandidate -ne $Candidate) {
+            [pscustomobject]@{
+                Url           = $HtmlEncodedCandidate
+                IsHtmlEncoded = $true
+                IsRelative    = $Candidate.StartsWith('/')
+            }
+        }
+    }
+}
+
 function Update-ContentWithAttachmentUrlMap {
 param(
     [AllowEmptyString()]
@@ -50,23 +100,27 @@ param(
     foreach ($OriginalUrl in @($UrlMap.Keys | Sort-Object Length -Descending)) {
         if ([string]::IsNullOrWhiteSpace($OriginalUrl) -or [string]::IsNullOrWhiteSpace($UrlMap[$OriginalUrl])) { continue }
 
-        $Candidates = @($OriginalUrl)
-        $HtmlEncodedOriginalUrl = [System.Net.WebUtility]::HtmlEncode($OriginalUrl)
-        if ($HtmlEncodedOriginalUrl -and $HtmlEncodedOriginalUrl -ne $OriginalUrl) {
-            $Candidates += $HtmlEncodedOriginalUrl
-        }
+        foreach ($Candidate in @(Get-AttachmentUrlReplacementCandidates -OriginalUrl $OriginalUrl)) {
+            $CandidateUrl = $Candidate.Url
+            $CandidatePattern = [regex]::Escape($CandidateUrl)
+            if ($Candidate.IsRelative) {
+                $CandidatePattern = "(?<![A-Za-z0-9._~%+-])$CandidatePattern"
+            }
 
-        foreach ($CandidateUrl in $Candidates | Select-Object -Unique) {
-            $Count = [regex]::Matches($NewContent, [regex]::Escape($CandidateUrl)).Count
+            $Count = [regex]::Matches($NewContent, $CandidatePattern).Count
             if ($Count -lt 1) { continue }
 
-            $ReplacementUrl = if ($CandidateUrl -eq $HtmlEncodedOriginalUrl) {
+            $ReplacementUrl = if ($Candidate.IsHtmlEncoded) {
                 [System.Net.WebUtility]::HtmlEncode($UrlMap[$OriginalUrl])
             } else {
                 $UrlMap[$OriginalUrl]
             }
 
-            $NewContent = $NewContent.Replace($CandidateUrl, $ReplacementUrl)
+            $NewContent = [regex]::Replace(
+                $NewContent,
+                $CandidatePattern,
+                [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $ReplacementUrl }
+            )
             $Replacements += [pscustomobject]@{
                 OriginalUrl    = $OriginalUrl
                 MatchedUrl     = $CandidateUrl

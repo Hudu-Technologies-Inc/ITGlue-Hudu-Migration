@@ -96,6 +96,11 @@ function Import-Items {
         if (($importOption -eq "A") -or ($importOption -eq "S") ) {		
 	
             foreach ($company in $CompaniesToMigrate) {
+                if ($true -eq $itgimport.attributes.archived){
+                    write-host "SKIPPING ARCHIVED IMPORT: $($itgimport.attributes.name) is archived in ITGlue and is being skipped for migration" -ForegroundColor Yellow
+                    continue
+                }
+
                 Write-Host "Migrating $($company.CompanyName) $MigrationName"
 	
                 foreach ($unmatchedImport in ($MatchedImports | Where-Object { $_.Matched -eq $false -and $company.ITGCompanyObject.id -eq $_."ITGObject".attributes."organization-id" })) {
