@@ -96,10 +96,10 @@ function Import-Items {
         if (($importOption -eq "A") -or ($importOption -eq "S") ) {		
 	
             foreach ($company in $CompaniesToMigrate) {
-                if ($true -eq $itgimport.attributes.archived){
-                    write-host "SKIPPING ARCHIVED IMPORT: $($itgimport.attributes.name) is archived in ITGlue and is being skipped for migration" -ForegroundColor Yellow
-                    continue
-                }
+                # if ($true -eq $itgimport.attributes.archived){
+                #     write-host "SKIPPING ARCHIVED IMPORT: $($itgimport.attributes.name) is archived in ITGlue and is being skipped for migration" -ForegroundColor Yellow
+                #     continue
+                # }
 
                 Write-Host "Migrating $($company.CompanyName) $MigrationName"
 	
@@ -110,7 +110,7 @@ function Import-Items {
 					$AssetFields.'ITG Date Created' = $(Get-CoercedDate $unmatchedImport."ITGObject".attributes.'created-at')
 					$AssetFields.'ITG Date Last Updated' = $(Get-CoercedDate $unmatchedImport."ITGObject".attributes.'updated-at')
 
-                    Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($AssetFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
+                    Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($Assadd etFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
 	
                     Write-Host "Starting $($unmatchedImport.Name)"
 	
