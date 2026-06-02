@@ -27,6 +27,7 @@ if (-not ($FirstTimeLoad -eq 1)) {
 # Attachments Path
 $AttachmentsPath = (Join-Path -Path $ITGLueExportPath -ChildPath "attachments")
 $AttachmentUrlMap = $AttachmentUrlMap ?? @{}
+$ITGlueAttachmentCache = @{}
 
 ###################### Initial Setup and Confirmations ###############################
 Write-Host "#######################################################" -ForegroundColor Yellow
@@ -72,24 +73,24 @@ param(
 
 function Add-AttachmentUrlMapEntry {
 param(
-    [string]$OriginalUrl,
+    [string[]]$OriginalUrl,
     [string]$HuduUrl
 )
-    if ([string]::IsNullOrWhiteSpace($OriginalUrl) -or [string]::IsNullOrWhiteSpace($HuduUrl)) { return }
+    if (-not $OriginalUrl -or [string]::IsNullOrWhiteSpace($HuduUrl)) { return }
 
-    $script:AttachmentUrlMap[$OriginalUrl] = $HuduUrl
+    foreach ($Url in @($OriginalUrl | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        $script:AttachmentUrlMap[$Url] = $HuduUrl
+    }
 }
 
-function Get-OriginalAttachmentUrl {
+function Get-AttachmentPathInfo {
 param(
-    [System.IO.FileInfo]$FoundFile,
-    $FoundAsset
+    [System.IO.FileInfo]$FoundFile
 )
     $AttachmentsRoot = (Resolve-Path $AttachmentsPath).Path.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     $RelativePath = $FoundFile.FullName.Substring($AttachmentsRoot.Length).TrimStart([char[]]@('\', '/'))
     $PathParts = @($RelativePath -split '[\\/]')
     if ($PathParts.Count -lt 3) { return $null }
-    if ([string]::IsNullOrWhiteSpace($ITGURL)) { return $null }
 
     $AttachmentType = $PathParts[0]
     $ITGID = $PathParts[1]
@@ -99,6 +100,22 @@ param(
         'configurations' { 'configurations' }
         default { 'assets' }
     }
+
+    [pscustomobject]@{
+        AttachmentType = $AttachmentType
+        ITGID          = $ITGID
+        ITGEntityType  = $ITGEntityType
+        RelativePath   = $RelativePath
+    }
+}
+
+function Get-OriginalAttachmentUrl {
+param(
+    [System.IO.FileInfo]$FoundFile,
+    $FoundAsset
+)
+    $PathInfo = Get-AttachmentPathInfo -FoundFile $FoundFile
+    if (-not $PathInfo -or [string]::IsNullOrWhiteSpace($ITGURL)) { return $null }
 
     $CompanyId = $FoundAsset.Company.ITGID ??
         $FoundAsset.Company.id ??
@@ -113,10 +130,145 @@ param(
     }
 
     if ($CompanyId) {
-        return "$($ITGURL.TrimEnd('/'))/$CompanyId/$ITGEntityType/$ITGID/files/$FileUrlSegment"
+        return "$($ITGURL.TrimEnd('/'))/$CompanyId/$($PathInfo.ITGEntityType)/$($PathInfo.ITGID)/files/$FileUrlSegment"
     }
 
-    return "$($ITGURL.TrimEnd('/'))/$ITGEntityType/$ITGID/files/$FileUrlSegment"
+    return "$($ITGURL.TrimEnd('/'))/$($PathInfo.ITGEntityType)/$($PathInfo.ITGID)/files/$FileUrlSegment"
+}
+
+function Get-ITGlueAttachmentResourceType {
+param(
+    [string]$AttachmentType,
+    [string]$UploadType
+)
+    switch ($AttachmentType) {
+        'documents' { 'documents' }
+        'configurations' { 'configurations' }
+        'contacts' { 'contacts' }
+        'locations' { 'locations' }
+        'passwords' { 'passwords' }
+        'websites' { 'domains' }
+        default {
+            if ($UploadType -eq 'AssetPassword') { 'passwords' }
+            elseif ($UploadType -eq 'Website') { 'domains' }
+            else { 'flexible_assets' }
+        }
+    }
+}
+
+function Normalize-ITGlueAttachmentFilename {
+param(
+    [string]$Name
+)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
+
+    $Text = [IO.Path]::GetFileName($Name).Normalize([Text.NormalizationForm]::FormD)
+    $Chars = $Text.ToCharArray() | Where-Object {
+        [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark
+    }
+
+    $Text = (-join $Chars).ToLowerInvariant()
+    $Text = $Text -replace '&', ' and '
+    $Text = $Text -replace '[^a-z0-9.]+', ' '
+    $Text = $Text.Trim()
+    $Text = $Text -replace '\s+', ' '
+
+    return $Text
+}
+
+function Get-ITGlueAttachmentName {
+param(
+    $Attachment
+)
+    @(
+        $Attachment.attributes.'file-name'
+        $Attachment.attributes.file_name
+        $Attachment.attributes.name
+        $Attachment.attributes.attachment.file_name
+        $Attachment.attributes.attachment.'file-name'
+        $Attachment.attributes.'attachment-file-name'
+        $Attachment.attributes.'attachment-file_name'
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+}
+
+function Get-ITGlueAttachmentsForResource {
+param(
+    [string]$ResourceType,
+    [string]$ResourceId
+)
+    if ([string]::IsNullOrWhiteSpace($ResourceType) -or [string]::IsNullOrWhiteSpace($ResourceId)) { return @() }
+    if ([string]::IsNullOrWhiteSpace($ITGKey)) { return @() }
+
+    $CacheKey = "$ResourceType/$ResourceId"
+    if ($script:ITGlueAttachmentCache.ContainsKey($CacheKey)) { return $script:ITGlueAttachmentCache[$CacheKey] }
+
+    $ApiBase = @($ITGAPIEndpoint, $settings.ITGAPIEndpoint, $environmentSettings.ITGAPIEndpoint) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($ApiBase)) { return @() }
+
+    $ApiBase = $ApiBase.TrimEnd('/')
+    $Uri = "$ApiBase/$ResourceType/$ResourceId/relationships/attachments?page%5Bsize%5D=1000"
+
+    try {
+        $Response = Invoke-RestMethod -Method GET -Uri $Uri -Headers @{ 'x-api-key' = $ITGKey } -ErrorAction Stop
+        $Attachments = @($Response.data)
+    }
+    catch {
+        Write-Warning "Unable to retrieve IT Glue attachments for $ResourceType/$ResourceId. Attachment URL aliases may be incomplete. $($_.Exception.Message)"
+        $Attachments = @()
+    }
+
+    $script:ITGlueAttachmentCache[$CacheKey] = $Attachments
+    return $Attachments
+}
+
+function Find-ITGlueAttachmentForFile {
+param(
+    [System.IO.FileInfo]$FoundFile,
+    $FoundAsset,
+    [string]$UploadType
+)
+    $PathInfo = Get-AttachmentPathInfo -FoundFile $FoundFile
+    if (-not $PathInfo) { return $null }
+
+    $ResourceType = Get-ITGlueAttachmentResourceType -AttachmentType $PathInfo.AttachmentType -UploadType $UploadType
+    $Attachments = Get-ITGlueAttachmentsForResource -ResourceType $ResourceType -ResourceId $PathInfo.ITGID
+    if (-not $Attachments -or $Attachments.Count -lt 1) { return $null }
+
+    $ExpectedName = Normalize-ITGlueAttachmentFilename -Name $FoundFile.Name
+    $ExpectedStem = Normalize-ITGlueAttachmentFilename -Name ([IO.Path]::GetFileNameWithoutExtension($FoundFile.Name))
+
+    foreach ($Attachment in $Attachments) {
+        $AttachmentName = Get-ITGlueAttachmentName -Attachment $Attachment
+        $NormalizedName = Normalize-ITGlueAttachmentFilename -Name $AttachmentName
+        $NormalizedStem = Normalize-ITGlueAttachmentFilename -Name ([IO.Path]::GetFileNameWithoutExtension($AttachmentName))
+
+        if ($ExpectedName -and $ExpectedName -eq $NormalizedName) { return $Attachment }
+        if ($ExpectedStem -and $ExpectedStem -eq $NormalizedStem) { return $Attachment }
+    }
+
+    return $null
+}
+
+function Get-ITGlueAttachmentUrlAliases {
+param(
+    $Attachment
+)
+    if (-not $Attachment -or [string]::IsNullOrWhiteSpace($Attachment.id) -or [string]::IsNullOrWhiteSpace($ITGURL)) { return @() }
+
+    $AttachmentId = $Attachment.id
+    $BaseUrl = $ITGURL.TrimEnd('/')
+
+    @(
+        "$BaseUrl/attachments/$AttachmentId"
+        "$BaseUrl/attachments/$AttachmentId`?preview=1"
+        "$BaseUrl/attachments/$AttachmentId`?preview=true"
+        "/attachments/$AttachmentId"
+        "/attachments/$AttachmentId`?preview=1"
+        "/attachments/$AttachmentId`?preview=true"
+    )
 }
 
 function Save-AttachmentUrlMap {
@@ -156,10 +308,15 @@ param(
                     $HuduUpload = New-HuduUpload -FilePath $FoundFile.fullname -uploadable_id $FoundAsset.HuduID -uploadable_type $UploadType
                     $FullHuduUploadUrl = Resolve-HuduUploadUrl -Upload $HuduUpload
                     $OriginalAttachmentUrl = Get-OriginalAttachmentUrl -FoundFile $FoundFile -FoundAsset $FoundAsset
-                    Add-AttachmentUrlMapEntry -OriginalUrl $OriginalAttachmentUrl -HuduUrl $FullHuduUploadUrl
+                    $ITGlueAttachment = Find-ITGlueAttachmentForFile -FoundFile $FoundFile -FoundAsset $FoundAsset -UploadType $UploadType
+                    $OriginalAttachmentUrls = @($OriginalAttachmentUrl) + @(Get-ITGlueAttachmentUrlAliases -Attachment $ITGlueAttachment)
+                    $OriginalAttachmentUrls = @($OriginalAttachmentUrls | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+                    Add-AttachmentUrlMapEntry -OriginalUrl $OriginalAttachmentUrls -HuduUrl $FullHuduUploadUrl
                     [PSCustomObject]@{
                         URL  = $FullHuduUploadUrl
                         OriginalAttachmentUrl = $OriginalAttachmentUrl
+                        OriginalAttachmentUrls = $OriginalAttachmentUrls
+                        ITGAttachmentID = $ITGlueAttachment.id
                         Uploadable_ID = $FoundAsset.HuduID
                         Uploadable_Type = $UploadType
                         FilePath  = $FoundFile.fullname

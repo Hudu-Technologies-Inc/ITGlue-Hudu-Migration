@@ -54,6 +54,7 @@ param(
                 $AttachmentPaths = @(
                     "/attachments/$AttachmentId"
                     "/attachments/$AttachmentId`?preview=1"
+                    "/attachments/$AttachmentId`?preview=true"
                 )
 
                 foreach ($AttachmentPath in $AttachmentPaths) {
@@ -66,6 +67,7 @@ param(
             $AttachmentId = $Matches.AttachmentId
             $Candidates += "/attachments/$AttachmentId"
             $Candidates += "/attachments/$AttachmentId`?preview=1"
+            $Candidates += "/attachments/$AttachmentId`?preview=true"
         }
     }
     catch {}
@@ -88,6 +90,21 @@ param(
     }
 }
 
+function Get-ITGlueAttachmentUrls {
+param(
+    [AllowEmptyString()]
+    [string]$Content
+)
+    if ([string]::IsNullOrWhiteSpace($Content)) { return @() }
+
+    $AttachmentPattern = '(?:https?://[^"''\s<>]+)?/attachments/\d{1,20}(?:\?preview=(?:1|true))?'
+    @(
+        [regex]::Matches($Content, $AttachmentPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase) |
+            ForEach-Object { $_.Value } |
+            Select-Object -Unique
+    )
+}
+
 function Update-ContentWithAttachmentUrlMap {
 param(
     [AllowEmptyString()]
@@ -105,6 +122,9 @@ param(
             $CandidatePattern = [regex]::Escape($CandidateUrl)
             if ($Candidate.IsRelative) {
                 $CandidatePattern = "(?<![A-Za-z0-9._~%+-])$CandidatePattern"
+            }
+            if ($CandidateUrl -notmatch '\?' -and $CandidateUrl -match '/(?:files|attachments)/\d{1,20}$') {
+                $CandidatePattern = "$CandidatePattern(?![/?#])"
             }
 
             $Count = [regex]::Matches($NewContent, $CandidatePattern).Count
@@ -172,6 +192,19 @@ param(
 
         $Updated = Update-ContentWithAttachmentUrlMap -Content $Article.content -UrlMap $UrlMap
         if (-not $Updated.Changed) {
+            $UnresolvedAttachmentUrls = Get-ITGlueAttachmentUrls -Content $Article.content
+            if ($UnresolvedAttachmentUrls.Count -gt 0) {
+                [pscustomobject]@{
+                    Status                   = 'unresolved'
+                    ArticleId                = $Article.id
+                    ArticleName              = $Article.name
+                    Reason                   = 'attachment URLs found but no AttachmentUrlMap match'
+                    UnresolvedAttachmentUrls = $UnresolvedAttachmentUrls
+                    Replacements             = @()
+                }
+                continue
+            }
+
             [pscustomobject]@{
                 Status       = 'clean'
                 ArticleId    = $Article.id
