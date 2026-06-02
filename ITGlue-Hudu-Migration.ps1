@@ -35,9 +35,6 @@ if ((get-host).version.major -ne 7) {
 # Select Item Import Mode
 . $PSScriptRoot\Private\Get-ImportMode.ps1
 
-# Get Configurations Option
-. $PSScriptRoot\Private\Get-ConfigurationsImportMode.ps1
-
 # Get Flexible Asset Layout Option
 . $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1
 
@@ -92,24 +89,43 @@ Write-Host $LiabilityWarning -ForegroundColor Red
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
 
 $CurrentVersion =  Set-ExternalModulesInitialized `
-        -RequiredHuduVersion ([version]"2.39.6") `
+        -RequiredHuduVersion ([version]"2.42.0") `
         -DisallowedVersions @([version]"2.37.0") `
         -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) `
         -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 $ScriptStartTime = $(Get-Date)
 
 
-write-host "Checking your API keys to make sure they are scoped for password access"
+write-host "Checking your API keys to make sure they are scoped for password access" -ForegroundColor DarkCyan
 $itglueScopeOk = Test-ITGlueAPIKeyPasswordScope
 $huduScopeOk = Test-HuduAPIKeyScope
 write-host "Hudu API Key Scope for Password Access: $huduScopeOk"
 write-host "IT Glue API Key Scope for Password Access: $itglueScopeOk"
-
 if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
     Write-Host "One or both of your API keys do not have the required scope for password access. Please update the key scopes and try again." -ForegroundColor Red
     exit 1
 }
 
+write-host "Checking available disk space for migration artifacts" -ForegroundColor DarkCyan
+$preflightExportPath = $settings.ITGLueExportPath ?? $environmentSettings.ITGLueExportPath ?? $ITGLueExportPath
+$preflightTargetPath = $settings.MigrationLogs ?? $environmentSettings.MigrationLogs ?? $MigrationLogs ?? $preflightExportPath
+$diskSpaceCheck = Test-ITGlueExportDiskSpace -ExportPath $preflightExportPath -TargetPath $preflightTargetPath -BufferPercent 15 -Detailed
+Write-Host $diskSpaceCheck.Message -ForegroundColor $(if ($diskSpaceCheck.Success) { 'Green' } else { 'Red' })
+if (-not $diskSpaceCheck.Success) {
+    Write-Host "Exiting before making migration changes. Free up space on the target drive or move MigrationLogs to a drive with enough space." -ForegroundColor Red
+    exit 1
+}
+if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
+    Write-Warning "Could not read $($diskSpaceCheck.EnumerationErrorCount) item(s) while estimating export size. Disk space estimate may be low."
+}
+
+write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
+$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightCollisionFound = $false;
+. .\public\Check-LayoutCollisions.ps1
+if ($PreflightCollisionFound) {
+    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
+    exit 1
+}
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
@@ -619,7 +635,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 ############################### Configurations ###############################
 	
 $ConfigMigrationName = "Configurations"
-$ConfigImportAssetLayoutName = "Configurations"
+$ConfigImportAssetLayoutName = "$($ConfigurationPrefix)Configurations"
 	
 #Check for Configuration Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")) {
@@ -629,8 +645,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
     #Get Configurations from IT Glue
     Write-Host "Fetching Configurations from IT Glue" -ForegroundColor Green
-    $ConfigurationsSelect = { (Get-ITGlueConfigurations -page_size 1000 -page_number $i -include related_items).data }
-    $ITGConfigurations = Import-ITGlueItems -ItemSelect $ConfigurationsSelect
+    if ($PreflightITGConfigurations) {
+        $ITGConfigurations = $PreflightITGConfigurations
+        Write-Host "Using IT Glue configurations retrieved during pre-flight." -ForegroundColor DarkGray
+    } else {
+        $ConfigurationsSelect = { (Get-ITGlueConfigurations -page_size 1000 -page_number $i -include related_items).data }
+        $ITGConfigurations = Import-ITGlueItems -ItemSelect $ConfigurationsSelect
+    }
     $ITGConfigurations = $ITGConfigurations |select @{n='HuduCompanyId';e={ $ITGCompaniesHashTable["$($_.attributes.'organization-id')"].huduid}},*
     if ($ScopedMigration) {
         $OriginalConfigurationCount = $($ITGConfigurations.count)
@@ -857,14 +878,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         } }
     }
 
-    # First we need to decide on if we are going to do one Asset type or many
-    Write-Host "Hudu does not have the same standard configuration type as IT Glue."
-    Write-Host "With the migration there are a few options of how to approach this"
-    Write-Host "1) The script can create a new Hudu Asset Layout for all configurations to go into, like how IT Glue works"
-    Write-Host "2) The script can create an Asset layout for each in use Configuration Type you have in IT Glue and then split up configurations into them"
-    Write-Host "3) The script can prompt for each Configuration type you have, asking you for the new Hudu Asset Layout to map to, this will allow you to have a mix of 1 and 2"
-
-    $ConfigurationOption = Get-ConfigurationsImportMode
+    $ConfigurationPrefix = $settings.ConPromptPrefix ?? $ConfigurationPrefix ?? ""
+    $SplitConfigurations = [bool]($settings.SplitConfigurations ?? $false)
+    $ConfigurationOption = if ($SplitConfigurations) { 2 } else { 1 }
+    Write-Host "Using configuration import mode $ConfigurationOption from settings.SplitConfigurations=$SplitConfigurations." -ForegroundColor DarkGray
 
     # All Configurations to 1 Layout
     if ($ConfigurationOption -eq 1) {
@@ -920,47 +937,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
         }
 
-	
-	
-    } elseif ($ConfigurationOption -eq 3) {
-        $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
-        $MatchedConfigurations = New-Object System.Collections.ArrayList
-
-        foreach ($ConfigType in $ITGConfigTypes) {
-            Write-Host ""
-            Write-Host "Processing $ConfigType"
-            Write-Host "Please provide the Asset Layout name for $ConfigType in Hudu." -foregroundcolor green
-            $ConfigImportAssetLayoutName = $(Write-TimedMessage -Timeout 12 -Message "Please enter layout name" -DefaultResponse $ConfigType)
-		
-
-            $ParsedITGConfigs = $ITGConfigurations | Where-Object { $_.attributes."configuration-type-name" -eq $ConfigType }
-
-            $ConfigMigrationName = $ConfigImportAssetLayoutName
-			
-            $ConfigImportSplat = @{
-                AssetFieldsMap        = $ConfigAssetFieldsMap
-                AssetLayoutFields     = $ConfigAssetLayoutFields
-                ImportIcon            = $ConfigImportIcon
-                ImportEnabled         = $ConfigImportEnabled
-                HuduItemFilter        = $ConfigHuduItemFilter
-                ImportAssetLayoutName = $ConfigImportAssetLayoutName
-                ItemSelect            = $ConfigItemSelect
-                MigrationName         = $ConfigMigrationName
-                ITGImports            = $ParsedITGConfigs
-            }
-	
-            $ReturnedConfigurations = Import-Items @ConfigImportSplat
-            if (($ReturnedConfigurations | measure-object).count -gt 1) {
-                $MatchedConfigurations.addrange($ReturnedConfigurations)
-            } else {
-                $MatchedConfigurations.add($ReturnedConfigurations)
-            }
-        }
-
-
-
     } else {
-        Write-Error "This should never have happened some how you selected something other than 1, 2 or 3 :/"
+        Write-Error "This should never have happened somehow you selected something other than 1 or 2."
         exit 1
     }
 
@@ -1145,10 +1123,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     $ConfigImportAssetLayoutName = ($MatchedConfigurations.HuduObject | Select-Object name, asset_type | group-object -property asset_type | sort-object count -descending | Select-Object -first 1).name
 
     Write-Host "Fetching Flexible Asset Layouts from IT Glue" -ForegroundColor Green
-    $FlexLayoutSelect = { (Get-ITGlueFlexibleAssetTypes -page_size 1000 -page_number $i -include related_items).data }
-    $FlexLayouts = Import-ITGlueItems -ItemSelect $FlexLayoutSelect
+    if ($PreflightFlexLayouts) {
+        $FlexLayouts = $PreflightFlexLayouts
+        Write-Host "Using IT Glue flexible asset layouts retrieved during pre-flight." -ForegroundColor DarkGray
+    } else {
+        $FlexLayoutSelect = { (Get-ITGlueFlexibleAssetTypes -page_size 1000 -page_number $i -include related_items).data }
+        $FlexLayouts = Import-ITGlueItems -ItemSelect $FlexLayoutSelect
+    }
 
-    $HuduLayouts = Get-HuduAssetLayouts
+    $HuduLayouts = if ($PreflightHuduLayouts) { $PreflightHuduLayouts } else { Get-HuduAssetLayouts }
 
     Write-Host "The script will now migrate IT Glue Flexible Asset Layouts to Hudu"
     Write-Host "Please select the option you would like"
@@ -1260,12 +1243,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 }
                 $NewIcon = $CurrentIcon
             }
-            # account for layout-collision between split configurations and flexible asset layouts [when either not prefixed]
-            if (-not $(Get-HuduAssetLayouts | where-object {$_.name -ieq "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)"} )){
-                $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)" -icon "fas fa-$NewIcon" -color "#6136ff" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
-            } else {
-                $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)-Assets" -icon "fas fa-$NewIcon" -color "#6136ff" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
+            $TargetLayoutName = "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)"
+            # Defense-in-depth in case Hudu layout state changed after the pre-flight check.
+            if ($(Get-HuduAssetLayouts | Where-Object { $_.name -ieq $TargetLayoutName })) {
+                Write-Host "Flexible asset layout '$TargetLayoutName' now collides with an existing Hudu asset layout. Exiting instead of creating a renamed layout." -ForegroundColor Red
+                exit 1
             }
+            $NewLayout = New-HuduAssetLayout -name $TargetLayoutName -icon "fas fa-$NewIcon" -color "#6136ff" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields
 
             $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
 
