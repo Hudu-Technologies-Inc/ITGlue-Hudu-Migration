@@ -45,7 +45,7 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     $PageNum = 0
     Write-Host "Retrieving all checklist templates from ITGlue"
     while ($true) {
-        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint).data
+        $ITGlueRawChecklists = $(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint)
         foreach ($checklistTemplate in $ITGlueRawChecklists | Where-Object {$_}) {
             $ITGChecklistItems=$null
             try {
