@@ -110,8 +110,8 @@ function Import-Items {
 					$AssetFields.'ITG Date Created' = $(Get-CoercedDate $unmatchedImport."ITGObject".attributes.'created-at')
 					$AssetFields.'ITG Date Last Updated' = $(Get-CoercedDate $unmatchedImport."ITGObject".attributes.'updated-at')
 
-                    Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($Assadd etFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
-	
+                    Confirm-Import -ImportObjectName "$($unmatchedImport.Name): $($AssetFields | Out-String)" -ImportObject $unmatchedImport -ImportSetting $ImportOption
+                    	
                     Write-Host "Starting $($unmatchedImport.Name)"
 	
                     $HuduAssetName = $($unmatchedImport.Name)
