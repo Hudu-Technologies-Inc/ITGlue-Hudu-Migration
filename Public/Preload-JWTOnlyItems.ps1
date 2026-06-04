@@ -25,7 +25,7 @@ try {
 # ITGlue checklists are one-off runs with due dates/assignees. ITGlue checklist templates
 # are reusable definitions and use the separate /checklist_template_tasks endpoint.
 #$MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
-    $MatchedChecklists = @(); $ITGlueRawChecklists = @(); $ITglueChecklists = [System.Collections.ArrayList]@();
+$MatchedChecklists = @(); $ITGlueRawChecklists = @(); $ITglueChecklists = [System.Collections.ArrayList]@();
 
 $PageSize = 200
 $PageNum = 0

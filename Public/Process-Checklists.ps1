@@ -50,9 +50,8 @@ $SetHuduProcedureTaskCommand = Get-Command -Name Set-HuduProcedureTask -ErrorAct
 
 if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     Write-Host "No preloaded checklists found. attempting second-line retrieval"
-    # $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
-
-    $MatchedChecklists = @(); $ITGlueRawChecklists = @(); $ITglueChecklists = [System.Collections.ArrayList]@();
+    $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
+    # $MatchedChecklists = @(); $ITGlueRawChecklists = @(); $ITglueChecklists = [System.Collections.ArrayList]@();
     $PageSize = 200
     $PageNum = 0
     while ($true) {
