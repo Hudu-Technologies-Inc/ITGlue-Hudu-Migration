@@ -2385,24 +2385,32 @@ $Duration = New-TimeSpan -Start $ScriptStartTime -End $CompletedAt
 $CompletedAt = Get-Date
 $Duration = $CompletedAt - $ScriptStartTime
 
+$MatchedChecklistsForSummary = @($MatchedChecklists | Where-Object { $_ })
+$GlobalProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedure -and -not $_.HuduProcedure.company_id }).Count
+$CompanyProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedure -and $_.HuduProcedure.company_id }).Count
+$ProcessRunsMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedureRun -and $_.HuduProcedureRun.id }).Count
+
 $migratedItems = [ordered]@{
     'Companies Migrated'                         = Get-SafeCount $MatchedCompanies
     'Locations Migrated'                         = Get-SafeCount $MatchedLocations
     'Websites Migrated'                          = Get-SafeCount $MatchedWebsites
     'Configurations Migrated'                    = Get-SafeCount $MatchedConfigurations
+    'IPAM Interfaces/Networks/Addresses Migrated'= Get-SafeCount $MatchedInterfaces
     'Contacts Migrated'                          = Get-SafeCount $MatchedContacts
     'Layouts Migrated'                           = Get-SafeCount $MatchedLayouts
     'Assets Migrated'                            = Get-SafeCount $MatchedAssets
     'Articles Migrated'                          = Get-SafeCount $MatchedArticles
     'Passwords Migrated'                         = Get-SafeCount $MatchedPasswords
     'Password Folders Migrated'                  = Get-SafeCount $MatchedPasswordFolders
-    'Checklists / Checklist Templates Migrated'  = Get-SafeCount $MatchedChecklists
+    'Passwords From Vault'                       = $VaultedPasswords.count ?? 0
+    'Passwords Left Unvaulted'                   = $unvaultedMatches.count ?? 0
     'Relations Created'                          = Get-SafeCount $NewRelationsCreated
-    'IPAM Interfaces/Networks/Addresses Migrated'= Get-SafeCount $MatchedInterfaces
     'Upload Fields Migrated'                     = $MatchedUploadFields.count ?? 0
     'Upload Fields Unresolved'                   = $UnresolvedUploadFields.count ?? 0
-    'Vaulted Passwords'                          = $VaultedPasswords.count ?? 0
-    'Unvaulted Matches'                          = $unvaultedMatches.count ?? 0
+    'Checklists / Checklist Templates Migrated'  = Get-SafeCount $MatchedChecklists
+    'Hudu Global Process Templates Migrated'     = $GlobalProcessTemplatesMigrated
+    'Hudu Company Process Templates Migrated'    = $CompanyProcessTemplatesMigrated
+    'Hudu Process Runs Migrated'                 = $ProcessRunsMigrated
 }
 
 $archivedItems = [ordered]@{
