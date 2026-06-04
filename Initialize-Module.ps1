@@ -337,11 +337,15 @@ if ($InitType -eq 'Full') {
     $ImportLocations = $ImportLocations ?? $(Select-ObjectFromList -message "Import Locations?" -objects @($true, $false) -allowNull $false)
 
     # The asset layout names and icons
-    $ConImportAssetLayoutName = $ConImportAssetLayoutName ?? "People"
-    $LocImportAssetLayoutName = $LocImportAssetLayoutName ?? "Locations"
     $ConImportIcon = "fas fa-users"
     $LocImportIcon = "fas fa-building"
-    $ConfigImportIcon = "fas fa-sitemap"
+    $ConfigImportIcon = "fas fa-sitemap"    
+    $ConfigMigrationName = $ConfigMigrationName ?? "Configurations" # name for configs layout
+    $ConImportAssetLayoutName = $ConImportAssetLayoutName ?? "People" # name for people layout
+    $LocImportAssetLayoutName = $LocImportAssetLayoutName ?? "Locations" # name for location layout
+    $LayoutIconBackGroundColor = $LayoutIconBackGroundColor ?? "#6136ff" # hudu-purple background for layout icons (fallback)
+    $LayoutIconForegroundColor = $LayoutIconForegroundColor ?? "#ffffff" # White Foreground for layout icons (fallback)
+
 
     # The font awesome name for the locations icon in Hudu
     # Here set two arrays of the different names you have used to identify the primary location in both ITGlue And Hudu

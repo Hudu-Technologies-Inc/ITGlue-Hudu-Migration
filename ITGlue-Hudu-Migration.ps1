@@ -635,8 +635,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 		
 ############################### Configurations ###############################
 	
-$ConfigMigrationName = "Configurations"
-$ConfigImportAssetLayoutName = "$($ConfigurationPrefix)Configurations"
+$ConfigMigrationName = $ConfigMigrationName ?? "Configurations"
+$ConfigImportAssetLayoutName = $ConfigImportAssetLayoutName ?? "$($ConfigurationPrefix)Configurations"
 	
 #Check for Configuration Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")) {
@@ -1250,7 +1250,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 Write-Host "Flexible asset layout '$TargetLayoutName' now collides with an existing Hudu asset layout. Exiting instead of creating a renamed layout." -ForegroundColor Red
                 exit 1
             }
-            $NewLayout = New-HuduAssetLayout -name $TargetLayoutName -icon "fas fa-$NewIcon" -color "#6136ff" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields
+            $NewLayout = New-HuduAssetLayout -name $TargetLayoutName -icon "fas fa-$NewIcon" -color "$($LayoutIconBackGroundColor)" -icon_color "$($LayoutIconForegroundColor)" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields
 
             $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
 
