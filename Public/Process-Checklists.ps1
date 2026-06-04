@@ -19,11 +19,38 @@ $ITGAPIEndpoint= ($ITGAPIEndpoint.Trim() -replace '[\\/]+$', '')
 $ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
 $ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT -ITGBaseURI $ITGAPIEndpoint
 
+$ChecklistHuduVersion = $CurrentVersion
+if (-not $ChecklistHuduVersion -and (Get-Command -Name Get-HuduAppInfo -ErrorAction SilentlyContinue)) {
+    try {
+        $ChecklistHuduVersion = [version]$(Get-HuduAppInfo).version
+        $CurrentVersion = $ChecklistHuduVersion
+    } catch {
+        Write-Host "Could not detect Hudu version for checklist import. Due dates and assignees will only be sent to confirmed process runs."
+    }
+}
+
+$UsesHuduProcessRunModel = $true
+if ($ChecklistHuduVersion -and $ChecklistHuduVersion -lt [version]'2.41.0') {
+    $UsesHuduProcessRunModel = $false
+}
+
+$StartHuduProcedureCommand = Get-Command -Name Start-HuduProcedure -ErrorAction SilentlyContinue
+$StartHuduProcedureIdParameter = $null
+if ($StartHuduProcedureCommand) {
+    if ($StartHuduProcedureCommand.Parameters.ContainsKey('ProcedureId')) {
+        $StartHuduProcedureIdParameter = 'ProcedureId'
+    } elseif ($StartHuduProcedureCommand.Parameters.ContainsKey('Id')) {
+        $StartHuduProcedureIdParameter = 'Id'
+    }
+}
+
 
 
 if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     Write-Host "No preloaded checklists found. attempting second-line retrieval"
-    $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
+    # $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
+
+    $MatchedChecklists = @(); $ITGlueRawChecklists = @(); $ITglueChecklists = [System.Collections.ArrayList]@();
     $PageSize = 200
     $PageNum = 0
     while ($true) {
@@ -109,7 +136,7 @@ foreach ($checklist in $ITGLueChecklists) {
         } else {
             'checklist template as a reusable Hudu global process template.'
         }
-    } elseif ($CurrentVersion -and $CurrentVersion -ge [version]'2.41.0') {
+    } elseif ($UsesHuduProcessRunModel) {
         if ($matchedCompany -and $matchedCompany.HuduID -and $matchedCompany.HuduID -gt 0) {
             'checklist as a Hudu process run.'
         } else {
@@ -148,9 +175,13 @@ foreach ($checklist in $ITGLueChecklists) {
 
         $taskTargetProcedure = $newProcedure
         $newProcedureRun = $null
-        if ((-not $isChecklistTemplate) -and $CurrentVersion -and $CurrentVersion -ge [version]'2.41.0' -and $newProcedure.company_id -and (Get-Command -Name Start-HuduProcedure -ErrorAction SilentlyContinue)) {
+        if ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $newProcedure.company_id -and $StartHuduProcedureIdParameter) {
             try {
-                $newProcedureRun = Start-HuduProcedure -ProcedureId $newProcedure.id -Name $procedureRequest['Name']
+                $startProcedureRequest = @{
+                    $StartHuduProcedureIdParameter = $newProcedure.id
+                    Name = $procedureRequest['Name']
+                }
+                $newProcedureRun = Start-HuduProcedure @startProcedureRequest
                 $newProcedureRun = $newProcedureRun.procedure ?? $newProcedureRun
             } catch {
                 Write-Host "Error starting Hudu process run for checklist $($checklist.id): $_"
@@ -163,6 +194,8 @@ foreach ($checklist in $ITGLueChecklists) {
             } elseif ($hasRunMetadata) {
                 Write-Host "Could not start a Hudu process run for checklist $($checklist.id); due dates and assignees may not be applied."
             }
+        } elseif ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $newProcedure.company_id -and $hasRunMetadata -and (-not $StartHuduProcedureIdParameter)) {
+            Write-Host "Start-HuduProcedure with Id or ProcedureId support was not found; due dates and assignees will not be applied to checklist $($checklist.id)."
         }
 
         $TaskIDX=0
@@ -200,7 +233,7 @@ foreach ($checklist in $ITGLueChecklists) {
                 }
             }
 
-            $canApplyRunFields = (-not ($CurrentVersion -and $CurrentVersion -ge [version]'2.41.0')) -or ($newProcedureRun -and $newProcedureRun.Id)
+            $canApplyRunFields = (-not $UsesHuduProcessRunModel) -or ($newProcedureRun -and $newProcedureRun.Id)
             if ($canApplyRunFields) {
                 if ($assignedUsers.Count -gt 0) {
                     $NewTaskRequest['AssignedUsers'] = $assignedUsers
@@ -228,7 +261,7 @@ foreach ($checklist in $ITGLueChecklists) {
             }
 
             if ($NewProcedureTask) {
-                Write-Host "Added $(if (($assignedUsers).Count -gt 0) {'User-Assigned '} else {''})procedure task $($TaskIDX) of $($checklist.ITGChecklistItems.count)"
+                Write-Host "Added $(if ($NewTaskRequest.ContainsKey('AssignedUsers')) {'User-Assigned '} else {''})procedure task $($TaskIDX) of $($checklist.ITGChecklistItems.count)"
                 $HuduProcedureTasks += $NewProcedureTask
             }
         }        

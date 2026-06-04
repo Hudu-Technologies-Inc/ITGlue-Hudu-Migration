@@ -3,9 +3,9 @@ if ([string]::IsNullOrEmpty($ITglueJWT)) {
     return
 }
 
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . .\Public\Init-OptionsAndLogs.ps1 }
-if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\JWT-Auth.ps1 }
-if (-not (Get-Command -Name Get-ITGlueCheckLists -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Get-Checklists.ps1 }
+if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)){ . "$($(get-childitem -path "." -Recurse -file "Init-OptionsAndLogs.ps1" | Select-Object -first 1).fullname)" }
+if (-not (Get-Command -Name Get-ITGlueCheckLists -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "Get-Checklists.ps1" | Select-Object -first 1).fullname)" }
+if (-not (Get-Command -Name Get-ITGlueJWTAuth -ErrorAction SilentlyContinue)) { . "$($(get-childitem -path "." -Recurse -file "JWT-Auth.ps1" | Select-Object -first 1).fullname)" }
 
 # $ITglueSSLCerts = Get-ITGlueSslCertificates -JWTAuthToken $ITGlueJWT
 $ITGAPIEndpoint = @($ITGBaseURI,$ITGAPIEndpoint, $settings.ITGAPIEndpoint) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
@@ -24,7 +24,9 @@ try {
 # Checklists Data
 # ITGlue checklists are one-off runs with due dates/assignees. ITGlue checklist templates
 # are reusable definitions and use the separate /checklist_template_tasks endpoint.
-$MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
+#$MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
+    $MatchedChecklists = @(); $ITGlueRawChecklists = @(); $ITglueChecklists = [System.Collections.ArrayList]@();
+
 $PageSize = 200
 $PageNum = 0
 while ($true) {
