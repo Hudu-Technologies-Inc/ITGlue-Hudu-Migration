@@ -43,6 +43,8 @@ if ($StartHuduProcedureCommand) {
         $StartHuduProcedureIdParameter = 'Id'
     }
 }
+$GetHuduProcedureTasksCommand = Get-Command -Name Get-HuduProcedureTasks -ErrorAction SilentlyContinue
+$SetHuduProcedureTaskCommand = Get-Command -Name Set-HuduProcedureTask -ErrorAction SilentlyContinue
 
 
 
@@ -173,35 +175,25 @@ foreach ($checklist in $ITGLueChecklists) {
         $checklist | Add-Member -MemberType 'NoteProperty' -Name 'HuduProcedure' -Value $newProcedure -Force
         Write-Host "Created $(if (-not $newProcedure.company_id) {'Global'} else {'Company'}) Procedure $(if ($true -eq $checklist.IsTemplate) {'Template'}) $($ChecklistIDX) of $($ITGLueChecklists.count)"
 
-        $taskTargetProcedure = $newProcedure
-        $newProcedureRun = $null
-        if ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $newProcedure.company_id -and $StartHuduProcedureIdParameter) {
-            try {
-                $startProcedureRequest = @{
-                    $StartHuduProcedureIdParameter = $newProcedure.id
-                    Name = $procedureRequest['Name']
+        $sourceTasks = @($checklist.ITGChecklistItems | Where-Object { $_ })
+        if ($sourceTasks.Count -eq 0) {
+            $sourceTasks = @(
+                [pscustomobject]@{
+                    attributes = [pscustomobject]@{
+                        name = 'Imported checklist placeholder'
+                        description = 'This ITGlue checklist did not include any checklist items. Placeholder task added so Hudu can track this process.'
+                        order = 1
+                    }
+                    IsMigrationPlaceholder = $true
                 }
-                $newProcedureRun = Start-HuduProcedure @startProcedureRequest
-                $newProcedureRun = $newProcedureRun.procedure ?? $newProcedureRun
-            } catch {
-                Write-Host "Error starting Hudu process run for checklist $($checklist.id): $_"
-            }
-
-            if ($newProcedureRun -and $newProcedureRun.Id) {
-                $taskTargetProcedure = $newProcedureRun
-                $checklist | Add-Member -MemberType 'NoteProperty' -Name 'HuduProcedureRun' -Value $newProcedureRun -Force
-                Write-Host "Started Hudu process run $($newProcedureRun.Id) from procedure $($newProcedure.Id)"
-            } elseif ($hasRunMetadata) {
-                Write-Host "Could not start a Hudu process run for checklist $($checklist.id); due dates and assignees may not be applied."
-            }
-        } elseif ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $newProcedure.company_id -and $hasRunMetadata -and (-not $StartHuduProcedureIdParameter)) {
-            Write-Host "Start-HuduProcedure with Id or ProcedureId support was not found; due dates and assignees will not be applied to checklist $($checklist.id)."
+            )
+            Write-Host "ITGlue checklist $($checklist.id) has no tasks. Adding one placeholder task for Hudu tracking."
         }
 
+        $TaskRunFieldRequests = @()
         $TaskIDX=0
 
-        
-        foreach ($task in $checklist.ITGChecklistItems){
+        foreach ($task in $sourceTasks){
             $TaskIDX = $TaskIDX + 1
 
             $NewProcedureTask = $null
@@ -209,7 +201,7 @@ foreach ($checklist in $ITGLueChecklists) {
             $assignedUsers = @()
 
             $NewTaskRequest = @{
-                ProcedureId = $taskTargetProcedure.id
+                ProcedureId = $newProcedure.id
                 Name        = [System.Net.WebUtility]::UrlDecode("$($task.attributes.name ?? ("Task #$($task.attributes.order)" ?? "Unnamed Task"))")
                 Description = ($task.attributes.description ?? "Imported from ITglue with no description")
             }
@@ -233,7 +225,14 @@ foreach ($checklist in $ITGLueChecklists) {
                 }
             }
 
-            $canApplyRunFields = (-not $UsesHuduProcessRunModel) -or ($newProcedureRun -and $newProcedureRun.Id)
+            $RunFieldRequest = @{
+                Name = $NewTaskRequest['Name']
+            }
+            if ($NewTaskRequest.ContainsKey('Position')) {
+                $RunFieldRequest['Position'] = $NewTaskRequest['Position']
+            }
+
+            $canApplyRunFields = -not $UsesHuduProcessRunModel
             if ($canApplyRunFields) {
                 if ($assignedUsers.Count -gt 0) {
                     $NewTaskRequest['AssignedUsers'] = $assignedUsers
@@ -248,11 +247,26 @@ foreach ($checklist in $ITGLueChecklists) {
                                                 elseif ($age.TotalDays -le 14) { 'high' }
                                                 else { 'normal' }
                 }
+            } else {
+                if ($assignedUsers.Count -gt 0) {
+                    $RunFieldRequest['AssignedUsers'] = $assignedUsers
+                }
 
-                if ($newProcedureRun -and $newProcedureRun.Id) {
-                    $NewTaskRequest['RunTask'] = $true
+                if ($task.attributes.'due-date') {
+                    $dueDate = [datetime]$task.attributes.'due-date'
+                    $RunFieldRequest['DueDate'] = $dueDate.ToString('yyyy-MM-dd')
+
+                    $age = (Get-Date) - $dueDate
+                    $RunFieldRequest['Priority'] = if ($age.TotalDays -lt 0) { 'urgent' }
+                                                elseif ($age.TotalDays -le 14) { 'high' }
+                                                else { 'normal' }
                 }
             }
+
+            if ($RunFieldRequest.ContainsKey('AssignedUsers') -or $RunFieldRequest.ContainsKey('DueDate') -or $RunFieldRequest.ContainsKey('Priority')) {
+                $TaskRunFieldRequests += [pscustomobject]$RunFieldRequest
+            }
+
             try {             
                 $NewProcedureTask = New-HuduProcedureTask @NewTaskRequest
             }
@@ -261,12 +275,78 @@ foreach ($checklist in $ITGLueChecklists) {
             }
 
             if ($NewProcedureTask) {
-                Write-Host "Added $(if ($NewTaskRequest.ContainsKey('AssignedUsers')) {'User-Assigned '} else {''})procedure task $($TaskIDX) of $($checklist.ITGChecklistItems.count)"
+                Write-Host "Added $(if ($NewTaskRequest.ContainsKey('AssignedUsers')) {'User-Assigned '} else {''})procedure task $($TaskIDX) of $($sourceTasks.Count)"
                 $HuduProcedureTasks += $NewProcedureTask
             }
-        }        
+        }
+
+        $newProcedureRun = $null
+        $HuduProcedureRunTasks = @()
+        if ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $newProcedure.company_id -and $StartHuduProcedureIdParameter) {
+            try {
+                $startProcedureRequest = @{
+                    $StartHuduProcedureIdParameter = $newProcedure.id
+                    Name = $procedureRequest['Name']
+                }
+                $newProcedureRun = Start-HuduProcedure @startProcedureRequest
+                $newProcedureRun = $newProcedureRun.procedure ?? $newProcedureRun
+            } catch {
+                Write-Host "Error starting Hudu process run for checklist $($checklist.id): $_"
+            }
+
+            if ($newProcedureRun -and $newProcedureRun.Id) {
+                $checklist | Add-Member -MemberType 'NoteProperty' -Name 'HuduProcedureRun' -Value $newProcedureRun -Force
+                Write-Host "Started Hudu process run $($newProcedureRun.Id) from procedure $($newProcedure.Id)"
+
+                if ($TaskRunFieldRequests.Count -gt 0 -and $GetHuduProcedureTasksCommand -and $SetHuduProcedureTaskCommand) {
+                    try {
+                        $HuduProcedureRunTasks = @(Get-HuduProcedureTasks -ProcedureId $newProcedureRun.Id)
+                    } catch {
+                        Write-Host "Error retrieving Hudu process run tasks for checklist $($checklist.id): $_"
+                    }
+
+                    foreach ($runFieldRequest in $TaskRunFieldRequests) {
+                        $matchedRunTask = $null
+                        if ($runFieldRequest.Position) {
+                            $matchedRunTask = $HuduProcedureRunTasks | Where-Object { [string]$_.position -eq [string]$runFieldRequest.Position } | Select-Object -First 1
+                        }
+                        if (-not $matchedRunTask) {
+                            $matchedRunTask = $HuduProcedureRunTasks | Where-Object { $_.name -eq $runFieldRequest.Name } | Select-Object -First 1
+                        }
+
+                        if ($matchedRunTask -and $matchedRunTask.Id) {
+                            $SetTaskRequest = @{
+                                Id = $matchedRunTask.Id
+                                RunTask = $true
+                            }
+                            if ($runFieldRequest.AssignedUsers) { $SetTaskRequest['AssignedUsers'] = $runFieldRequest.AssignedUsers }
+                            if ($runFieldRequest.DueDate) { $SetTaskRequest['DueDate'] = $runFieldRequest.DueDate }
+                            if ($runFieldRequest.Priority) { $SetTaskRequest['Priority'] = $runFieldRequest.Priority }
+
+                            try {
+                                [void](Set-HuduProcedureTask @SetTaskRequest)
+                                Write-Host "Updated Hudu process run task '$($runFieldRequest.Name)' with imported due date/assignee metadata."
+                            } catch {
+                                Write-Host "Error updating Hudu process run task '$($runFieldRequest.Name)': $_"
+                            }
+                        } else {
+                            Write-Host "Could not match Hudu process run task '$($runFieldRequest.Name)' to apply due date/assignee metadata."
+                        }
+                    }
+                } elseif ($TaskRunFieldRequests.Count -gt 0) {
+                    Write-Host "Get-HuduProcedureTasks or Set-HuduProcedureTask was not found; due dates and assignees could not be applied to checklist $($checklist.id)."
+                }
+            } elseif ($hasRunMetadata) {
+                Write-Host "Could not start a Hudu process run for checklist $($checklist.id); due dates and assignees may not be applied."
+            }
+        } elseif ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $newProcedure.company_id -and $hasRunMetadata -and (-not $StartHuduProcedureIdParameter)) {
+            Write-Host "Start-HuduProcedure with Id or ProcedureId support was not found; due dates and assignees will not be applied to checklist $($checklist.id)."
+        }
         
         $checklist.HuduProcedure | Add-Member -MemberType 'NoteProperty' -Name 'HuduProcedureTasks' -Value $HuduProcedureTasks -Force
+        if ($newProcedureRun -and $newProcedureRun.Id) {
+            $checklist.HuduProcedureRun | Add-Member -MemberType 'NoteProperty' -Name 'HuduProcedureRunTasks' -Value $HuduProcedureRunTasks -Force
+        }
         $MatchedChecklists+=$checklist
     }
 }
