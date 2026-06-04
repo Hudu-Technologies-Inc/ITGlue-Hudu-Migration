@@ -16,9 +16,6 @@ if ([string]::IsNullOrWhiteSpace($ITGAPIEndpoint)) {
 }
 $ITGAPIEndpoint= ($ITGAPIEndpoint.Trim() -replace '[\\/]+$', '')
 
-$ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
-$ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT -ITGBaseURI $ITGAPIEndpoint
-
 $ChecklistHuduVersion = $CurrentVersion
 if (-not $ChecklistHuduVersion -and (Get-Command -Name Get-HuduAppInfo -ErrorAction SilentlyContinue)) {
     try {
@@ -50,6 +47,8 @@ $SetHuduProcedureTaskCommand = Get-Command -Name Set-HuduProcedureTask -ErrorAct
 
 if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
     Write-Host "No preloaded checklists found. attempting second-line retrieval"
+    $ITGlueJWT = $ITGlueJWT ?? (Read-Host "Please enter your ITGlue JWT as retrieved from browser.")
+    $ITGlueJWT = Get-ITGlueJWTAuth -ITglueJWT $ITglueJWT -ITGBaseURI $ITGAPIEndpoint
     $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
     # $MatchedChecklists = @(); $ITGlueRawChecklists = @(); $ITglueChecklists = [System.Collections.ArrayList]@();
     $PageSize = 200
@@ -113,8 +112,8 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
 # Hudu process mapping:
 # - ITGlue checklist templates are reusable definitions, so they become Hudu process templates.
 #   With a matched company they become company process templates; otherwise they become global process templates.
-# - ITGlue checklists are single-use company records. On Hudu 2.41.0+, a company process is created and
-#   kicked off as a process run so run-only fields like due dates and assignees can be preserved.
+# - ITGlue checklists are single-use company records. On Hudu 2.41.0+, a company process is kicked off
+#   as a run only when run-only metadata like due dates, assignees, or start/completion dates is present.
 $ChecklistIDX=0
 foreach ($checklist in $ITGLueChecklists) {
     $ChecklistIDX=$ChecklistIDX+1
@@ -124,10 +123,25 @@ foreach ($checklist in $ITGLueChecklists) {
     $matchedCompany = $null
     $matchedCompany = $($($MatchedCompanies | Where-Object {[string]$checklist.attributes.'organization-id' -eq [string]$_.ITGID} | Select-Object -First 1))
 
-    $runMetadataValues = @($checklist.attributes.'assignee-name')
+    $runMetadataValues = @(
+        $checklist.attributes.'assignee-name'
+        $checklist.attributes.'due-date'
+        $checklist.attributes.'started-at'
+        $checklist.attributes.'started_at'
+        $checklist.attributes.'start-date'
+        $checklist.attributes.'completed-at'
+        $checklist.attributes.'completed_at'
+        $checklist.attributes.'completed-by-name'
+    )
     foreach ($item in @($checklist.ITGChecklistItems | Where-Object { $_ })) {
         $runMetadataValues += $item.attributes.'assignee-name'
         $runMetadataValues += $item.attributes.'due-date'
+        $runMetadataValues += $item.attributes.'started-at'
+        $runMetadataValues += $item.attributes.'started_at'
+        $runMetadataValues += $item.attributes.'start-date'
+        $runMetadataValues += $item.attributes.'completed-at'
+        $runMetadataValues += $item.attributes.'completed_at'
+        $runMetadataValues += $item.attributes.'completed-by-name'
     }
     $hasRunMetadata = (-not $isChecklistTemplate) -and @( $runMetadataValues | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0
 
@@ -137,12 +151,14 @@ foreach ($checklist in $ITGLueChecklists) {
         } else {
             'checklist template as a reusable Hudu global process template.'
         }
-    } elseif ($UsesHuduProcessRunModel) {
+    } elseif ($UsesHuduProcessRunModel -and $hasRunMetadata) {
         if ($matchedCompany -and $matchedCompany.HuduID -and $matchedCompany.HuduID -gt 0) {
             'checklist as a Hudu process run.'
         } else {
             'checklist as a Hudu global process template because no matched company was found to kick off a run.'
         }
+    } elseif ($UsesHuduProcessRunModel) {
+        'checklist as a Hudu company/global process template; no run-only metadata was found.'
     } elseif ($hasRunMetadata) {
         'checklist as a Hudu procedure with due dates or assignees applied to tasks where supported.'
     } else {
@@ -281,7 +297,7 @@ foreach ($checklist in $ITGLueChecklists) {
 
         $newProcedureRun = $null
         $HuduProcedureRunTasks = @()
-        if ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $newProcedure.company_id -and $StartHuduProcedureIdParameter) {
+        if ((-not $isChecklistTemplate) -and $UsesHuduProcessRunModel -and $hasRunMetadata -and $newProcedure.company_id -and $StartHuduProcedureIdParameter) {
             try {
                 $startProcedureRequest = @{
                     $StartHuduProcedureIdParameter = $newProcedure.id
