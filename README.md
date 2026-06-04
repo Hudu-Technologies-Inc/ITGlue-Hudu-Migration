@@ -212,11 +212,22 @@ ITGlue and Hudu use similar names for different concepts, so the migration follo
 | Hudu company process template | Company | Reusable inside one company | No | Closest ITGlue equivalent: checklist template |
 | Hudu process run | Company/global/asset | No | Yes | Closest ITGlue equivalent: checklist |
 
+#todo: formatting
 # Hudu process mapping:
 # - ITGlue checklist templates are reusable definitions, so they become Hudu process templates.
 #   With a matched company they become company process templates; otherwise they become global process templates.
 # - ITGlue checklists are single-use company records. On Hudu 2.41.0+, a company process is created and
 #   kicked off as a process run so run-only fields like due dates and assignees can be preserved.
+
+
+#todo: make this a matrix/grid
+	Accessed Via	Reusable	Due Dates / Assignees	Closest Equivilent
+ITGlue Checklist Template	Admin	Yes	No	Hudu Global Process Template
+ITGlue Checklist	Company	Single-Use	Yes	Hudu Process Run
+				
+Hudu Global Process Template	Admin	Reusable between companies	No	ITGlue Checklist Template
+Hudu Company Process Template	Company	Reusable between users/assets in company	No	ITGlue Checklist Template
+Hudu Process Run	Company/Global/Asset	Single-Use	Yes	ITGlue Checklist
 
 
 Checklist template tasks are retrieved from ITGlue's checklist template task endpoint. Checklist tasks and checklist template tasks are not interchangeable, which is why a preloaded checklist cache should be regenerated if it was created before this distinction was added.

@@ -25,7 +25,7 @@ try {
 # ITGlue checklists are one-off runs with due dates/assignees. ITGlue checklist templates
 # are reusable definitions and use the separate /checklist_template_tasks endpoint.
 $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@();
-$PageSize = 1000
+$PageSize = 200
 $PageNum = 0
 while ($true) {
         $ITGlueRawChecklists = $(Get-ITGlueCheckLists -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum  -ITGBaseURI $ITGAPIEndpoint).data
@@ -46,12 +46,12 @@ while ($true) {
 $PageNum = 0
 Write-Host "Retrieving all checklist templates from ITGlue"
 while ($true) {
-        $ITGlueRawChecklists = @(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size $PageSize -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint)
+    $ITGlueRawChecklists = @(Get-ITGlueChecklistTemplates -JWTAuthToken $ITGlueJWT -page_size ($PageSize ?? 200) -page_number $PageNum -ITGBaseURI $ITGAPIEndpoint)
     foreach ($checklistTemplate in $ITGlueRawChecklists | Where-Object {$_}) {
         $ITGChecklistItems=$null
         try {
             $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'IsTemplate' -Value $true -Force
-                $ITGChecklistItems=$(Get-ITGlueChecklistTemplateItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistTemplate.id -ITGBaseURI $ITGAPIEndpoint)
+            $ITGChecklistItems=$(Get-ITGlueChecklistTemplateItems -JWTAuthToken $ITGlueJWT -filter_checklist_id $checklistTemplate.id -ITGBaseURI $ITGAPIEndpoint)
             $checklistTemplate | Add-Member -MemberType 'NoteProperty' -Name 'ITGChecklistItems' -Value $ITGChecklistItems -Force
         }catch{
             Write-host "Error getting checklist template items $_"
