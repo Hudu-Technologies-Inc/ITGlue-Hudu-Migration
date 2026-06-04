@@ -1514,7 +1514,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                         $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
                     } elseif ($field.FieldType -eq "Tag") {
                         switch ($field.FieldSubType) {
-                            "AccountsUsers" { Write-Host "Tags to Account Users are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "Checklists" {
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Procedure'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Procedure from $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later.";
                                 $supported = $true
@@ -1555,32 +1554,35 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
                             } "Organizations" { 
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) {@{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Company'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Companies $($field.FieldName) in $($UpdateAsset.Name) has been recorded later."; $supported = $true
-                            } "SslCertificates" { 
-                                Write-Host "Tags to SSL Certificates are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
-                            } "Tickets" {
-                                Write-Host "Tags to Tickets are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
                             } "FlexibleAssetType" {	
                                 $AssetsLinked = foreach ($IDMatch in $ITGValues.values) {
                                     $($MatchedAssets | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
                                 }
                                 $ReturnData = $AssetsLinked | convertto-json -compress -AsArray | Out-String
                                 $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))	
+                            } "SslCertificates" { 
+                                Write-Host "Tags to SSL Certificates are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
+                            } "Tickets" {
+                                Write-Host "Tags to Tickets are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
+                            } "AccountsUsers" {
+                                Write-Host "Tags to Account Users are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false 
                             }
                         }
-                        if ($Supported -eq $False) {
-                            $ManualLog = [PSCustomObject]@{
-                                Document_Name = $UpdateAsset.Name
-                                Type          = ($UpdateAsset.HuduObject.asset_type ?? "Asset") + " Field - Tag"
-                                Company_Name  = $UpdateAsset.HuduObject.company_name
-                                HuduID        = $UpdateAsset.HuduID
-                                Field_Name    = $($field.FieldName)
-                                Notes         = "Unsupported Tag Type Manual Tag Required"
-                                Action        = "Manually tag to Asset"
-                                Data          = $ITGValues.values.name -join ","
-                                Hudu_URL      = $UpdateAsset.HuduObject.url
-                                ITG_URL       = $UpdateAsset.ITGObject.attributes."resource-url"
-                            }; $null = $ManualActions.add($ManualLog);
-                        }
+                        # the only untaggable entities that are left now are entities that we are not creating or cannot create, so there isnt really a manual action to be taken
+                        # if ($Supported -eq $False) {
+                        #     $ManualLog = [PSCustomObject]@{
+                        #         Document_Name = $UpdateAsset.Name
+                        #         Type          = ($UpdateAsset.HuduObject.asset_type ?? "Asset") + " Field - Tag"
+                        #         Company_Name  = $UpdateAsset.HuduObject.company_name
+                        #         HuduID        = $UpdateAsset.HuduID
+                        #         Field_Name    = $($field.FieldName)
+                        #         Notes         = "Unsupported Tag Type Manual Tag Required"
+                        #         Action        = "Manually tag to Asset"
+                        #         Data          = $ITGValues.values.name -join ","
+                        #         Hudu_URL      = $UpdateAsset.HuduObject.url
+                        #         ITG_URL       = $UpdateAsset.ITGObject.attributes."resource-url"
+                        #     }; $null = $ManualActions.add($ManualLog);
+                        # }
                     } elseif ($field.FieldType -eq "Password") {
                         $ITGPassword = (Get-ITGluePasswords -id $ITGValues -include related_items).data
                         $ITGPasswordValue = ($ITGPasswordsRaw |Where-Object {$_.id -eq $ITGPassword.id}).password

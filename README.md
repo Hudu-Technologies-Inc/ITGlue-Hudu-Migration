@@ -39,7 +39,7 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 - IP Addresses / Networks
 - Document Links
 - Password folders (flattened to single-level)
-- ! Checklists / checklist templates (optional, JWT): imported as **Hudu procedures**; add users to Hudu first so assignees can be matched where possible
+- ! Checklists / checklist templates (optional, JWT): imported as **Hudu procedures/processes**; add users to Hudu first so checklist assignees can be matched where possible
 
 Items marked with **!** require **JWT** authentication (ITGlue session token from your browser) and are intended for advanced users. Extracting a JWT requires web access and your browser’s developer tools. If you are unsure, skip these options.
 
@@ -200,7 +200,26 @@ Any other org types will migrate as usual, but this one org type will be central
 
 ## 3. Checklists and checklist templates (optional, JWT)
 
-When you opt in during the migration, checklists and templates are imported as **Hudu procedures** using a **JWT** from ITGlue (see the **!** items at the top of this document under **What the script does migrate**). Tag-style relations to checklists from other assets are still not migrated—plan for manual cleanup where needed.
+When you opt in during the migration, checklists and checklist templates are imported using a **JWT** from ITGlue (see the **!** items at the top of this document under **What the script does migrate**). Tag-style relations to checklists from other assets are still not migrated--plan for manual cleanup where needed.
+
+ITGlue and Hudu use similar names for different concepts, so the migration follows this model:
+
+| Source | Scope | Reusable | Due dates / assignees | Hudu target |
+| --- | --- | --- | --- | --- |
+| ITGlue checklist template | Admin | Yes | No | Hudu global process template, or company process template when the template is tied to a matched ITGlue organization |
+| ITGlue checklist | Company | No | Yes | Hudu process run on Hudu 2.41.0+ when the checklist's company is matched; otherwise a company/global process template with imported tasks |
+| Hudu global process template | Admin | Reusable across companies | No | Closest ITGlue equivalent: checklist template |
+| Hudu company process template | Company | Reusable inside one company | No | Closest ITGlue equivalent: checklist template |
+| Hudu process run | Company/global/asset | No | Yes | Closest ITGlue equivalent: checklist |
+
+# Hudu process mapping:
+# - ITGlue checklist templates are reusable definitions, so they become Hudu process templates.
+#   With a matched company they become company process templates; otherwise they become global process templates.
+# - ITGlue checklists are single-use company records. On Hudu 2.41.0+, a company process is created and
+#   kicked off as a process run so run-only fields like due dates and assignees can be preserved.
+
+
+Checklist template tasks are retrieved from ITGlue's checklist template task endpoint. Checklist tasks and checklist template tasks are not interchangeable, which is why a preloaded checklist cache should be regenerated if it was created before this distinction was added.
 
 In Chrome, you'll need the "JWT Inspector:"
 
