@@ -133,11 +133,12 @@ Make sure the API Key you're using has password access, and that all passwords h
 1. Log into your Hudu tenant as a Super Admin
 2. Go to Admin>API Keys
 3. Click "+ New API Key"
-4. Check off "Full access" and "View Passwords"
-5. Click create
-6. Store the API key in a safe place as Hudu will only show you the key once.
+4. Select "Full access" Radio Button
+5. Check View passwords, Delete data, and ***(future-use)*** Export Data
+6. Click create
+7. Store the API key in a safe place as Hudu will only show you the key once.
 
-<img width="750" alt="IT_Glue_Migration_Guide" src="https://github.com/user-attachments/assets/bf81c7fc-0d0b-4555-b698-1e25fd7da7d3" />
+<img width="1114" height="1016" alt="image" src="https://github.com/user-attachments/assets/450e9107-3f78-4137-88b5-08ecd5da6ca9" />
 
 ## Prerequisites - ***Migration Script Setup***
 
