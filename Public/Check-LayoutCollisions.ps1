@@ -104,8 +104,8 @@ if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test
 $PreflightOutlierTargetLayouts = @(
     if ($true -eq $ImportLocations -and -not ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json"))) {
         [pscustomobject]@{
-            SourceType = "Location"
-            SourceName = "IT Glue Locations"
+            SourceType = "Locations/Places"
+            SourceName = $LocImportAssetLayoutName
             TargetName = $LocImportAssetLayoutName
             SourceId   = $null
         }
@@ -113,8 +113,8 @@ $PreflightOutlierTargetLayouts = @(
 
     if ($true -eq $ImportContacts -and -not ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json"))) {
         [pscustomobject]@{
-            SourceType = "Contact"
-            SourceName = "IT Glue Contacts"
+            SourceType = "Contacts/People"
+            SourceName = $ConImportAssetLayoutName
             TargetName = $ConImportAssetLayoutName
             SourceId   = $null
         }
