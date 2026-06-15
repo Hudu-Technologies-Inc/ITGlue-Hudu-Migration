@@ -81,6 +81,75 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
 ############################### End of Functions ###############################
 
+function ConvertTo-HuduCustomFieldArray {
+    param(
+        [Parameter(Mandatory)]
+        [System.Collections.IDictionary]$Fields
+    )
+
+    $normalizedFields = [ordered]@{}
+    foreach ($field in $Fields.GetEnumerator()) {
+        $fieldKey = ("$($field.Key)".Trim() -replace ' ', '_').ToLowerInvariant()
+        $normalizedFields[$fieldKey] = $field.Value
+    }
+
+    foreach ($field in $normalizedFields.GetEnumerator()) {
+        $customField = @{}
+        $customField[$field.Key] = $field.Value
+        $customField
+    }
+}
+
+function New-ITGlueMigrationAssetFields {
+    param(
+        [Parameter(Mandatory)]
+        $ITGAsset
+    )
+
+    [ordered]@{
+        'Imported from ITGlue'  = Get-Date -Format "o"
+        'ITGlue URL'            = $ITGAsset.attributes.'resource-url'
+        'ITGlue ID'             = $ITGAsset.id
+        'ITG Date Created'      = Get-CoercedDate $ITGAsset.attributes.'created-at'
+        'ITG Date Last Updated' = Get-CoercedDate $ITGAsset.attributes.'updated-at'
+    }
+}
+
+function New-ITGlueMigrationMetadataLayoutFields {
+    @(
+        @{
+            label        = 'ITG Date Created'
+            field_type   = 'Date'
+            show_in_list = 'true'
+            position     = 498
+        },
+        @{
+            label        = 'ITG Date Last Updated'
+            field_type   = 'Date'
+            show_in_list = 'true'
+            position     = 499
+        },
+        @{
+            label        = 'Imported from ITGlue'
+            field_type   = 'Date'
+            show_in_list = 'false'
+            position     = 500
+        },
+        @{
+            label        = 'ITGlue URL'
+            field_type   = 'Text'
+            show_in_list = 'false'
+            position     = 501
+        },
+        @{
+            label        = 'ITGlue ID'
+            field_type   = 'Text'
+            show_in_list = 'false'
+            position     = 502
+        }
+    )
+}
+
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
 ###################### Initial Setup and Confirmations ###############################
@@ -1199,39 +1268,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             }
 
 
-            $TempLayoutFields = @(
-                @{
-                    label        = 'ITG Date Created'
-                    field_type   = 'Date'
-                    show_in_list = 'true'
-                    position     = 498
-                },
-                @{
-                    label        = 'ITG Date Last Updated'
-                    field_type   = 'Date'
-                    show_in_list = 'true'
-                    position     = 499
-                },                
-                @{
-                    label        = 'Imported from ITGlue'
-                    field_type   = 'Date'
-                    show_in_list = 'false'
-                    position     = 500
-                },
-                @{
-                    label        = 'ITGlue URL'
-                    field_type   = 'Text'
-                    show_in_list = 'false'
-                    position     = 501
-                },
-                @{
-                    label        = 'ITGlue ID'
-                    field_type   = 'Text'
-                    show_in_list = 'false'
-                    position     = 502
-                }
-
-            )
+            $TempLayoutFields = New-ITGlueMigrationMetadataLayoutFields
             if ($null -eq $UnmatchedLayout.ITGObject.attributes.icon) {
                 $NewIcon = 'circle'
 
@@ -1412,7 +1449,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
             }
 
-            $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
+            $UpdateLayoutFieldLabels = @($UpdateLayoutFields | ForEach-Object { $_.label })
+            $MigrationMetadataLayoutFields = New-ITGlueMigrationMetadataLayoutFields | Where-Object { $UpdateLayoutFieldLabels -notcontains $_.label }
+            $FinalLayoutFields = @($UpdateLayoutFields) + @($MigrationMetadataLayoutFields)
+            $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $FinalLayoutFields
             $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
             Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
             $UpdateLayout.HuduObject = $UpdatedLayout
@@ -1461,15 +1501,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                 # Match Company
                 $HuduCompanyID = ($MatchedCompanies | Where-Object { $_.ITGID -eq $ITGAsset.attributes.'organization-id' }).HuduID
 
-                $AssetFields = @{ 
-                    'Imported From ITGlue' = Get-Date -Format "o"
-                    'ITGlue URL' = $ITGAsset.attributes.'resource-url'
-                    'ITGlue ID' = $ITGAsset.id
-                    'ITG Date Created' = $(Get-CoercedDate $ITGAsset.attributes.'created-at')
-                    'ITG Date Last Updated' = $(Get-CoercedDate $ITGAsset.attributes.'updated-at')                    
-                }
+                $AssetFields = New-ITGlueMigrationAssetFields -ITGAsset $ITGAsset
 			
-                $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id -fields $AssetFields).asset
+                $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id -fields (ConvertTo-HuduCustomFieldArray -Fields $AssetFields)).asset
 
                 $AssetDetails = [PSCustomObject]@{
                     "Name"       = $ITGAsset.attributes.name
@@ -1491,9 +1525,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         foreach ($UpdateAsset in $MatchedAssets) {
             Write-Host "Populating $($UpdateAsset.Name)"
 		
-            $AssetFields = @{ 
-                'Imported From ITGlue' = Get-Date -Format "o"
-            }
+            $AssetFields = New-ITGlueMigrationAssetFields -ITGAsset $UpdateAsset.ITGObject
 
             $traits = $UpdateAsset.ITGObject.attributes.traits
             $traits.PSObject.Properties | ForEach-Object {
@@ -1639,11 +1671,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     Write-Host "Warning $ITGParsed : $ITGValues Could not be added" -ForegroundColor Red
                 }
             }
-            $CleanedAssetFields = @{}
-            $AssetFields.GetEnumerator() | ForEach-Object {
-                $CleanedAssetFields[$_.Key -replace '_', ' '] = $_.Value
-            }
-            $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields $CleanedAssetFields).asset
+            $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields (ConvertTo-HuduCustomFieldArray -Fields $AssetFields)).asset
 
             $UpdateAsset.HuduObject = $UpdatedHuduAsset
             $UpdateAsset.Imported = "Created-By-Script"
