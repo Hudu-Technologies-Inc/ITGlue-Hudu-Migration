@@ -19,6 +19,8 @@ if ((get-host).version.major -ne 7) {
     exit 1
 }
 
+try {Set-StrictMode -Off} catch {}
+
 ############################### Functions ###############################
 # Import ImageMagick for Invoke-ImageTest Function (Disabled)
  . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
@@ -121,7 +123,7 @@ if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
 }
 
 write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
-$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightCollisionFound = $false;
+$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
 . .\public\Check-LayoutCollisions.ps1
 if ($PreflightCollisionFound) {
     Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
@@ -2316,6 +2318,7 @@ if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitor
 
 write-host "wrapup 2/10... adding attachments and replacing any found attachment links (this can take a while)"
 . .\Add-HuduAttachmentsViaAPI.ps1
+Write-Host "Attachments - enumerating and replacing attachment links in articles"
 $replacedAttachmentURLs = Start-HuduAttachmentLinkReplacement
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"

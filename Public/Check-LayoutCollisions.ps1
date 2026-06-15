@@ -101,7 +101,51 @@ if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test
     }
 }
 
-$plannedLayoutTargets = @($PreflightFlexibleTargetLayouts) + @($PreflightConfigurationTargetLayouts)
+$PreflightOutlierTargetLayouts = @(
+    if ($true -eq $ImportLocations -and -not ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json"))) {
+        [pscustomobject]@{
+            SourceType = "Locations/Places"
+            SourceName = $LocImportAssetLayoutName
+            TargetName = $LocImportAssetLayoutName
+            SourceId   = $null
+        }
+    }
+
+    if ($true -eq $ImportContacts -and -not ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json"))) {
+        [pscustomobject]@{
+            SourceType = "Contacts/People"
+            SourceName = $ConImportAssetLayoutName
+            TargetName = $ConImportAssetLayoutName
+            SourceId   = $null
+        }
+    }
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_.TargetName) }
+
+if (@($PreflightOutlierTargetLayouts).Count -gt 0) {
+    Write-Host "Pre-flight: checking location and contact asset layout names against existing Hudu asset layouts." -ForegroundColor Green
+
+    $PreflightHuduLayouts = $PreflightHuduLayouts ?? $(Get-HuduAssetLayouts)
+    $outlierCollisionCheck = Test-HuduAssetLayoutTargetNameCollision `
+        -TargetLayouts $PreflightOutlierTargetLayouts `
+        -HuduAssetLayouts $PreflightHuduLayouts `
+        -HuduBaseUrl $HuduBaseDomain `
+        -Detailed
+
+    if (-not $outlierCollisionCheck.Success) {
+        $PreflightCollisionFound = $true
+        Write-Host "The following location or contact asset layout target names already exist in Hudu:" -ForegroundColor Red
+        Write-Host ($outlierCollisionCheck.Collisions |
+            Sort-Object TargetName |
+            Select-Object SourceType, SourceName, TargetName, HuduLayoutId, HuduManagementUrl |
+            Format-Table -AutoSize -Wrap |
+            Out-String -Width 4096)
+        Write-Host "Resolve these by renaming the existing Hudu asset layout(s), changing the location/contact layout names, or disabling the corresponding import before retrying." -ForegroundColor Red
+    } else {
+        Write-Host "Pre-flight location and contact layout collision check passed." -ForegroundColor Green
+    }
+}
+
+$plannedLayoutTargets = @($PreflightFlexibleTargetLayouts) + @($PreflightConfigurationTargetLayouts) + @($PreflightOutlierTargetLayouts)
 $plannedTargetCollisions = $plannedLayoutTargets |
     Where-Object { -not [string]::IsNullOrWhiteSpace($_.TargetName) } |
     Group-Object { $_.TargetName.Trim().ToLowerInvariant() } |
@@ -116,6 +160,6 @@ if ($plannedTargetCollisions) {
             Format-Table -AutoSize -Wrap |
             Out-String -Width 4096)
     }
-    Write-Host "Resolve these by changing the FA prefix, configuration prefix, or source layout/type names before retrying." -ForegroundColor Red
+    Write-Host "Resolve these by changing the FA prefix, configuration prefix, location/contact layout names, or source layout/type names before retrying." -ForegroundColor Red
 }
 
