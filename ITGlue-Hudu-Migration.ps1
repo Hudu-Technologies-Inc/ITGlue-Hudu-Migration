@@ -123,7 +123,7 @@ if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
 }
 
 write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
-$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightCollisionFound = $false;
+$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
 . .\public\Check-LayoutCollisions.ps1
 if ($PreflightCollisionFound) {
     Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
