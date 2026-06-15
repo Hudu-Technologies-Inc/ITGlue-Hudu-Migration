@@ -19,6 +19,8 @@ if ((get-host).version.major -ne 7) {
     exit 1
 }
 
+try {Set-StrictMode -Off} catch {}
+
 ############################### Functions ###############################
 # Import ImageMagick for Invoke-ImageTest Function (Disabled)
  . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
@@ -2316,6 +2318,7 @@ if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitor
 
 write-host "wrapup 2/10... adding attachments and replacing any found attachment links (this can take a while)"
 . .\Add-HuduAttachmentsViaAPI.ps1
+Write-Host "Attachments - enumerating and replacing attachment links in articles"
 $replacedAttachmentURLs = Start-HuduAttachmentLinkReplacement
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
