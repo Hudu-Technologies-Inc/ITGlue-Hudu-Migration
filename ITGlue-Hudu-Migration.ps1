@@ -89,7 +89,7 @@ function ConvertTo-HuduCustomFieldArray {
 
     $normalizedFields = [ordered]@{}
     foreach ($field in $Fields.GetEnumerator()) {
-        $fieldKey = ("$($field.Key)".Trim() -replace ' ', '_').ToLowerInvariant()
+        $fieldKey = ("$($field.Key)".Trim() -replace '_', ' ').ToLowerInvariant()
         $normalizedFields[$fieldKey] = $field.Value
     }
 
