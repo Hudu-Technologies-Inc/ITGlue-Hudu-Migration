@@ -82,6 +82,67 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 . $PSScriptRoot\Public\Timed-Job.ps1
+
+function Add-HuduAssetTagLayoutField {
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$LayoutField,
+
+        [AllowNull()]
+        $LinkableLayout,
+
+        [Parameter(Mandatory)]
+        [string]$FieldName,
+
+        [Parameter(Mandatory)]
+        [string]$LayoutName
+    )
+
+    if ($null -eq $LinkableLayout -or [string]::IsNullOrWhiteSpace([string]$LinkableLayout.ID)) {
+        Write-Host "Skipping AssetTag field '$FieldName' in '$LayoutName' because no linkable Hudu layout was found." -ForegroundColor Yellow
+        return $false
+    }
+
+    $LayoutField.add("field_type", "AssetTag")
+    $LayoutField.add("linkable_id", $LinkableLayout.ID)
+    return $true
+}
+
+function Add-HuduAssetTagFieldValue {
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$AssetFields,
+
+        [Parameter(Mandatory)]
+        $Field,
+
+        [AllowNull()]
+        $LinkedItems,
+
+        [Parameter(Mandatory)]
+        [string]$AssetName
+    )
+
+    $validLinks = @($LinkedItems | ForEach-Object {
+        $id = $_.HuduID ?? $_.id
+        $name = $_.Name ?? $_.name
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$id)) {
+            [pscustomobject]@{
+                id   = $id
+                name = $name
+            }
+        }
+    })
+
+    if ($validLinks.Count -eq 0) {
+        Write-Host "Skipping AssetTag value '$($Field.FieldName)' in '$AssetName' because none of the tagged IT Glue items have matching Hudu IDs." -ForegroundColor Yellow
+        return $false
+    }
+
+    $AssetFields["$($Field.HuduParsedName)"] = "$($validLinks | ConvertTo-Json -Compress -AsArray | Out-String)"
+    return $true
+}
 ############################### End of Functions ###############################
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
@@ -1356,29 +1417,25 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                             "ChecklistTemplates" { Write-Host "Tags to Checklists Templates are computed later, if migrating checklists is enabled"; $supported = $false }
                             "Contacts" {
                                 $ContactLayout = Get-HuduAssetLayouts -name $ConImportAssetLayoutName
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $ContactLayout.ID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout $ContactLayout -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
                             "Configurations" {
                                 $ConfigLayout = Get-HuduAssetLayouts -name $ConfigImportAssetLayoutName
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $ConfigLayout.ID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout $ConfigLayout -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
                             "Documents" { Write-Host "Tags to Documents are computed later, if migrating documents is enabled"; $supported = $false } 
                             "Domains" { Write-Host "Tags to websites are computed later, if migrating websites is enabled"; $supported = $false }
                             "Passwords" { Write-Host "Tags to Passwords are computed later, if migrating passwords is enabled"; $supported = $false }
                             "Locations" {
                                 $LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $LocationLayout.ID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout $LocationLayout -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
                             "Organizations" { Write-Host "Tags to Companies are computed later."; $supported = $false }
                             "SslCertificates" { Write-Host "Tags to SSL Certificates are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "Tickets" { Write-Host "Tags to Tickets are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "FlexibleAssetType" {	
                                 $MatchedLayoutID = ($MatchedLayouts | Where-Object { $_.ITGID -eq ($ITGField.Attributes."tag-type").split(" ")[1] }).HuduID
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $MatchedLayoutID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout ([pscustomobject]@{ ID = $MatchedLayoutID }) -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
                         }
                     }
@@ -1533,16 +1590,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 $supported = $true
                             } "Contacts" {
                                 $ContactsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedContacts | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
+                                    $MatchedContacts | Where-Object { $_.ITGID -eq $IDMatch.id }
                                 }
-                                $ReturnData = $ContactsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $ContactsLinked -AssetName $UpdateAsset.Name
                             } "Configurations" {
                                 $ConfigsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedConfigurations | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
+                                    $MatchedConfigurations | Where-Object { $_.ITGID -eq $IDMatch.id }
                                 }
-                                $ReturnData = $ConfigsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $ConfigsLinked -AssetName $UpdateAsset.Name
 											
                             } "Documents" { $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Article'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Articles $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true
                             } "Domains" { 
@@ -1559,18 +1614,16 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'AssetPassword'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Password $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true 
                             } "Locations" {
                                 $LocationsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedLocations | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
+                                    $MatchedLocations | Where-Object { $_.ITGID -eq $IDMatch.id }
                                 }
-                                $ReturnData = $LocationsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $LocationsLinked -AssetName $UpdateAsset.Name
                             } "Organizations" { 
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) {@{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Company'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Companies $($field.FieldName) in $($UpdateAsset.Name) has been recorded later."; $supported = $true
                             } "FlexibleAssetType" {	
                                 $AssetsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedAssets | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
+                                    $MatchedAssets | Where-Object { $_.ITGID -eq $IDMatch.id }
                                 }
-                                $ReturnData = $AssetsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))	
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $AssetsLinked -AssetName $UpdateAsset.Name
                             } "SslCertificates" { 
                                 Write-Host "Tags to SSL Certificates are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
                             } "Tickets" {
