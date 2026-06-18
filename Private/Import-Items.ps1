@@ -149,3 +149,63 @@ function Import-Items {
     Return $MatchedImports
 
 }
+function Add-HuduAssetTagLayoutField {
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$LayoutField,
+
+        [AllowNull()]
+        $LinkableLayout,
+
+        [Parameter(Mandatory)]
+        [string]$FieldName,
+
+        [Parameter(Mandatory)]
+        [string]$LayoutName
+    )
+
+    if ($null -eq $LinkableLayout -or [string]::IsNullOrWhiteSpace([string]$LinkableLayout.ID)) {
+        Write-Host "Skipping AssetTag field '$FieldName' in '$LayoutName' because no linkable Hudu layout was found." -ForegroundColor Yellow
+        return $false
+    }
+
+    $LayoutField.add("field_type", "AssetTag")
+    $LayoutField.add("linkable_id", $LinkableLayout.ID)
+    return $true
+}
+
+function Add-HuduAssetTagFieldValue {
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$AssetFields,
+
+        [Parameter(Mandatory)]
+        $Field,
+
+        [AllowNull()]
+        $LinkedItems,
+
+        [Parameter(Mandatory)]
+        [string]$AssetName
+    )
+
+    $validLinks = @($LinkedItems | ForEach-Object {
+        $id = $_.HuduID ?? $_.id
+        $name = $_.Name ?? $_.name
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$id)) {
+            [pscustomobject]@{
+                id   = $id
+                name = $name
+            }
+        }
+    })
+
+    if ($validLinks.Count -eq 0) {
+        Write-Host "Skipping AssetTag value '$($Field.FieldName)' in '$AssetName' because none of the tagged IT Glue items have matching Hudu IDs." -ForegroundColor Yellow
+        return $false
+    }
+
+    $AssetFields["$($Field.HuduParsedName)"] = "$($validLinks | ConvertTo-Json -Compress -AsArray | Out-String)"
+    return $true
+}
