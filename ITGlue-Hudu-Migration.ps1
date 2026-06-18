@@ -1201,10 +1201,32 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
 
     if ($ImportFlexibleAssetLayouts -eq $true) {
+        $FlexAssetsByLayoutId = @{}
 
         foreach ($UnmatchedLayout in $MatchedLayouts | Where-Object { $_.Matched -eq $false }) {
+            $LayoutCacheKey = [string]$UnmatchedLayout.ITGID
+            if (-not $FlexAssetsByLayoutId.ContainsKey($LayoutCacheKey)) {
+                Write-Host "Fetching Flexible Assets for $($UnmatchedLayout.Name) to determine whether the layout has assets in scope"
+                $FlexAssetsSelect = { (Get-ITGlueFlexibleAssets -page_size 1000 -page_number $i -filter_flexible_asset_type_id $UnmatchedLayout.ITGID -include related_items).data }
+                $FlexAssets = Import-ITGlueItems -ItemSelect $FlexAssetsSelect
+
+                if ($ScopedMigration) {
+                    $FlexAssets = @($FlexAssets | Where-Object {
+                        $ScopedCompanyIds -contains $_.attributes.'organization-id'
+                    })
+                }
+
+                $FlexAssetsByLayoutId[$LayoutCacheKey] = @($FlexAssets)
+            }
+
+            if (@($FlexAssetsByLayoutId[$LayoutCacheKey]).Count -eq 0) {
+                Write-Host "Skipping layout '$($UnmatchedLayout.Name)' because it has no assets in scope." -ForegroundColor Yellow
+                $UnmatchedLayout.ITGAssets = @()
+                continue
+            }
+
             if ($ImportOption -eq 2) {
-                Confirm-Import -ImportObjectName "$($ITGLayout.attributes.name)" -ImportObject $null -ImportSetting $ImportOption
+                Confirm-Import -ImportObjectName "$($UnmatchedLayout.ITGObject.attributes.name)" -ImportObject $UnmatchedLayout -ImportSetting $ImportOption
             }
 
 
@@ -1287,10 +1309,29 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             $FlexLayoutFields = Import-ITGlueItems -ItemSelect $FlexLayoutFieldsSelect
 
 				
-            # Grab all the Assets for the layout
-            Write-Host "Fetching Flexible Assets from IT Glue (This may take a while)"
-            $FlexAssetsSelect = { (Get-ITGlueFlexibleAssets -page_size 1000 -page_number $i -filter_flexible_asset_type_id $UpdateLayout.ITGID -include related_items).data }
-            $FlexAssets = Import-ITGlueItems -ItemSelect $FlexAssetsSelect
+            $LayoutCacheKey = [string]$UpdateLayout.ITGID
+            if ($FlexAssetsByLayoutId.ContainsKey($LayoutCacheKey)) {
+                $FlexAssets = @($FlexAssetsByLayoutId[$LayoutCacheKey])
+            } else {
+                # Grab all the Assets for the layout
+                Write-Host "Fetching Flexible Assets from IT Glue (This may take a while)"
+                $FlexAssetsSelect = { (Get-ITGlueFlexibleAssets -page_size 1000 -page_number $i -filter_flexible_asset_type_id $UpdateLayout.ITGID -include related_items).data }
+                $FlexAssets = Import-ITGlueItems -ItemSelect $FlexAssetsSelect
+
+                if ($ScopedMigration) {
+                    $FlexAssets = @($FlexAssets | Where-Object {
+                        $ScopedCompanyIds -contains $_.attributes.'organization-id'
+                    })
+                }
+
+                $FlexAssetsByLayoutId[$LayoutCacheKey] = @($FlexAssets)
+            }
+
+            if (@($FlexAssets).Count -eq 0) {
+                Write-Host "Skipping layout '$($UpdateLayout.Name)' because it has no assets in scope." -ForegroundColor Yellow
+                $UpdateLayout.ITGAssets = @()
+                continue
+            }
             $fullyPopulated = if ($FlexLayoutFields -and $FlexLayoutFields.count -gt 1 -and $FlexAssets -and $FlexAssets.count -gt 1) {Get-ITGFieldPopulated -FlexLayoutFields $FlexLayoutFields -FlexAssets $FlexAssets} else {@{}}
 
             $UpdateLayoutFields = foreach ($ITGField in $FlexLayoutFields) {
@@ -1463,6 +1504,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         }
 
         Foreach ($Layout in $MatchedLayouts) {
+            if ([string]::IsNullOrWhiteSpace([string]$Layout.HuduID) -or @($Layout.ITGAssets).Count -eq 0) {
+                Write-Host "Skipping base asset creation for $($Layout.Name) because the layout was not created or has no assets in scope." -ForegroundColor Yellow
+                continue
+            }
+
             Write-Host "Creating base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
@@ -1647,9 +1693,19 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     Write-Host "Warning $ITGParsed : $ITGValues Could not be added" -ForegroundColor Red
                 }
             }
-            $CleanedAssetFields = @{}
-            $AssetFields.GetEnumerator() | ForEach-Object {
-                $CleanedAssetFields[$_.Key -replace '_', ' '] = $_.Value
+            $CleanedAssetFields = @()
+
+            foreach ($entry in $AssetFields.GetEnumerator()) {
+                $fieldName = ($entry.Key -replace '_', ' ').Trim()
+                $value = $entry.Value
+
+                if ([string]::IsNullOrWhiteSpace($fieldName)) { continue }
+                if ($null -eq $value) { continue }
+                if ($value -is [string] -and [string]::IsNullOrWhiteSpace($value)) { continue }
+                if ($value -is [array] -and $value.Count -eq 0) { continue }
+                if ($value -is [string] -and $value.Trim() -in @('[]', '[,,]', '[,]', 'null')) { continue }
+
+                $CleanedAssetFields += @{ $fieldName = $value }
             }
             $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields $CleanedAssetFields).asset
 
