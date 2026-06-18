@@ -202,7 +202,7 @@ function Add-HuduAssetTagFieldValue {
     })
 
     if ($validLinks.Count -eq 0) {
-        Write-Host "Skipping AssetTag value '$($Field.FieldName)' in '$AssetName' because none of the tagged IT Glue items have matching Hudu IDs." -ForegroundColor Yellow
+        Write-Host "Skipping AssetTag value '$($Field.FieldName)' in '$AssetName' because none of the tagged IT Glue items are within the import scope." -ForegroundColor Yellow
         return $false
     }
 
