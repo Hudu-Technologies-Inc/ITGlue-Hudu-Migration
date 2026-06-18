@@ -142,7 +142,7 @@ function Import-Items {
             Write-Host "All $MigrationName matched, no migration required" -foregroundcolor green
         } else {
             Write-Host "Warning Import $MigrationName is set to disabled so the above unmatched $MigrationName will not have data migrated" -foregroundcolor red
-            Read-Host -Prompt "Press any key to continue or CTRL+C to quit" 
+            if ($true -eq $NonInteractive) {Write-Host "Non-interactive mode enabled, skipping user prompt"} else {Read-Host -Prompt "Press any key to continue or CTRL+C to quit"}
         }
     }
 	
