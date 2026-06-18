@@ -94,8 +94,8 @@ function Get-MigrationJobDurationReport {
         [pscustomobject]@{
             Job             = $job.Job
             Status          = if ($null -ne $job.FinishedAt) { $job.Status } else { 'Running' }
-            Started         = $startedAt.ToString('yyyy-MM-dd HH:mm:ss')
-            Finished        = $finishedAt.ToString('yyyy-MM-dd HH:mm:ss')
+            Started         = $startedAt.ToString('HH:mm:ss')
+            Finished        = $finishedAt.ToString('HH:mm:ss')
             Duration        = Format-MigrationJobDuration -Duration $duration
             DurationSeconds = [math]::Round($duration.TotalSeconds, 2)
         }
