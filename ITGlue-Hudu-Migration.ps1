@@ -1382,7 +1382,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
             $UpdateLayoutFieldLabels = @($UpdateLayoutFields | ForEach-Object { $_.label })
             $MigrationMetadataLayoutFields = New-ITGlueMigrationMetadataLayoutFields | Where-Object { $UpdateLayoutFieldLabels -notcontains $_.label }
-            $FinalLayoutFields = @($UpdateLayoutFields) + @($MigrationMetadataLayoutFields)
+            $FinalLayoutFields = @($UpdateLayoutFields) 
             $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $FinalLayoutFields
             $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
             Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
