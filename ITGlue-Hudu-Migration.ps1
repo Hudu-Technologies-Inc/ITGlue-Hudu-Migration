@@ -97,111 +97,7 @@ $CurrentVersion =  Set-ExternalModulesInitialized `
         -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) `
         -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 $ScriptStartTime = $(Get-Date)
-$JobStartTime = $JobStartTime ?? @{}
-$MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 
-function Initialize-MigrationJobTimeline {
-    if ($null -eq $script:JobStartTime -or $script:JobStartTime -isnot [hashtable]) {
-        $script:JobStartTime = @{}
-    }
-
-    if ($null -eq $script:MigrationJobTimeline -or $script:MigrationJobTimeline -isnot [System.Collections.ArrayList]) {
-        $script:MigrationJobTimeline = [System.Collections.ArrayList]@()
-    }
-}
-
-function Format-MigrationJobDuration {
-    param(
-        [AllowNull()]
-        [timespan]$Duration
-    )
-
-    if ($null -eq $Duration) { return '' }
-
-    if ($Duration.TotalDays -ge 1) {
-        return "{0}d {1:hh\:mm\:ss}" -f [math]::Floor($Duration.TotalDays), $Duration
-    }
-
-    $Duration.ToString('hh\:mm\:ss')
-}
-
-function Start-MigrationJob {
-    param(
-        [Parameter(Mandatory)]
-        [string]$Name,
-
-        [datetime]$StartedAt = (Get-Date)
-    )
-
-    Initialize-MigrationJobTimeline
-
-    for ($i = $script:MigrationJobTimeline.Count - 1; $i -ge 0; $i--) {
-        $job = $script:MigrationJobTimeline[$i]
-        if ($null -eq $job.FinishedAt) {
-            $job.FinishedAt = $StartedAt
-            $job.Duration = $StartedAt - [datetime]$job.StartedAt
-            $job.Status = 'Completed'
-            break
-        }
-    }
-
-    $newJob = [pscustomobject]@{
-        Job        = $Name
-        StartedAt  = $StartedAt
-        FinishedAt = $null
-        Duration   = $null
-        Status     = 'Running'
-    }
-
-    $script:JobStartTime[$Name] = $StartedAt
-    $null = $script:MigrationJobTimeline.Add($newJob)
-    $newJob
-}
-
-function Complete-MigrationJob {
-    param(
-        [string]$Name,
-        [datetime]$CompletedAt = (Get-Date),
-        [string]$Status = 'Completed'
-    )
-
-    Initialize-MigrationJobTimeline
-
-    for ($i = $script:MigrationJobTimeline.Count - 1; $i -ge 0; $i--) {
-        $job = $script:MigrationJobTimeline[$i]
-        if ($null -ne $job.FinishedAt) { continue }
-        if (-not [string]::IsNullOrWhiteSpace($Name) -and $job.Job -ne $Name) { continue }
-
-        $job.FinishedAt = $CompletedAt
-        $job.Duration = $CompletedAt - [datetime]$job.StartedAt
-        $job.Status = $Status
-        return $job
-    }
-}
-
-function Get-MigrationJobDurationReport {
-    param(
-        [System.Collections.IEnumerable]$Timeline = $script:MigrationJobTimeline,
-        [datetime]$ReportEndTime = (Get-Date)
-    )
-
-    Initialize-MigrationJobTimeline
-
-    foreach ($job in @($Timeline | Sort-Object StartedAt)) {
-        $startedAt = [datetime]$job.StartedAt
-        $finishedAt = if ($null -ne $job.FinishedAt) { [datetime]$job.FinishedAt } else { $ReportEndTime }
-        $duration = if ($null -ne $job.Duration) { [timespan]$job.Duration } else { $finishedAt - $startedAt }
-
-        [pscustomobject]@{
-            Job             = $job.Job
-            Status          = if ($null -ne $job.FinishedAt) { $job.Status } else { 'Running' }
-            Started         = $startedAt.ToString('yyyy-MM-dd HH:mm:ss')
-            Finished        = $finishedAt.ToString('yyyy-MM-dd HH:mm:ss')
-            Duration        = Format-MigrationJobDuration -Duration $duration
-            DurationSeconds = [math]::Round($duration.TotalSeconds, 2)
-        }
-    }
-}
 
 write-host "Checking your API keys to make sure they are scoped for password access" -ForegroundColor DarkCyan
 $itglueScopeOk = Test-ITGlueAPIKeyPasswordScope
@@ -278,7 +174,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     Write-Host "Loading Previous Companies Migration"
     $MatchedCompanies = Get-Content "$MigrationLogs\Companies.json" -raw | Out-String | ConvertFrom-Json
 } else {
-    $null = Start-MigrationJob -Name "Companies"
+
     #Import Companies
     Write-Host "Fetching Companies from IT Glue" -ForegroundColor Green
     $CompanySelect = { (Get-ITGlueOrganizations -page_size 1000 -page_number $i).data }
@@ -482,7 +378,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     Write-Host "Loading Previous Locations Migration"
     $MatchedLocations = Get-Content "$MigrationLogs\Locations.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
-    $null = Start-MigrationJob -Name "Locations"
     $ITGLocations = $ITGLocations |select @{n='HuduCompanyId';e={ $ITGCompaniesHashTable["$($_.attributes.'organization-id')"].huduid}},*
 
     $LocHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId)`
@@ -632,7 +527,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
     Write-Host "Loading Previous Websites Migration"
     $MatchedWebsites = Get-Content "$MigrationLogs\Websites.json" -raw | Out-String | ConvertFrom-Json
 } else {
-    $null = Start-MigrationJob -Name "Websites"
+
     #Grab existing Websites in Hudu
     $HuduWebsites = Get-HuduWebsites
 
@@ -750,7 +645,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     Write-Host "Loading Previous Configurations Migration"
     $MatchedConfigurations = Get-Content "$MigrationLogs\Configurations.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
-    $null = Start-MigrationJob -Name "Configurations"
 
     #Get Configurations from IT Glue
     Write-Host "Fetching Configurations from IT Glue" -ForegroundColor Green
@@ -1067,7 +961,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     $MatchedContacts = Get-Content "$MigrationLogs\Contacts.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
 
-    $null = Start-MigrationJob -Name "Contacts"
 
     Write-Host "Fetching Contacts from IT Glue" -ForegroundColor Green
     $ContactsSelect = { (Get-ITGlueContacts -page_size 1000 -page_number $i -include related_items).data }
@@ -1229,7 +1122,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     $MatchedLayouts = Get-Content "$MigrationLogs\AssetLayouts.json" -raw | Out-String | ConvertFrom-Json -depth 100
     $AllFields = Get-Content "$MigrationLogs\AssetLayoutsFields.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
-    $null = Start-MigrationJob -Name "Layouts"
 
     $ConfigImportAssetLayoutName = ($MatchedConfigurations.HuduObject | Select-Object name, asset_type | group-object -property asset_type | sort-object count -descending | Select-Object -first 1).name
 
@@ -1545,8 +1437,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
     $RelationsToCreate = [System.Collections.ArrayList](Get-Content "$MigrationLogs\RelationsToCreate.json" -raw | Out-String | ConvertFrom-Json -depth 100)
     $ManualActions = [System.Collections.ArrayList](Get-Content "$MigrationLogs\ManualActions.json" -raw | Out-String | ConvertFrom-Json -depth 100)
 } else {
-    $null = Start-MigrationJob -Name "Assets"
-
     # Load raw passwords for embedded fields and future use
     $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
     
@@ -1779,7 +1669,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
     Write-Host "Loading Article Migration"
     $MatchedArticles = Get-Content "$MigrationLogs\ArticleBase.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
-    $null = Start-MigrationJob -Name "Articles"
 
     if ($ImportArticles -eq $true) {
 
@@ -1825,8 +1714,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 } else {
 	
     if ($ImportArticles -eq $true) {
-        $null = Start-MigrationJob -Name "ArticleContents"
-
         $Attachfiles = Get-ChildItem (Join-Path -Path $ITGLueExportPath -ChildPath "attachments\documents") -recurse
         $ImageMap = $ImageMap ?? @{}
         # Now do the actual work of populating the content of articles
@@ -2055,7 +1942,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     Write-Host "Loading Previous Paswords Migration"
     $MatchedPasswords = Get-Content "$MigrationLogs\Passwords.json" -raw | Out-String | ConvertFrom-Json
 } else {
-    $null = Start-MigrationJob -Name "Passwords"
 
     #Import Passwords
     Write-Host "Fetching Passwords from IT Glue" -ForegroundColor Green
@@ -2300,9 +2186,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 }
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
-
-$null = Start-MigrationJob -Name "LinkReplacement"
-
 $UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
 $UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -like "*$ITGURL*"}
 $UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -like "*$ITGURL*"}
@@ -2429,48 +2312,45 @@ Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
 
 ############################### Wrap-Up ###############################
 
-write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Layouts";
+write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
 if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitored per user-config"} else {$MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}}
 
-write-host "wrapup 2/10... adding attachments and replacing any found attachment links (this can take a while)" ; $null = Start-MigrationJob -Name "Wrap-Up - Attachments";
+write-host "wrapup 2/10... adding attachments and replacing any found attachment links (this can take a while)"
 . .\Add-HuduAttachmentsViaAPI.ps1
-Write-Host "Attachments - enumerating and replacing attachment links in articles"; $null = Start-MigrationJob -Name "Wrap-Up - Attachment Links";
+Write-Host "Attachments - enumerating and replacing attachment links in articles"
 $replacedAttachmentURLs = Start-HuduAttachmentLinkReplacement
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
 if ($true -eq $ImportConfigInterfaces){
-    write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"; $null = Start-MigrationJob -Name "Wrap-Up - IPAM/Networks/Addresses";
+    write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"
     $MatchedInterfaces = Invoke-HuduConfigurationIPAMSync -MatchedConfigurations $MatchedConfigurations
 }
 
 write-host "wrapup 4/10... $(if ($true -eq $allowSettingFlagsAndTypes) {"Setting"} else {"Skipping"}) optional flags and flag types..."
 if ($true -eq $allowSettingFlagsAndTypes){
-    $null = Start-MigrationJob -Name "Wrap-Up - Flags and Flag Types";
     . .\public\Add-HuduFlagsFlagtypes.ps1
 }
 
-write-host "wrapup 5/10... Setting Standalone articles with attachments to filename..."; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
+write-host "wrapup 5/10... Setting Standalone articles with attachments to filename..."
 foreach ($a in $(Get-HuduArticles | where-object {$_.content -eq "Empty Document in IT Glue Export - Please Check IT Glue" -and $_.name -ilike "*.*"})){Set-HuduArticle -id $a.id -content "Please see attached file, $($a.name)"}
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $false} catch {}}
 
 write-host "wrapup 6/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
 if ($true -eq $importPasswordFolders){
-    $null = Start-MigrationJob -Name "Wrap-Up - Password Folders";
     . .\public\Process-PasswordFolders.ps1
 }
 write-host "wrapup 7/10... Placing checklists / checklist templates if user-configured to do so... $($importChecklists)"
 if ($true -eq $importChecklists){
-    $null = Start-MigrationJob -Name "Wrap-Up - Checklists";
     . .\public\Process-Checklists.ps1
 }
 
-write-host "wrapup 8/10... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Relations";
+write-host "wrapup 8/10... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."  -ForegroundColor DarkCyan
 # set retry to off/false in HuduAPI module, this will save time during adding potentially existent relations.
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
 . .\Get-MissingRelations.ps1
 
-write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan;$null = Start-MigrationJob -Name "Wrap-Up - Archiving Items";
+write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan
 $DocsCsv = import-csv "$ITGLueExportPath\documents.csv"
 $ArchivedPasswords = $MatchedPasswords | Where-Object {$_.itgobject.attributes.archived -eq $true}
 $ArchivedConfigurations = $MatchedConfigurations | Where-Object {$_.ITGObject.attributes.archived -eq $true}    
@@ -2491,7 +2371,6 @@ foreach ($obj in @(
 
 write-host "wrapup 10/10... $(if ($true -eq ($shouldRunVaultJob ?? $false)) {"Running"} else {"Skipping"}) vault job to update vaulted passwords with real values..."
 if ($true -eq ($shouldRunVaultJob ?? $false)){
-    $null = Start-MigrationJob -Name "Wrap-Up - Vaulted Passwords";
     . .\Un-Vault-Passwords.ps1
 }
 
@@ -2505,10 +2384,9 @@ foreach ($auxilliaryObj in @(@{Name="UnvaultedPasswords"; Created = $unvaultedMa
 }
 
 $CompletedAt = Get-Date
-$null = Complete-MigrationJob -Name "Wrap-Up" -CompletedAt $CompletedAt
+$Duration = New-TimeSpan -Start $ScriptStartTime -End $CompletedAt
+$CompletedAt = Get-Date
 $Duration = $CompletedAt - $ScriptStartTime
-$JobDurationReport = @(Get-MigrationJobDurationReport -ReportEndTime $CompletedAt)
-$JobDurationSummary = ($JobDurationReport | Select-Object Job, Status, Started, Finished, Duration | Format-Table -AutoSize | Out-String).TrimEnd()
 
 $MatchedChecklistsForSummary = @($MatchedChecklists | Where-Object { $_ })
 $GlobalProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedure -and -not $_.HuduProcedure.company_id }).Count
@@ -2545,18 +2423,6 @@ $archivedItems = [ordered]@{
     'Documents Archived'       = $documentArchiveResults.count ?? 0
 }
 $MigrationSummary = "$(Format-MigrationSummary -ScriptStartTime $ScriptStartTime -CompletedAt $CompletedAt -Duration $Duration -DebugFolder ($debugFolder ?? "$PSScriptRoot\debug") -MigrationLogs ($MigrationLogs ?? "$PSScriptRoot\debug\logs") -migratedItems $migratedItems -archivedItems $archivedItems)"
-if ($JobDurationReport.Count -gt 0) {
-    $MigrationSummary = @(
-        $MigrationSummary
-        '-------------------------------------------------------'
-        'Job Durations'
-        '-------------------------------------------------------'
-        $JobDurationSummary
-    ) -join [Environment]::NewLine
-
-    $JobDurationReport | ConvertTo-Json -Depth 5 | Out-File "$MigrationLogs\JobDurations.json" -Encoding utf8
-    $JobDurationSummary | Out-File "$MigrationLogs\JobDurations.txt" -Encoding utf8
-}
 $MigrationSummary | Out-File -FilePath "$MigrationLogs\MigrationSummary.txt" -Encoding utf8
 Format-ManualActionsReport -ManualActions $ManualActions -OutputPath "$MigrationLogs\ManualActions.html" -summary $MigrationSummary
 Write-Host $MigrationSummary -ForegroundColor DarkCyan
