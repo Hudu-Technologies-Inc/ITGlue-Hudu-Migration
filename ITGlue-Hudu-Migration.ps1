@@ -1541,16 +1541,21 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $ConfigsLinked -AssetName $UpdateAsset.Name
 											
                             } "Documents" { $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Article'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Articles $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true
-                            } "Domains" { 
-                                $DomainsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $MatchedWebsites | Where-Object { $_.ITGID -eq $IDMatch.id }
-                                } 
-                                $DomainsLinked | ForEach-Object {
-                                    if ($WebsiteRelation = New-HuduRelation -FromableType 'Asset' -ToableType 'Website' -FromableID $UpdateAsset.HuduID -ToableID $_.HuduID) {
-                                        Write-Host "Successully Created relation to $($WebsiteRelation.relation.name)"
-                                    } else {
-                                        Write-Host "Tags to Websites are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false 
-                                }}
+                            } "Domains" {
+                                if ($true -ne $ImportDomains) {
+                                    Write-Host "Skipping website/domain tags for $($field.FieldName) in $($UpdateAsset.Name) because website migration is disabled." -ForegroundColor Yellow
+                                    $supported = $false
+                                } else {
+                                    $DomainsLinked = foreach ($IDMatch in $ITGValues.values) {
+                                        $MatchedWebsites | Where-Object { $_.ITGID -eq $IDMatch.id -and -not [string]::IsNullOrWhiteSpace([string]$_.HuduID) }
+                                    }
+                                    $DomainsLinked | ForEach-Object {
+                                        if ($WebsiteRelation = New-HuduRelation -FromableType 'Asset' -ToableType 'Website' -FromableID $UpdateAsset.HuduID -ToableID $_.HuduID) {
+                                            Write-Host "Successully Created relation to $($WebsiteRelation.relation.name)"
+                                        } else {
+                                            Write-Host "Tags to Websites are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false
+                                    }}
+                                }
                             } "Passwords" { 
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'AssetPassword'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Password $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true 
                             } "Locations" {
