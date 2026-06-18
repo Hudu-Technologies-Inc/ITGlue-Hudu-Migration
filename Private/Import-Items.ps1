@@ -141,8 +141,12 @@ function Import-Items {
         if ($UnmappedImportCount -eq 0) {
             Write-Host "All $MigrationName matched, no migration required" -foregroundcolor green
         } else {
-            Write-Host "Warning Import $MigrationName is set to disabled so the above unmatched $MigrationName will not have data migrated" -foregroundcolor red
-            Read-Host -Prompt "Press any key to continue or CTRL+C to quit" 
+            if ($($NonInteractive ?? $true) -eq $true) {
+                Write-Host "Warning Import $MigrationName is set to disabled so the above unmatched $MigrationName will not have data migrated" -foregroundcolor red
+            } else {
+                Write-Host "Warning Import $MigrationName is set to disabled so the above unmatched $MigrationName will not have data migrated" -foregroundcolor red
+                Read-Host -Prompt "Press any key to continue or CTRL+C to quit" 
+            }
         }
     }
 	
