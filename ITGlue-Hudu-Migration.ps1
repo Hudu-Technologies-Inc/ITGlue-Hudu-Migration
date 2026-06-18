@@ -81,7 +81,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
-. $PSScriptRoot\Public\Start-Job.ps1
+. $PSScriptRoot\Public\Timed-Job.ps1
 ############################### End of Functions ###############################
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
