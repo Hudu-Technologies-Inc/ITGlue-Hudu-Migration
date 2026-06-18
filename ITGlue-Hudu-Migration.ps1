@@ -81,7 +81,6 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
 ############################### End of Functions ###############################
 
-
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
 ###################### Initial Setup and Confirmations ###############################

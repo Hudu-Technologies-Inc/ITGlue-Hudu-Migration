@@ -726,3 +726,72 @@ You run it entirely at your own risk
 You accept full responsibility for any problems caused by running it
 ######################################################
 "@
+
+function ConvertTo-HuduCustomFieldArray {
+    param(
+        [Parameter(Mandatory)]
+        [System.Collections.IDictionary]$Fields
+    )
+
+    $normalizedFields = [ordered]@{}
+    foreach ($field in $Fields.GetEnumerator()) {
+        $fieldKey = ("$($field.Key)".Trim() -replace '_', ' ').ToLowerInvariant()
+        $normalizedFields[$fieldKey] = $field.Value
+    }
+
+    foreach ($field in $normalizedFields.GetEnumerator()) {
+        $customField = @{}
+        $customField[$field.Key] = $field.Value
+        $customField
+    }
+}
+
+function New-ITGlueMigrationAssetFields {
+    param(
+        [Parameter(Mandatory)]
+        $ITGAsset
+    )
+
+    [ordered]@{
+        'Imported from ITGlue'  = Get-Date -Format "o"
+        'ITGlue URL'            = $ITGAsset.attributes.'resource-url'
+        'ITGlue ID'             = $ITGAsset.id
+        'ITG Date Created'      = Get-CoercedDate $ITGAsset.attributes.'created-at'
+        'ITG Date Last Updated' = Get-CoercedDate $ITGAsset.attributes.'updated-at'
+    }
+}
+
+function New-ITGlueMigrationMetadataLayoutFields {
+    @(
+        @{
+            label        = 'ITG Date Created'
+            field_type   = 'Date'
+            show_in_list = 'true'
+            position     = 498
+        },
+        @{
+            label        = 'ITG Date Last Updated'
+            field_type   = 'Date'
+            show_in_list = 'true'
+            position     = 499
+        },
+        @{
+            label        = 'Imported from ITGlue'
+            field_type   = 'Date'
+            show_in_list = 'false'
+            position     = 500
+        },
+        @{
+            label        = 'ITGlue URL'
+            field_type   = 'Text'
+            show_in_list = 'false'
+            position     = 501
+        },
+        @{
+            label        = 'ITGlue ID'
+            field_type   = 'Text'
+            show_in_list = 'false'
+            position     = 502
+        }
+    )
+}
