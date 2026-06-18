@@ -2447,9 +2447,9 @@ write-host "wrapup 10/10... $(if ($true -eq ($shouldRunVaultJob ?? $false)) {"Ru
 if ($true -eq ($shouldRunVaultJob ?? $false)){
     $null = Start-MigrationJob -Name "Wrap-Up - Vaulted Passwords";
     . .\Un-Vault-Passwords.ps1
-    $null = Complete-MigrationJob -Name "Wrap-Up - Vaulted Passwords" -CompletedAt $CompletedAt
+    $null = Complete-MigrationJob -Name "Wrap-Up - Vaulted Passwords" -CompletedAt $(Get-Date)
 } else {
-    $null = Complete-MigrationJob -Name "Wrap-Up - Archiving Items" -CompletedAt $CompletedAt
+    $null = Complete-MigrationJob -Name "Wrap-Up - Archiving Items" -CompletedAt $(Get-Date)
 }
 
 ############################### End ###############################
