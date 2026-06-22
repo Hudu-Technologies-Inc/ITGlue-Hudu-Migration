@@ -793,9 +793,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             position     = 20
         },
         @{
-            label        = 'Location Name'
-            field_type   = 'Text'
+            label        = 'Location'
+            field_type   = 'AssetTag'
             show_in_list = 'false'
+            linkable_id  = $LocationLayout.ID
             position     = 21
         },
         @{
@@ -852,7 +853,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
             'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
-            'location name'             = $unmatchedImport."ITGObject".attributes."location-name"
+            'location'                  = $ITGLocationsHashTable["$($unmatchedImport."ITGObject".attributes.'location-id')"] | Select-Object @{N='id';E={$_.HuduID}}, @{N='name';E={$_.Name}} | convertto-json -AsArray -Compress | out-string
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
             'ITG Date Created'          = $unmatchedImport."ITGObject".attributes."created-at"	
@@ -880,7 +881,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
             'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
-            'location name'             = $unmatchedImport."ITGObject".attributes."location-name"
+            'location'                  = $ITGLocationsHashTable["$($unmatchedImport."ITGObject".attributes.'location-id')"] | Select-Object @{N='id';E={$_.HuduID}}, @{N='name';E={$_.Name}} | convertto-json -AsArray -Compress | out-string
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
             'ITG Date Created'          = $unmatchedImport."ITGObject".attributes."created-at"	
