@@ -164,7 +164,7 @@ if ($backups -notin @("Y", "y")) {
 # Setup some variables
 $MatchedInterfaces = [System.Collections.ArrayList]@()
 $ManualActions = [System.Collections.ArrayList]@()
-$MergedOrganizationSettings = @{Types        = @(); TargetCompany = $null;}
+$MergedOrganizationSettings = @{Types        = @(); TargetCompany = $null;}; $ITGLocationsHashTable = @{};
 $MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders = $preloadedPassFolders ?? @{}; $ITGlueSSLCerts = @(); $objectFlagMap = $objectFlagMap ?? @{};
 $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@(); 
 $ErroredItemsFolder = if ($ErroredItemsFolder) {$ErroredItemsFolder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
@@ -516,7 +516,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     #Import Locations
     $MatchedLocations = Import-Items @LocImportSplat
 
-    $ITGLocationsHashTable = @{}
     foreach ($ITGL in $($MatchedLocations ?? @())) {
         $ITGLocationsHashTable[$ITGL.itgid] = $ITGL
     }
