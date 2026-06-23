@@ -2378,7 +2378,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 $null = Start-MigrationJob -Name "LinkReplacement"
 
 $UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
-$UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -like "*$ITGURL*"}
+$UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject -and $_.HuduObject.fields}
 $UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -like "*$ITGURL*"}
 $UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object {$_.ITGObject.attributes.notes -like "*$ITGURL*"}
 $UpdateCompanyNotes = $MatchedCompanies | Where-Object {$_.HuduCompanyObject.notes -like "*$ITGURL*"}
@@ -2408,29 +2408,33 @@ Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Article URLs Replaced. C
 
 # Assets
 $assetsUpdated = @()
+$AssetLayoutCache = @{}
 foreach ($assetFound in $UpdateAssets.HuduObject) {
     $originalAsset = $assetFound
     $replacedStatus = 'clean'
     $customFields = @()
 
     foreach ($field in $assetFound.fields) {
-        # Convert the caption to snake_case to match API expectations for 2.37.1
-        $label = ($field.caption -replace '[^\w\s]', '') -replace '\s+', '_' | ForEach-Object { $_.ToLower() }
+        $FieldEntry = Get-HuduAssetFieldEntry -Field $field
+        $label = $FieldEntry.Key
+        $FieldValue = $FieldEntry.Value
+        if ([string]::IsNullOrWhiteSpace($label)) { continue }
 
-        if ($label -in @('itglue_url', 'itglue_id', 'imported_from_itglue') -and $field.value -like "*$ITGURL*") {
-            $NewContent = Update-StringWithCaptureGroups -inputString $field.value -pattern $RichRegexPatternToMatchSansAssets -type "rich"
+        if (Test-HuduAssetFieldIsRichText -Asset $assetFound -Field $field -AssetLayoutCache $AssetLayoutCache) {
+            $NewContent = Update-StringWithCaptureGroups -inputString "$FieldValue" -pattern $RichRegexPatternToMatchSansAssets -type "rich"
             $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
+            $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorUrlPatternToMatch -type "rich"
+            $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorRelativeURLPatternToMatch -type "rich"
 
-            if ($NewContent -and $NewContent -ne $field.value) {
-                Write-Host "Replacing Asset $($assetFound.name) field $($field.caption) with updated content" -ForegroundColor 'Red'
+            if ($NewContent -and $NewContent -ne $FieldValue) {
+                Write-Host "Replacing Asset $($assetFound.name) field $($FieldEntry.Label) with updated content" -ForegroundColor 'Red'
                 $customFields += @{ $label = $NewContent }
                 $replacedStatus = 'replaced'
             } else {
-                $customFields += @{ $label = $field.value }
+                $customFields += @{ $label = $FieldValue }
             }
         } else {
-            # For other fields, preserve existing value (optional)
-            $customFields += @{ $label = $field.value }
+            $customFields += @{ $label = $FieldValue }
         }
     }
 

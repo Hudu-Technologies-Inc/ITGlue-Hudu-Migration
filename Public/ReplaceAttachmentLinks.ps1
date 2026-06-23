@@ -53,6 +53,10 @@ param(
                 $AttachmentId = $Matches.AttachmentId
                 $AttachmentPaths = @(
                     "/attachments/$AttachmentId"
+                    "/attachments/$AttachmentId`?edit"
+                    "/attachments/$AttachmentId`?edit=1"
+                    "/attachments/$AttachmentId`?edit=true"
+                    "/attachments/$AttachmentId`?preview"
                     "/attachments/$AttachmentId`?preview=1"
                     "/attachments/$AttachmentId`?preview=true"
                 )
@@ -66,6 +70,10 @@ param(
         elseif ($OriginalUrl -match '/(?:files|attachments)/(?<AttachmentId>\d{1,20})(?=$|[/?#])') {
             $AttachmentId = $Matches.AttachmentId
             $Candidates += "/attachments/$AttachmentId"
+            $Candidates += "/attachments/$AttachmentId`?edit"
+            $Candidates += "/attachments/$AttachmentId`?edit=1"
+            $Candidates += "/attachments/$AttachmentId`?edit=true"
+            $Candidates += "/attachments/$AttachmentId`?preview"
             $Candidates += "/attachments/$AttachmentId`?preview=1"
             $Candidates += "/attachments/$AttachmentId`?preview=true"
         }
@@ -97,7 +105,7 @@ param(
 )
     if ([string]::IsNullOrWhiteSpace($Content)) { return @() }
 
-    $AttachmentPattern = '(?:https?://[^"''\s<>]+)?/attachments/\d{1,20}(?:\?preview=(?:1|true))?'
+    $AttachmentPattern = '(?:https?://[^"''\s<>]+)?/attachments/\d{1,20}(?:\?(?:edit|preview)(?:=(?:1|true))?)?'
     @(
         [regex]::Matches($Content, $AttachmentPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase) |
             ForEach-Object { $_.Value } |
@@ -166,38 +174,18 @@ param(
     (($Label -replace '[^\w\s]', '') -replace '\s+', '_').ToLower()
 }
 
-function Get-HuduAssetObject {
-param(
-    $Asset
-)
-    if ($Asset.HuduObject) { return $Asset.HuduObject }
-    return $Asset
-}
-
-function Get-HuduAssetFieldLabel {
-param(
-    $Field
-)
-    if ($Field -is [System.Collections.IDictionary] -and $Field.Keys.Count -eq 1) {
-        return [string]@($Field.Keys)[0]
-    }
-
-    $Properties = @($Field.PSObject.Properties | Where-Object { $_.MemberType -in 'NoteProperty','Property' })
-    if ($Properties.Count -eq 1) {
-        return [string]$Properties[0].Name
-    }
-
-    @(
-        $Field.label
-        $Field.caption
-        $Field.name
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
-}
-
 function Get-HuduAssetFieldEntry {
 param(
     $Field
 )
+    if ($Field.label) {
+        return [pscustomobject]@{
+            Label = $Field.label
+            Key   = ConvertTo-HuduAssetFieldKey -Label $Field.label
+            Value = $Field.value
+        }
+    }
+
     if ($Field -is [System.Collections.IDictionary] -and $Field.Keys.Count -eq 1) {
         $Key = [string]@($Field.Keys)[0]
         return [pscustomobject]@{
@@ -216,7 +204,7 @@ param(
         }
     }
 
-    $Label = Get-HuduAssetFieldLabel -Field $Field
+    $Label = $Field.label
     return [pscustomobject]@{
         Label = $Label
         Key   = ConvertTo-HuduAssetFieldKey -Label $Label
@@ -228,11 +216,7 @@ function Get-HuduAssetLayoutId {
 param(
     $Asset
 )
-    $LayoutId = $Asset.asset_layout_id
-    if (-not $LayoutId -and $Asset.asset_layout) {
-        $LayoutId = $Asset.asset_layout.id
-    }
-    return $LayoutId
+    return $Asset.asset_layout_id ?? $Asset.asset_layout.id
 }
 
 function Get-HuduAssetLayoutFields {
@@ -260,21 +244,19 @@ param(
         $Layout = $AssetLayouts | Where-Object {
             $_.id -eq $LayoutId -or $_.HuduID -eq $LayoutId -or $_.HuduObject.id -eq $LayoutId
         } | Select-Object -First 1
-        if ($Layout.HuduObject) { $Layout = $Layout.HuduObject }
-        if ($Layout.asset_layout) { $Layout = $Layout.asset_layout }
+        $Layout = $Layout.HuduObject ?? $Layout.asset_layout ?? $Layout
     }
 
     if (-not $Layout -and $MatchedLayouts) {
         $Layout = $MatchedLayouts | Where-Object {
             $_.id -eq $LayoutId -or $_.HuduID -eq $LayoutId -or $_.HuduObject.id -eq $LayoutId
         } | Select-Object -First 1
-        if ($Layout.HuduObject) { $Layout = $Layout.HuduObject }
-        if ($Layout.asset_layout) { $Layout = $Layout.asset_layout }
+        $Layout = $Layout.HuduObject ?? $Layout.asset_layout ?? $Layout
     }
 
     if (-not $Layout -and (Get-Command Get-HuduAssetLayouts -ErrorAction SilentlyContinue)) {
         $Layout = Get-HuduAssetLayouts -layoutid $LayoutId
-        if ($Layout.asset_layout) { $Layout = $Layout.asset_layout }
+        $Layout = $Layout.asset_layout ?? $Layout
     }
 
     if ($Layout -and $AssetLayoutCache) {
@@ -303,16 +285,13 @@ param(
         $Field.kind
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
-    if ($FieldTypeValues | Where-Object { "$_" -ieq 'RichText' -or "$_" -ieq 'Textbox' }) {
-        return $true
+    if ($FieldTypeValues) {
+        return [bool]($FieldTypeValues | Where-Object { "$_" -ieq 'RichText' -or "$_" -ieq 'Textbox' })
     }
 
     $LayoutFields = Get-HuduAssetLayoutFields -Asset $Asset -AssetLayouts $AssetLayouts -AssetLayoutCache $AssetLayoutCache
     foreach ($LayoutField in $LayoutFields) {
-        $LayoutFieldLabel = $LayoutField.label
-        if ([string]::IsNullOrWhiteSpace($LayoutFieldLabel)) { $LayoutFieldLabel = $LayoutField.name }
-        if ([string]::IsNullOrWhiteSpace($LayoutFieldLabel)) { $LayoutFieldLabel = $LayoutField.caption }
-        $LayoutFieldKey = ConvertTo-HuduAssetFieldKey -Label $LayoutFieldLabel
+        $LayoutFieldKey = ConvertTo-HuduAssetFieldKey -Label $LayoutField.label
         if ($LayoutFieldKey -eq $FieldKey) {
             return ($LayoutField.field_type -ieq 'RichText')
         }
@@ -343,7 +322,7 @@ param(
 
 function Get-HuduAssetsForAttachmentLinkReplacement {
     if ($MatchedAssets) {
-        return @($MatchedAssets | ForEach-Object { Get-HuduAssetObject -Asset $_ } | Where-Object { $_ })
+        return @($MatchedAssets | ForEach-Object { $_.HuduObject ?? $_.asset ?? $_ } | Where-Object { $_ })
     }
 
     if (Get-Command Get-HuduAssets -ErrorAction SilentlyContinue) {
@@ -362,7 +341,7 @@ param(
 )
     $AssetLayoutCache = @{}
     $Results = foreach ($AssetInput in $Assets) {
-        $Asset = Get-HuduAssetObject -Asset $AssetInput
+        $Asset = $AssetInput.HuduObject ?? $AssetInput.asset ?? $AssetInput
         if (-not $Asset -or -not $Asset.fields) {
             [pscustomobject]@{
                 Status       = 'skipped'
@@ -444,15 +423,8 @@ param(
         try {
             $UpdatedAsset = $null
             if ($PSCmdlet.ShouldProcess("Asset $($Asset.id) '$($Asset.name)'", "replace attachment links in rich text fields")) {
-                $AssetPost = Invoke-HuduRequest -Method PUT -Resource "api/v1/companies/$($Asset.company_id)/assets/$($Asset.id)" -Body @{
-                    name            = $Asset.name
-                    asset_layout_id = Get-HuduAssetLayoutId -Asset $Asset
-                    custom_fields   = $CustomFields
-                } -ErrorAction Stop
-                $UpdatedAsset = $AssetPost.asset
-                if (-not $UpdatedAsset) {
-                    $UpdatedAsset = $AssetPost
-                }
+                $UpdatedAssetResponse = Set-HuduAsset -asset_id $Asset.id -name $Asset.name -company_id $Asset.company_id -asset_layout_id (Get-HuduAssetLayoutId -Asset $Asset) -fields $CustomFields -ErrorAction Stop
+                $UpdatedAsset = $UpdatedAssetResponse.asset ?? $UpdatedAssetResponse
             }
 
             [pscustomobject]@{

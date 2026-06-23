@@ -33,6 +33,175 @@ $TextRegexPatternToMatchSansAssets = "$EscapedITGURL/([0-9]{1,20})/(docs|passwor
 $TextRegexPatternToMatchWithAssets = "$EscapedITGURL/([0-9]{1,20})/(assets)/.*?/([0-9]{1,20})"
 $TextDocLocatorUrlPatternToMatch = "$EscapedITGURL/(DOC-[0-9]{0,20}-[0-9]{0,20}).*(?= )"
 
+function Remove-ITGlueUrlSuffixJunk {
+    param(
+        [AllowEmptyString()]
+        [string]$Url
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $Url }
+
+    $DecodedUrl = [System.Net.WebUtility]::HtmlDecode($Url)
+    if ($DecodedUrl -match '[?#].*(version=|documentMode=|preview(?:=|&|$)|edit(?:=|&|$))') {
+        return ($DecodedUrl -split '[?#]', 2)[0]
+    }
+
+    return $DecodedUrl
+}
+
+function Get-HuduUrlRewriteTarget {
+    param(
+        $MatchedItem,
+        [string]$FallbackName
+    )
+
+    if (-not $MatchedItem) { return $null }
+    $Item = @($MatchedItem | Select-Object -First 1)[0]
+    if (-not $Item) { return $null }
+
+    $HuduObject = $Item.HuduObject
+    if (-not $HuduObject -and $Item.HuduCompanyObject) { $HuduObject = $Item.HuduCompanyObject }
+    if (-not $HuduObject -and $Item.HuduCompany) { $HuduObject = $Item.HuduCompany }
+
+    $HuduUrl = $HuduObject.url
+    if (-not $HuduUrl -and $Item.url) { $HuduUrl = $Item.url }
+    if (-not $HuduUrl -and $HuduBaseDomain -and $Item.HuduID) {
+        $HuduUrl = "$($HuduBaseDomain.TrimEnd('/'))/companies/$($Item.HuduID)"
+    }
+
+    if (-not $HuduUrl) { return $null }
+
+    $HuduName = $HuduObject.name
+    if (-not $HuduName) { $HuduName = $Item.Name }
+    if (-not $HuduName) { $HuduName = $FallbackName }
+
+    [pscustomobject]@{
+        Url  = $HuduUrl.replace('http://','https://')
+        Name = $HuduName
+    }
+}
+
+function Test-ITGlueHrefCandidate {
+    param(
+        [AllowEmptyString()]
+        [string]$Href
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Href)) { return $false }
+
+    $DecodedHref = [System.Net.WebUtility]::HtmlDecode($Href)
+    if ($DecodedHref -match "^$EscapedITGURL(?:/|$)") { return $true }
+    if ($DecodedHref -match '^/?DOC-[0-9]{1,20}-[0-9]{1,20}(?:[?#].*)?$') { return $true }
+    if ($DecodedHref -match '^/[0-9]{1,20}/(docs|passwords|configurations|assets|domains)(?:/|[?#]|$)') { return $true }
+
+    return $false
+}
+
+function Resolve-ITGlueHrefToHuduTarget {
+    param(
+        [string]$Href
+    )
+
+    if (-not (Test-ITGlueHrefCandidate -Href $Href)) { return $null }
+
+    $CleanHref = Remove-ITGlueUrlSuffixJunk -Url $Href
+    if ([string]::IsNullOrWhiteSpace($CleanHref)) { return $null }
+
+    if ($CleanHref -match '^/?(?<Locator>DOC-[0-9]{1,20}-[0-9]{1,20})$') {
+        return Get-HuduUrlRewriteTarget -MatchedItem ($MatchedArticles | Where-Object { $_.ITGLocator -eq $Matches.Locator }) -FallbackName $Matches.Locator
+    }
+
+    $Path = [regex]::Replace($CleanHref, "^$EscapedITGURL", '')
+    if ($Path -notmatch '^/') { return $null }
+
+    if ($Path -notmatch '^/(?<CompanyId>[0-9]{1,20})/(?<Resource>docs|passwords|configurations|assets|domains)(?:/(?<Rest>[^?#]*))?$') {
+        return $null
+    }
+
+    $CompanyId = $Matches.CompanyId
+    $Resource = $Matches.Resource
+    $Rest = $Matches.Rest
+    $IdMatches = [regex]::Matches($Rest, '[0-9]{1,20}')
+    $ResourceId = if ($IdMatches.Count -gt 0) { $IdMatches[$IdMatches.Count - 1].Value } else { $null }
+
+    switch ($Resource) {
+        'docs' {
+            if ($ResourceId) {
+                return Get-HuduUrlRewriteTarget -MatchedItem ($MatchedArticles | Where-Object { $_.ITGID -eq $ResourceId }) -FallbackName "Document $ResourceId"
+            }
+        }
+        'passwords' {
+            if ($ResourceId) {
+                $PasswordMatch = @($MatchedPasswords | Where-Object { $_.ITGID -eq $ResourceId })
+                if (-not $PasswordMatch -or $PasswordMatch.Count -lt 1) {
+                    $PasswordMatch = @($MatchedAssetPasswords | Where-Object { $_.ITGID -eq $ResourceId })
+                }
+                return Get-HuduUrlRewriteTarget -MatchedItem $PasswordMatch -FallbackName "Password $ResourceId"
+            }
+        }
+        'configurations' {
+            if ($ResourceId) {
+                return Get-HuduUrlRewriteTarget -MatchedItem ($MatchedConfigurations | Where-Object { $_.ITGID -eq $ResourceId }) -FallbackName "Configuration $ResourceId"
+            }
+        }
+        'assets' {
+            if ($ResourceId) {
+                return Get-HuduUrlRewriteTarget -MatchedItem ($MatchedAssets | Where-Object { $_.ITGID -eq $ResourceId }) -FallbackName "Asset $ResourceId"
+            }
+        }
+        'domains' {
+            if ($ResourceId) {
+                return Get-HuduUrlRewriteTarget -MatchedItem ($MatchedWebsites | Where-Object { $_.ITGID -eq $ResourceId }) -FallbackName "Domain $ResourceId"
+            }
+
+            return Get-HuduUrlRewriteTarget -MatchedItem ($MatchedCompanies | Where-Object { $_.ITGID -eq $CompanyId }) -FallbackName "Company $CompanyId"
+        }
+    }
+
+    return $null
+}
+
+function Update-HuduRichTextITGlueHrefs {
+    param(
+        [AllowEmptyString()]
+        [string]$Content
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Content)) { return $Content }
+
+    $HrefPattern = '(?i)(?<Prefix>\bhref\s*=\s*)(?<Quote>["''])(?<Href>.*?)(\k<Quote>)'
+
+    [regex]::Replace(
+        $Content,
+        $HrefPattern,
+        [System.Text.RegularExpressions.MatchEvaluator]{
+            param($Match)
+
+            $OriginalHref = $Match.Groups['Href'].Value
+            $IsITGlueHref = Test-ITGlueHrefCandidate -Href $OriginalHref
+            $CleanHref = if ($IsITGlueHref) {
+                Remove-ITGlueUrlSuffixJunk -Url $OriginalHref
+            } else {
+                [System.Net.WebUtility]::HtmlDecode($OriginalHref)
+            }
+            $Target = Resolve-ITGlueHrefToHuduTarget -Href $OriginalHref
+
+            $ReplacementHref = if ($Target -and $Target.Url) {
+                $Target.Url
+            } elseif ($IsITGlueHref -and $CleanHref -ne [System.Net.WebUtility]::HtmlDecode($OriginalHref)) {
+                $CleanHref
+            } else {
+                $null
+            }
+
+            if (-not $ReplacementHref) { return $Match.Value }
+
+            $EncodedHref = [System.Net.WebUtility]::HtmlEncode($ReplacementHref)
+            return "$($Match.Groups['Prefix'].Value)$($Match.Groups['Quote'].Value)$EncodedHref$($Match.Groups['Quote'].Value)"
+        }
+    )
+}
+
 function Update-StringWithCaptureGroups {
     [cmdletbinding()]
     param (
@@ -43,6 +212,10 @@ function Update-StringWithCaptureGroups {
       [Parameter(Mandatory=$true, Position=2)]
       [string]$type
     )
+
+    if ($type -eq 'rich') {
+        $inputString = Update-HuduRichTextITGlueHrefs -Content $inputString
+    }
   
     $regex = [regex]::new($pattern)
     
