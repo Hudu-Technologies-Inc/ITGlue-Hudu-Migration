@@ -40,9 +40,10 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
 
     foreach ($field in $assetFound.fields) {
         $FieldEntry = Get-HuduAssetFieldEntry -Field $field
-        $label = $FieldEntry.Key
+        $label = $FieldEntry.Label
         $FieldValue = $FieldEntry.Value
         if ([string]::IsNullOrWhiteSpace($label)) { continue }
+        if ([string]::IsNullOrWhiteSpace([string]$FieldValue)) { continue }
 
         if (Test-HuduAssetFieldIsRichText -Asset $assetFound -Field $field -AssetLayoutCache $AssetLayoutCache) {
             $NewContent = Update-StringWithCaptureGroups -inputString "$FieldValue" -pattern $RichRegexPatternToMatchSansAssets -type "rich"

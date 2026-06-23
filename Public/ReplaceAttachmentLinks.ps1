@@ -363,6 +363,7 @@ param(
             $FieldLabel = $FieldEntry.Label
             $FieldKey = $FieldEntry.Key
             if ([string]::IsNullOrWhiteSpace($FieldKey)) { continue }
+            if ([string]::IsNullOrWhiteSpace($FieldLabel)) { continue }
 
             $FieldValue = $FieldEntry.Value
             if (Test-HuduAssetFieldIsRichText -Asset $Asset -Field $Field -AssetLayouts $AssetLayouts -AssetLayoutCache $AssetLayoutCache) {
@@ -371,7 +372,7 @@ param(
                 if ($Updated.Changed) {
                     Write-Host "Replacing $($Updated.Replacements.Count) attachment URL set(s) in asset '$($Asset.name)' field '$FieldLabel'" -ForegroundColor Green
                     $FieldValue = $Updated.Content
-                    $CustomFields += @{ $FieldKey = $FieldValue }
+                    $CustomFields += @{ $FieldLabel = $FieldValue }
                     $AssetReplacements += foreach ($Replacement in $Updated.Replacements) {
                         [pscustomobject]@{
                             FieldName      = $FieldLabel
