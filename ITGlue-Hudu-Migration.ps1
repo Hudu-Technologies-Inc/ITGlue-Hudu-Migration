@@ -2430,27 +2430,20 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
                 Write-Host "Replacing Asset $($assetFound.name) field $($FieldEntry.Label) with updated content" -ForegroundColor 'Red'
                 $customFields += @{ $label = $NewContent }
                 $replacedStatus = 'replaced'
-            } else {
-                $customFields += @{ $label = $FieldValue }
-            }
-        } else {
-            $customFields += @{ $label = $FieldValue }
+            } 
         }
     }
 
     if ($replacedStatus -eq 'replaced') {
         Write-Host "Updating Asset $($assetFound.name) with new custom_fields array" -ForegroundColor 'Green'
-        $AssetPost = Invoke-HuduRequest -Method PUT -Resource "api/v1/companies/$($assetFound.company_id)/assets/$($assetFound.id)" -Body @{
-            name              = $assetFound.name
-            asset_layout_id   = $assetFound.asset_layout_id
-            custom_fields     = $customFields
-        }
+        $AssetPost = Set-huduAsset -CompanyID $assetFound.company_id -Id $assetFound.id -fields @($customFields)
+        $AssetPost = $assetPost.asset ?? $assetPost
     }
 
     $assetsUpdated += @{
         status         = $replacedStatus
         original_asset = $originalAsset
-        updated_asset  = $AssetPost.asset
+        updated_asset  = $AssetPost
     }
 }
 
