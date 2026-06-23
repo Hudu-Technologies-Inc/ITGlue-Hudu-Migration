@@ -1,5 +1,10 @@
 function Start-ITGlueToHuduURLRewrite {
 
+$MigrationLogMountScript = Join-Path $PSScriptRoot '..\Private\Mount-HuduMigrationLogs.ps1'
+if (Test-Path -LiteralPath $MigrationLogMountScript) {
+    . $MigrationLogMountScript
+}
+
 $UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
 $UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject -and $_.HuduObject.fields}
 $UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -like "*$ITGURL*"}
