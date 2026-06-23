@@ -34,6 +34,7 @@ $assetsUpdated = @()
 $AssetLayoutCache = @{}
 foreach ($assetFound in $UpdateAssets.HuduObject) {
     $originalAsset = $assetFound
+    $AssetPost = $null
     $replacedStatus = 'clean'
     $customFields = @()
 
@@ -58,7 +59,7 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
     }
 
     if ($replacedStatus -eq 'replaced') {
-        Write-Host "Updating Asset $($assetFound.name) with new custom_fields array" -ForegroundColor 'Green'
+        Write-Host "Updating Asset $($assetFound.name) with changed rich text field(s)" -ForegroundColor 'Green'
         $AssetPost = set-huduasset -companyId $assetFound.company_id -ID $assetFound.id -fields @($customFields)
         $assetPost = $assetPost.asset ?? $assetPost   
     }

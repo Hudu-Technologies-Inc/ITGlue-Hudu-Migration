@@ -371,6 +371,7 @@ param(
                 if ($Updated.Changed) {
                     Write-Host "Replacing $($Updated.Replacements.Count) attachment URL set(s) in asset '$($Asset.name)' field '$FieldLabel'" -ForegroundColor Green
                     $FieldValue = $Updated.Content
+                    $CustomFields += @{ $FieldKey = $FieldValue }
                     $AssetReplacements += foreach ($Replacement in $Updated.Replacements) {
                         [pscustomobject]@{
                             FieldName      = $FieldLabel
@@ -391,8 +392,6 @@ param(
                         }
                 }
             }
-
-            $CustomFields += @{ $FieldKey = $FieldValue }
         }
 
         if ($AssetReplacements.Count -lt 1) {
