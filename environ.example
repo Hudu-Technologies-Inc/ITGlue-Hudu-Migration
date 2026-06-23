@@ -1,19 +1,16 @@
 $project_workdir="$PSScriptRoot"
-$debugFolder=$(join-path "$project_workdir" "debug")
+$debugFolder=$(join-path "$project_workdir" "debug-$(Get-Date -Format o | ForEach-Object { $_ -replace ":", "." })")
 $errors_folder=$(join-path $debugFolder "errors")
 $script:GLOBAL_ERRORS_DIRECTORY="$errors_folder"
-
 # This folder is for migration-level errors to be written
 $script:ITG_ERRORS_DIRECTORY=$(join-path "$errors_folder" "itglue")
-
 # This is the settings folder for your migration preferences and secure-stringified secrets
-$settings_folder=$(join-path "$project_workdir" "debug\settings")
-
+$settings_folder=$(join-path "$debugFolder" "settings")
 # This is for your JSONified state-saving and records saving
-$logs_folder=$(join-path "$project_workdir" "debug\logs")
+$logs_folder=$(join-path "$debugFolder" "logs")
+$defaultSettingsPath=$(join-path "$settings_folder" "settings.json")
 
 # This is your main settings json
-$defaultSettingsPath=$(join-path "$settings_folder" "settings.json")
 
 # Clear paths during main run. Be sure to comment out below if subsequent actions being taken
 foreach ($folder in @($debugFolder, $errors_folder, $logs_folder, $settings_folder, $ITG_ERRORS_DIRECTORY)) {
@@ -50,17 +47,18 @@ $settings = @{
     MigrationLogs           = "$logs_folder"
 
     # include ITGlue ID in Contacts, Websites, Locations
-    IncludeITGlueID            = $true
+    IncludeITGlueID         = $true
 
     # Split configurations into individual asset layouts y/n
-    SplitConfigurations     = $true
+    SplitConfigurations     = $false
 }
 
 # Primary Secrets
 $ITGKey                     = "ITG.key"
 $HuduApiKey                 = "HUDU.key"
 
-$choice                     = "N"
+$ITGlueJWT = "" # "eyJ..." #only needed for checklists
+
 
 # settings folder path
 $importChoice               = "$settings_folder"
@@ -69,56 +67,53 @@ $importChoice               = "$settings_folder"
 $customBrandedDomain        = "n"
 
 # Resume if starting again
-$resumeQuestion             = "yes"
-$reenterChoice              = "Continue"
+$resumeQuestion = "yes"; $reenterChoice = "Continue"; $choice = "N";
 
-# Individual Import Options, below, (1-yes, 2-no)
-$ImportCompanies            = 1
-$ImportLocations            = 1
-$ImportDomains              = 1
-$DisableWebsiteMonitoring   = 1
-$ImportConfigurations       = 1
-$ImportContacts             = 1
-$ImportFlexibleAssetLayouts = 1
-$ImportFlexibleAssets       = 1
-$ImportArticles             = 1
-$ImportPasswords            = 1
-$OptionalImageAnchorReplace = 1
-$ImportConfigInterfaces     = 1 # this creates IPAM addresses + networks in Hudu
 
-# If you want to have script wait for user interaction between steps. Select 1 for yes, 2 for noninteractive/no
-$NonInteractive             = 2
+
+# Individual Import Options
+$ImportCompanies                     = $true  # default true;
+$ImportLocations                     = $true  # default true;
+$ImportDomains                       = $true  # default true;
+$DisableWebsiteMonitoring            = $true  # default true;
+$ImportConfigurations                = $true  # default true;
+$ImportContacts                      = $true  # default true;
+$ImportFlexibleAssetLayouts          = $true  # default true;
+$ImportFlexibleAssets                = $true  # default true;
+$ImportArticles                      = $true  # default true;
+$ImportPasswords                     = $true  # default true;
+$importPasswordFolders               = $true  # default true;
+
+$IncludeIgnoredFirstArticleDirectory = $true  # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
+$ImportConfigInterfaces              = $true  # default true;  this creates IPAM addresses + networks in Hudu
+$NonInteractive                      = $true  # Select $false for interactive steps, $true for noninteractive/no pauses (default)
+$skipIntegratorLayouts               = $true  # do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name
+         
+$allowSettingFlagsAndTypes           = $false # Apply flags and flag types during the migration; requires Hudu 2.40+
+$ScopedMigration                     = $false # If you want to scope migration to just come companies, set to 2/$true  (default 1/$false)
+$MergedOrganizationTypes             = $false # if you want to merge vendors or other org types from ITG into a single organization, set to 2/$true (default 1/$false)
+$importChecklists                    = $false # default false; (requires JWT authentication)
+$GlobalPasswordFolderMode            = $false # or $true
+
 
 # these require JWT authentication to perform [default is 1/false; 2 for true]
-$importPasswordFolders      = 2
-$importChecklists           = 1
-$GlobalPasswordFolderMode = $true # or $false
 $PasswordFolderNameDelimiter = " - " # seperator when concatenating folders in squashed / flattened password folder
 $FolderNamingMode = "Name Based on Full Path with Delimiter" # how to name the password folders which get flattened in hudu.
                     # "Name Based on Root-Level-Directory"
                     # "Name Based on Current/Leaf-Level Directory"
 
-# If you want to scope migration to just come companies, select 2, otherwise leave at 1 for typical, full migration
-$ScopedMigration            = 1
-$MergedOrganizationTypes    = 1
 
-# do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name
+$LocImportAssetLayoutName   = "Locations" # name for locations layout
+$ConImportAssetLayoutName   = "People" # name for contacts/people layout
+$LayoutIconBackGroundColor      = "#6136ff" # hudu-purple background for layout icons
+$LayoutIconForegroundColor      = "#ffffff" # White Foreground for layout icons
 
-$skipIntegratorLayouts = $true
-$OptionalImageAnchorReplace = $true # best to leave this set to 'true'. it replaces anchors to images with the image URL in Hudu.
 
-# Apply flags and flag types during the migration; requires Hudu 2.40+
-$allowSettingFlagsAndTypes  = $false
-
-# pre-designated array/list of prescoped/preselected companies for scoped migration (typically for faster testing)
+# pre-designated array/list of prescoped/preselected companies for scoped migration (for faster testing, ignore this if you want scoped migration, you'll select your own set)
 # prescoped Companies
 # $Prescoped = @(
 # 905
 # 859
 #)
-
-$LocImportAssetLayoutName = "Locations" # name for locations layout
-$ConImportAssetLayoutName = "People" # name for contacts/people layout
-$IncludeIgnoredFirstArticleDirectory = $true # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
 
 . .\ITGlue-Hudu-Migration.ps1

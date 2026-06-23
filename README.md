@@ -39,7 +39,7 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 - IP Addresses / Networks
 - Document Links
 - Password folders (flattened to single-level)
-- ! Checklists / checklist templates (optional, JWT): imported as **Hudu procedures**; add users to Hudu first so assignees can be matched where possible
+- ! Checklists / checklist templates (optional, JWT): imported as **Hudu procedures/processes**; add users to Hudu first so checklist assignees can be matched where possible
 
 Items marked with **!** require **JWT** authentication (ITGlue session token from your browser) and are intended for advanced users. Extracting a JWT requires web access and your browser’s developer tools. If you are unsure, skip these options.
 
@@ -61,7 +61,13 @@ Items marked with **!** require **JWT** authentication (ITGlue session token fro
 
 It's recommended to have a fresh Hudu install with no integrations setup. You'll want to sync things like companies and contacts from your PSA and configurations from your RMM **after** the migration is completed. Don’t setup any custom Asset Layouts and let the migration create the initial assets.
 
-If you have existing asset layouts in Hudu, rename them (for example suffix `"-original"`) before you begin, or use a **layout prefix** in the migration prompts so new ITGlue layouts do not collide with existing Hudu layouts.
+If you have existing asset layouts in Hudu, rename them (for example suffix `"-original"`) before you begin, or use a **layout prefix** in the migration prompts so new ITGlue layouts do not collide with existing Hudu layouts. For newer versions of Hudu, it is recommended that if you are signing in for the first time, to click 'skip setup'
+
+<img width="1135" height="696" alt="image" src="https://github.com/user-attachments/assets/8a9b7e01-8de6-479a-b5de-6e23afdfa470" />
+
+If you've already elected to run through setup, that is fine, but you will need to clear out any asset layouts created as a result. It is slightly easier to 'skip setup' in the first place, but either way is fine, as long as you are using a layout prefix for your migration or (ideally) you've cleaned out any existing layouts before running. (removal pictured below)
+
+<img width="2784" height="1742" alt="image" src="https://github.com/user-attachments/assets/899a777f-c9a5-458a-a1c6-9a9c1fb21cf5" />
 
 **1. Make sure you are on a known-compatible Hudu version**
 
@@ -127,11 +133,12 @@ Make sure the API Key you're using has password access, and that all passwords h
 1. Log into your Hudu tenant as a Super Admin
 2. Go to Admin>API Keys
 3. Click "+ New API Key"
-4. Check off "Full access" and "View Passwords"
-5. Click create
-6. Store the API key in a safe place as Hudu will only show you the key once.
+4. Select "Full access" Radio Button
+5. Check View passwords, Delete data, and ***(future-use)*** Export Data
+6. Click create
+7. Store the API key in a safe place as Hudu will only show you the key once.
 
-<img width="750" alt="IT_Glue_Migration_Guide" src="https://github.com/user-attachments/assets/bf81c7fc-0d0b-4555-b698-1e25fd7da7d3" />
+<img width="1114" height="1016" alt="image" src="https://github.com/user-attachments/assets/450e9107-3f78-4137-88b5-08ecd5da6ca9" />
 
 ## Prerequisites - ***Migration Script Setup***
 
@@ -194,7 +201,34 @@ Any other org types will migrate as usual, but this one org type will be central
 
 ## 3. Checklists and checklist templates (optional, JWT)
 
-When you opt in during the migration, checklists and templates are imported as **Hudu procedures** using a **JWT** from ITGlue (see the **!** items at the top of this document under **What the script does migrate**). Tag-style relations to checklists from other assets are still not migrated—plan for manual cleanup where needed.
+When you opt in during the migration, checklists and checklist templates are imported using a **JWT** from ITGlue (see the **!** items at the top of this document under **What the script does migrate**). Tag-style relations to checklists from other assets are still not migrated--plan for manual cleanup where needed.
+
+ITGlue and Hudu use similar names for different concepts, so the migration follows this model:
+
+| Source | Scope | Reusable | Due dates / assignees | Hudu target |
+| --- | --- | --- | --- | --- |
+| ITGlue checklist template | Admin | Yes | No | Hudu global process template, or company process template when the template is tied to a matched ITGlue organization |
+| ITGlue checklist | Company | No | Sometimes | Hudu process run on Hudu 2.41.0+ only when run-only metadata exists and the checklist's company is matched; otherwise a company/global process template with imported tasks |
+| Hudu global process template | Admin | Reusable across companies | No | Closest ITGlue equivalent: checklist template |
+| Hudu company process template | Company | Reusable inside one company | No | Closest ITGlue equivalent: checklist template |
+| Hudu process run | Company/global/asset | No | Yes | Closest ITGlue equivalent: checklist |
+
+Hudu process mapping:
+
+- ITGlue checklist templates are reusable definitions, so they become Hudu process templates. With a matched company they become company process templates; otherwise they become global process templates.
+- ITGlue checklists become company/global process templates first. On Hudu 2.41.0+, they are kicked off as process runs only when run-only metadata like due dates, assignees, or start/completion dates is present.
+
+
+Checklist template tasks are retrieved from ITGlue's checklist template task endpoint. Checklist tasks and checklist template tasks are not interchangeable, which is why a preloaded checklist cache should be regenerated if it was created before this distinction was added.
+
+In Chrome, you'll need the "JWT Inspector:"
+
+<img width="206" height="276" alt="image" src="https://github.com/user-attachments/assets/fcd43f21-0c6e-47fe-a0af-d3356ebbcc6b" />
+<img width="1502" height="650" alt="image" src="https://github.com/user-attachments/assets/7432610f-2899-4aa8-8b2b-33abee9596b4" />
+(You might have to refresh the page to get it to show). 
+
+Then when you click “copy token to clipboard,” that’s what you’ll need to copy into the script. 
+
 
 . .\Move-AssetsToNewLayout
 

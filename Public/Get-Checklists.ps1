@@ -48,12 +48,15 @@ function Get-ITGlueCheckLists {
 
         [Parameter(ParameterSetName = 'index')]
         [ValidateSet('passwords', 'attachments', 'user_resource_accesses', 'group_resource_accesses')]
-        [String]$include = ''
+        [String]$include = '',
+
+        [Parameter(Mandatory = $true)]
+        [String]$ITGBaseURI
     )
 
-    if (-not $ITGlue_Base_URI) {
-        $ITGlue_Base_URI = 'https://api.itglue.com'
-        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGlue_Base_URI"
+    if (-not $ITGBaseuRI) {
+        $ITGBaseuRI = 'https://api.itglue.com'
+        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGBaseuRI"
     }
 
     $resource_uri = '/checklists'
@@ -87,7 +90,7 @@ function Get-ITGlueCheckLists {
 
     try {
         $ITGlueAuthHeaders = @{'Authorization' = "Bearer $JWTAuthToken"}
-        $rest_output = Invoke-RestMethod -method 'GET' -uri ($ITGlue_Base_URI + $resource_uri) -headers $ITGlueAuthHeaders -body $body
+        $rest_output = Invoke-RestMethod -method 'GET' -uri ($ITGBaseuRI + $resource_uri) -headers $ITGlueAuthHeaders -body $body
     } catch {
         Write-Error $_
     } finally {
@@ -155,12 +158,15 @@ function Get-ITGlueChecklistItems {
 
         [Parameter(ParameterSetName = 'index')]
         [ValidateRange(1, 1000)]
-        [Nullable[int]]$page_size = $null
+        [Nullable[int]]$page_size = $null,
+
+        [Parameter(Mandatory = $true)]
+        [String]$ITGBaseURI
     )
 
-    if (-not $ITGlue_Base_URI) {
-        $ITGlue_Base_URI = 'https://api.itglue.com'
-        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGlue_Base_URI"
+    if (-not $ITGBaseuRI) {
+        $ITGBaseuRI = 'https://api.itglue.com'
+        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGBaseuRI"
     }
 
     $resource_uri = '/checklist_tasks'
@@ -171,7 +177,7 @@ function Get-ITGlueChecklistItems {
     if ($page_size) { $body['page[size]'] = $page_size }
 
     $query_string = ($body.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&'
-    $uri = if ($query_string) { "$ITGlue_Base_URI$resource_uri`?$query_string" } else { "$ITGlue_Base_URI$resource_uri" }
+    $uri = if ($query_string) { "$ITGBaseuRI$resource_uri`?$query_string" } else { "$ITGBaseuRI$resource_uri" }
 
     try {
         $ITGlueAuthHeaders = @{ 'Authorization' = "Bearer $JWTAuthToken" }
@@ -241,12 +247,15 @@ function Get-ITGlueChecklistTemplates {
 
         [Parameter(ParameterSetName = 'index')]
         [ValidateRange(1, 1000)]
-        [Nullable[int]]$page_size = $null
+        [Nullable[int]]$page_size = $null,
+
+        [Parameter(Mandatory = $true)]
+        [String]$ITGBaseURI
     )
 
-    if (-not $ITGlue_Base_URI) {
-        $ITGlue_Base_URI = 'https://api.itglue.com'
-        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGlue_Base_URI"
+    if (-not $ITGBaseuRI) {
+        $ITGBaseuRI = 'https://api.itglue.com'
+        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGBaseuRI"
     }
 
     $resource_uri = '/checklist_templates'
@@ -258,7 +267,90 @@ function Get-ITGlueChecklistTemplates {
     if ($page_size) { $body['page[size]'] = $page_size }
 
     $query_string = ($body.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&'
-    $uri = if ($query_string) { "$ITGlue_Base_URI$resource_uri`?$query_string" } else { "$ITGlue_Base_URI$resource_uri" }
+    $uri = if ($query_string) { "$ITGBaseuRI$resource_uri`?$query_string" } else { "$ITGBaseuRI$resource_uri" }
+
+    try {
+        $ITGlueAuthHeaders = @{ 'Authorization' = "Bearer $JWTAuthToken" }
+        $rest_output = Invoke-RestMethod -Method 'GET' -Uri $uri -Headers $ITGlueAuthHeaders -ErrorAction Stop
+        return $rest_output.data
+    }
+    catch {
+        $error_message = $_.Exception.Message
+        if ($_.Exception.Response) {
+            $status_code = $_.Exception.Response.StatusCode.value__
+            Write-Error "API request failed with status $status_code`: $error_message"
+        } else {
+            Write-Error "API request failed: $error_message"
+        }
+    }
+    finally {
+        [void] $ITGlueAuthHeaders.Remove('Authorization')
+    }
+}
+
+function Get-ITGlueChecklistTemplateItems {
+<#
+.SYNOPSIS
+    Retrieves checklist template items from IT Glue using the Checklist Template Tasks API endpoint.
+
+.DESCRIPTION
+    IT Glue checklist templates and one-off checklists store their tasks in different resources.
+    Use this function for checklist templates only. One-off checklists should use Get-ITGlueChecklistItems.
+
+.PARAMETER JWTAuthToken
+    The JWT token required for authenticating to the Checklist Template Tasks endpoint.
+
+.PARAMETER filter_checklist_id
+    The ID of the checklist template to retrieve template items for.
+
+.PARAMETER ITGBaseURI
+    The IT Glue API base URI for the tenant/region.
+
+.EXAMPLE
+    Get-ITGlueChecklistTemplateItems -JWTAuthToken "your_jwt_token" -filter_checklist_id 3510640306421985 -ITGBaseURI "https://api.itglue.com"
+    Retrieves all template items for the specified checklist template ID.
+
+.NOTES
+    This endpoint requires a JWT token, not an API key. It calls /checklist_template_tasks with filter[checklist_template_id].
+#>
+    [CmdletBinding(DefaultParameterSetName = 'index')]
+    Param (
+        [Parameter(Mandatory = $true)]
+        [String]$JWTAuthToken,
+
+        [Parameter(Mandatory = $true)]
+        [Alias('filter_checklist_template_id')]
+        [Nullable[Int64]]$filter_checklist_id,
+
+        [Parameter(ParameterSetName = 'index')]
+        [ValidateSet('created_at', 'updated_at')]
+        [String]$sort = '',
+
+        [Parameter(ParameterSetName = 'index')]
+        [Nullable[Int64]]$page_number = $null,
+
+        [Parameter(ParameterSetName = 'index')]
+        [ValidateRange(1, 1000)]
+        [Nullable[int]]$page_size = $null,
+
+        [Parameter(Mandatory = $true)]
+        [String]$ITGBaseURI
+    )
+
+    if (-not $ITGBaseuRI) {
+        $ITGBaseuRI = 'https://api.itglue.com'
+        Write-Warning "ITGlue_Base_URI not set. Using default: $ITGBaseuRI"
+    }
+
+    $resource_uri = '/checklist_template_tasks'
+
+    $body = @{'filter[checklist_template_id]' = $filter_checklist_id}
+    if ($sort) { $body['sort'] = $sort }
+    if ($page_number) { $body['page[number]'] = $page_number }
+    if ($page_size) { $body['page[size]'] = $page_size }
+
+    $query_string = ($body.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&'
+    $uri = if ($query_string) { "$ITGBaseuRI$resource_uri`?$query_string" } else { "$ITGBaseuRI$resource_uri" }
 
     try {
         $ITGlueAuthHeaders = @{ 'Authorization' = "Bearer $JWTAuthToken" }

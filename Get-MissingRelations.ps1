@@ -589,6 +589,10 @@ function Get-HuduRelationObjectFromTagFields {
 
             $TargetAssetType = Convert-ITGlueTagSubTypeToRelationAssetType -SubType $field.FieldSubType
             if (-not $TargetAssetType) { continue }
+            if ($TargetAssetType -eq 'domain' -and $true -ne $ImportDomains) {
+                Write-Host "Skipping website/domain tag relations for $($field.FieldName) in $($UpdateAsset.Name) because website migration is disabled." -ForegroundColor Yellow
+                continue
+            }
 
             foreach ($TagValue in @($ITGValues.values)) {
                 $TargetItgId = Get-SingleRelationValue -Value @(

@@ -19,6 +19,8 @@ if ((get-host).version.major -ne 7) {
     exit 1
 }
 
+try {Set-StrictMode -Off} catch {}
+
 ############################### Functions ###############################
 # Import ImageMagick for Invoke-ImageTest Function (Disabled)
  . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
@@ -34,9 +36,6 @@ if ((get-host).version.major -ne 7) {
 
 # Select Item Import Mode
 . $PSScriptRoot\Private\Get-ImportMode.ps1
-
-# Get Configurations Option
-. $PSScriptRoot\Private\Get-ConfigurationsImportMode.ps1
 
 # Get Flexible Asset Layout Option
 . $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1
@@ -60,16 +59,16 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 # Add Timed (Noninteractive) Messages Helper
 . $PSScriptRoot\Public\Write-TimedMessage.ps1
 
-# Add numeral casting helper method
+# Add numeral casting, password folder fetching, and article stub starting helpers
 . $PSScriptRoot\Public\Get-CastIfNumeric.ps1
+. $PSScriptRoot\Public\Start-ArticleStubs.ps1
+. $PSScriptRoot\Public\Get-PasswordFolders.ps1
 
 # Add migration scope helper
 . $PSScriptRoot\Public\Set-MigrationScope.ps1
-. $PSScriptRoot\Public\Start-ArticleStubs.ps1
 
 # Other JWT-Auth / Advanced Post-Run Imports
 . $PSScriptRoot\Public\Get-Checklists.ps1
-. $PSScriptRoot\Public\Get-PasswordFolders.ps1
 
 # Add String/Filename Normalization Helper, image Normalization helper
 . $PSScriptRoot\Public\Normalize-String.ps1
@@ -78,9 +77,14 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
 . $PSScriptRoot\Public\JWT-Auth.ps1
 . $PSScriptRoot\Public\NetworkInformation.ps1
-. $PSScriptRoot\Public\PreFlightTests.ps
-############################### End of Functions ###############################
+. $PSScriptRoot\Public\PreFlightTests.ps1
+. $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
+$JobStartTime = $JobStartTime ?? @{}
+$MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
+. $PSScriptRoot\Public\Timed-Job.ps1
 
+
+############################### End of Functions ###############################
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
 ###################### Initial Setup and Confirmations ###############################
@@ -90,24 +94,46 @@ Write-Host $LiabilityWarning -ForegroundColor Red
 
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
-$ScriptStartTime = $(Get-Date)
+
 $CurrentVersion =  Set-ExternalModulesInitialized `
-        -RequiredHuduVersion ([version]"2.39.6") `
+        -RequiredHuduVersion ([version]"2.42.0") `
         -DisallowedVersions @([version]"2.37.0") `
         -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) `
         -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
+$ScriptStartTime = $(Get-Date)
+$JobStartTime = $JobStartTime ?? @{}
+$MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 
-write-host "Checking your API keys to make sure they are scoped for password access"
+write-host "Checking your API keys to make sure they are scoped for password access" -ForegroundColor DarkCyan
 $itglueScopeOk = Test-ITGlueAPIKeyPasswordScope
 $huduScopeOk = Test-HuduAPIKeyScope
 write-host "Hudu API Key Scope for Password Access: $huduScopeOk"
 write-host "IT Glue API Key Scope for Password Access: $itglueScopeOk"
-
 if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
     Write-Host "One or both of your API keys do not have the required scope for password access. Please update the key scopes and try again." -ForegroundColor Red
     exit 1
 }
 
+write-host "Checking available disk space for migration artifacts" -ForegroundColor DarkCyan
+$preflightExportPath = $settings.ITGLueExportPath ?? $environmentSettings.ITGLueExportPath ?? $ITGLueExportPath
+$preflightTargetPath = $settings.MigrationLogs ?? $environmentSettings.MigrationLogs ?? $MigrationLogs ?? $preflightExportPath
+$diskSpaceCheck = Test-ITGlueExportDiskSpace -ExportPath $preflightExportPath -TargetPath $preflightTargetPath -BufferPercent 15 -Detailed
+Write-Host $diskSpaceCheck.Message -ForegroundColor $(if ($diskSpaceCheck.Success) { 'Green' } else { 'Red' })
+if (-not $diskSpaceCheck.Success) {
+    Write-Host "Exiting before making migration changes. Free up space on the target drive or move MigrationLogs to a drive with enough space." -ForegroundColor Red
+    exit 1
+}
+if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
+    Write-Warning "Could not read $($diskSpaceCheck.EnumerationErrorCount) item(s) while estimating export size. Disk space estimate may be low."
+}
+
+write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
+$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
+. .\public\Check-LayoutCollisions.ps1
+if ($PreflightCollisionFound) {
+    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
+    exit 1
+}
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
@@ -116,29 +142,86 @@ if ($backups -notin @("Y", "y")) {
     exit 1
 }
 
-if (Test-Path -Path "$MigrationLogs") {
-    if ($ResumePrevious -eq $true) {
-        Write-Host "A previous attempt has been found job will be resumed from the last successful section" -ForegroundColor Green
-        $ResumeFound = $true
+    if (Test-Path -Path "$MigrationLogs") {
+        if (-not ([string]::IsNullOrEmpty($guiSettingsDir)) -and (test-path $guiSettingsDir)){
+            Write-Host "Settings loaded from frontend, skipping path checks for logs/errors dir. Migration log dir was set to: $MigrationLogs; Gui settings at $guiSettingsDir" -ForegroundColor Green
+        } elseif ($ResumePrevious -eq $true) {
+            Write-Host "A previous attempt has been found job will be resumed from the last successful section" -ForegroundColor Green
+            $ResumeFound = $true
+        } else {
+            Write-Host "A previous attempt has been found, resume is disabled so this will be lost, if you haven't reverted to a snapshot, a resume is recommended" -ForegroundColor Red
+            Write-TimedMessage -Timeout 12 -Message "Press any key to continue or ctrl + c to quit and edit the ResumePrevious setting" -DefaultResponse "proceed with new migration, do not resume"
+            $ResumeFound = $false
+        }
     } else {
-        Write-Host "A previous attempt has been found, resume is disabled so this will be lost, if you haven't reverted to a snapshot, a resume is recommended" -ForegroundColor Red
-        Write-TimedMessage -Timeout 12 -Message "Press any key to continue or ctrl + c to quit and edit the ResumePrevious setting" -DefaultResponse "proceed with new migration, do not resume"
+        Write-Host "No previous runs found creating log directory"
+        $null = New-Item "$MigrationLogs" -ItemType "directory"
         $ResumeFound = $false
     }
-} else {
-    Write-Host "No previous runs found creating log directory"
-    $null = New-Item "$MigrationLogs" -ItemType "directory"
-    $ResumeFound = $false
-}
+
 
 
 # Setup some variables
 $MatchedInterfaces = [System.Collections.ArrayList]@()
 $ManualActions = [System.Collections.ArrayList]@()
-$MergedOrganizationSettings = @{Types        = @(); TargetCompany = $null;}
+$MergedOrganizationSettings = @{Types        = @(); TargetCompany = $null;}; $ITGLocationsHashTable = @{};
 $MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders = $preloadedPassFolders ?? @{}; $ITGlueSSLCerts = @(); $objectFlagMap = $objectFlagMap ?? @{};
 $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@(); 
 $ErroredItemsFolder = if ($ErroredItemsFolder) {$ErroredItemsFolder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
+
+function Get-HuduLocationAssetTagValue {
+    param(
+        [AllowNull()]
+        $ITGLocationId
+    )
+
+    if ([string]::IsNullOrWhiteSpace([string]$ITGLocationId)) {
+        return $null
+    }
+
+    $matchedLocation = $ITGLocationsHashTable["$ITGLocationId"]
+    if ($null -eq $matchedLocation) {
+        return $null
+    }
+
+    $huduLocationId = $matchedLocation.HuduID ?? $matchedLocation.id
+    if ([string]::IsNullOrWhiteSpace([string]$huduLocationId)) {
+        return $null
+    }
+
+    $locationName = $matchedLocation.Name ?? $matchedLocation.name
+    return @([pscustomobject]@{
+        id   = $huduLocationId
+        name = $locationName
+    }) | ConvertTo-Json -AsArray -Compress | Out-String
+}
+
+function Add-HuduLocationAssetTagLayoutField {
+    param(
+        [Parameter(Mandatory)]
+        [ref]$AssetLayoutFields,
+
+        [Parameter(Mandatory)]
+        [int]$Position,
+
+        [Parameter(Mandatory)]
+        [string]$LayoutName
+    )
+
+    if ($null -eq $LocationLayout -or [string]::IsNullOrWhiteSpace([string]$LocationLayout.ID)) {
+        Write-Host "Skipping Location AssetTag field in $LayoutName because no Hudu location layout was found." -ForegroundColor Yellow
+        return $false
+    }
+
+    $AssetLayoutFields.Value += @{
+        label        = 'Location'
+        field_type   = 'AssetTag'
+        show_in_list = 'false'
+        linkable_id  = $LocationLayout.ID
+        position     = $Position
+    }
+    return $true
+}
 
 ############################### Companies ###############################
 
@@ -150,7 +233,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     Write-Host "Loading Previous Companies Migration"
     $MatchedCompanies = Get-Content "$MigrationLogs\Companies.json" -raw | Out-String | ConvertFrom-Json
 } else {
-
+    $null = Start-MigrationJob -Name "Companies"
     #Import Companies
     Write-Host "Fetching Companies from IT Glue" -ForegroundColor Green
     $CompanySelect = { (Get-ITGlueOrganizations -page_size 1000 -page_number $i).data }
@@ -275,6 +358,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 	
         if (($importCOption -eq "A") -or ($importCOption -eq "S") ) {		
             foreach ($unmatchedcompany in ($MatchedCompanies | Where-Object { $_.Matched -eq $false })) {
+
                 $unmatchedcompany.ITGCompanyObject.attributes.'quick-notes' = ($ITGCompaniesFromCSV | Where-Object {$_.id -eq $unmatchedcompany.ITGID}).quick_notes
                 $unmatchedcompany.ITGCompanyObject.attributes.alert = ($ITGCompaniesFromCSV | Where-Object {$_.id -eq $unmatchedcompany.ITGID}).alert
                 Confirm-Import -ImportObjectName $($unmatchedcompany.CompanyName) -ImportObject $unmatchedcompany -ImportSetting $importCOption
@@ -353,6 +437,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     Write-Host "Loading Previous Locations Migration"
     $MatchedLocations = Get-Content "$MigrationLogs\Locations.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
+    $null = Start-MigrationJob -Name "Locations"
     $ITGLocations = $ITGLocations |select @{n='HuduCompanyId';e={ $ITGCompaniesHashTable["$($_.attributes.'organization-id')"].huduid}},*
 
     $LocHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId)`
@@ -485,15 +570,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     #Import Locations
     $MatchedLocations = Import-Items @LocImportSplat
 
-    $ITGLocationsHashTable = @{}
-    foreach ($ITGL in $($MatchedLocations ?? @())) {
-        $ITGLocationsHashTable[$ITGL.itgid] = $ITGL
-    }
     # Save the results to resume from if needed
     $($MatchedLocations ?? @()) | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
 }
+
+$ITGLocationsHashTable = @{}
+foreach ($ITGL in $($MatchedLocations ?? @())) {
+    $ITGLocationsHashTable["$($ITGL.itgid)"] = $ITGL
+}
+$LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
 
 ############################### Websites ###############################
 
@@ -502,7 +589,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
     Write-Host "Loading Previous Websites Migration"
     $MatchedWebsites = Get-Content "$MigrationLogs\Websites.json" -raw | Out-String | ConvertFrom-Json
 } else {
-
+    $null = Start-MigrationJob -Name "Websites"
     #Grab existing Websites in Hudu
     $HuduWebsites = Get-HuduWebsites
 
@@ -612,19 +699,25 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
 		
 ############################### Configurations ###############################
 	
-$ConfigMigrationName = "Configurations"
-$ConfigImportAssetLayoutName = "Configurations"
+$ConfigMigrationName = $ConfigMigrationName ?? "Configurations"
+$ConfigImportAssetLayoutName = $ConfigImportAssetLayoutName ?? "$($ConfigurationPrefix)Configurations"
 	
 #Check for Configuration Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")) {
     Write-Host "Loading Previous Configurations Migration"
     $MatchedConfigurations = Get-Content "$MigrationLogs\Configurations.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
+    $null = Start-MigrationJob -Name "Configurations"
 
     #Get Configurations from IT Glue
     Write-Host "Fetching Configurations from IT Glue" -ForegroundColor Green
-    $ConfigurationsSelect = { (Get-ITGlueConfigurations -page_size 1000 -page_number $i -include related_items).data }
-    $ITGConfigurations = Import-ITGlueItems -ItemSelect $ConfigurationsSelect
+    if ($PreflightITGConfigurations) {
+        $ITGConfigurations = $PreflightITGConfigurations
+        Write-Host "Using IT Glue configurations retrieved during pre-flight." -ForegroundColor DarkGray
+    } else {
+        $ConfigurationsSelect = { (Get-ITGlueConfigurations -page_size 1000 -page_number $i -include related_items).data }
+        $ITGConfigurations = Import-ITGlueItems -ItemSelect $ConfigurationsSelect
+    }
     $ITGConfigurations = $ITGConfigurations |select @{n='HuduCompanyId';e={ $ITGCompaniesHashTable["$($_.attributes.'organization-id')"].huduid}},*
     if ($ScopedMigration) {
         $OriginalConfigurationCount = $($ITGConfigurations.count)
@@ -756,12 +849,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             position     = 20
         },
         @{
-            label        = 'Location Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 21
-        },
-        @{
             label        = 'Model Name'
             field_type   = 'Text'
             show_in_list = 'false'
@@ -786,6 +873,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             position     = 25
         }
     )
+    $null = Add-HuduLocationAssetTagLayoutField -AssetLayoutFields ([ref]$ConfigAssetLayoutFields) -Position 21 -LayoutName $ConfigImportAssetLayoutName
     $ConfigHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
 	
     $ConfigImportEnabled = $ImportConfigurations
@@ -795,7 +883,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             field_type   = 'Text'
             show_in_list = 'false'
             position     = 502}
-        $ConfigAssetFieldsMap = { @{ 
+        $ConfigAssetFieldsMap = {
+            $AssetFields = @{
             'hostname'                  = $unmatchedImport."ITGObject".attributes."hostname"
             'primary ip'                = $unmatchedImport."ITGObject".attributes."primary-ip"
             'mac address'               = $unmatchedImport."ITGObject".attributes."mac-address"
@@ -815,15 +904,21 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
             'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
-            'location name'             = $unmatchedImport."ITGObject".attributes."location-name"
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
             'ITG Date Created'          = $unmatchedImport."ITGObject".attributes."created-at"	
             'ITG Date Last Updated'     = $unmatchedImport."ITGObject".attributes."updated-at"            
             'ITGlue ID'                 = $unmatchedImport."ITGObject".id
-        } }    
+            }
+            $LocationAssetTagValue = Get-HuduLocationAssetTagValue -ITGLocationId $unmatchedImport."ITGObject".attributes.'location-id'
+            if ($LocationAssetTagValue) {
+                $AssetFields['location'] = $LocationAssetTagValue
+            }
+            $AssetFields
+        }
     } else {
-        $ConfigAssetFieldsMap = { @{ 
+        $ConfigAssetFieldsMap = {
+            $AssetFields = @{
             'hostname'                  = $unmatchedImport."ITGObject".attributes."hostname"
             'primary ip'                = $unmatchedImport."ITGObject".attributes."primary-ip"
             'mac address'               = $unmatchedImport."ITGObject".attributes."mac-address"
@@ -843,22 +938,23 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
             'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
-            'location name'             = $unmatchedImport."ITGObject".attributes."location-name"
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
             'ITG Date Created'          = $unmatchedImport."ITGObject".attributes."created-at"	
             'ITG Date Last Updated'     = $unmatchedImport."ITGObject".attributes."updated-at"            	
-        } }
+            }
+            $LocationAssetTagValue = Get-HuduLocationAssetTagValue -ITGLocationId $unmatchedImport."ITGObject".attributes.'location-id'
+            if ($LocationAssetTagValue) {
+                $AssetFields['location'] = $LocationAssetTagValue
+            }
+            $AssetFields
+        }
     }
 
-    # First we need to decide on if we are going to do one Asset type or many
-    Write-Host "Hudu does not have the same standard configuration type as IT Glue."
-    Write-Host "With the migration there are a few options of how to approach this"
-    Write-Host "1) The script can create a new Hudu Asset Layout for all configurations to go into, like how IT Glue works"
-    Write-Host "2) The script can create an Asset layout for each in use Configuration Type you have in IT Glue and then split up configurations into them"
-    Write-Host "3) The script can prompt for each Configuration type you have, asking you for the new Hudu Asset Layout to map to, this will allow you to have a mix of 1 and 2"
-
-    $ConfigurationOption = Get-ConfigurationsImportMode
+    $ConfigurationPrefix = $settings.ConPromptPrefix ?? $ConfigurationPrefix ?? ""
+    $SplitConfigurations = [bool]($settings.SplitConfigurations ?? $false)
+    $ConfigurationOption = if ($SplitConfigurations) { 2 } else { 1 }
+    Write-Host "Using configuration import mode $ConfigurationOption from settings.SplitConfigurations=$SplitConfigurations." -ForegroundColor DarkGray
 
     # All Configurations to 1 Layout
     if ($ConfigurationOption -eq 1) {
@@ -914,47 +1010,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
         }
 
-	
-	
-    } elseif ($ConfigurationOption -eq 3) {
-        $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
-        $MatchedConfigurations = New-Object System.Collections.ArrayList
-
-        foreach ($ConfigType in $ITGConfigTypes) {
-            Write-Host ""
-            Write-Host "Processing $ConfigType"
-            Write-Host "Please provide the Asset Layout name for $ConfigType in Hudu." -foregroundcolor green
-            $ConfigImportAssetLayoutName = $(Write-TimedMessage -Timeout 12 -Message "Please enter layout name" -DefaultResponse $ConfigType)
-		
-
-            $ParsedITGConfigs = $ITGConfigurations | Where-Object { $_.attributes."configuration-type-name" -eq $ConfigType }
-
-            $ConfigMigrationName = $ConfigImportAssetLayoutName
-			
-            $ConfigImportSplat = @{
-                AssetFieldsMap        = $ConfigAssetFieldsMap
-                AssetLayoutFields     = $ConfigAssetLayoutFields
-                ImportIcon            = $ConfigImportIcon
-                ImportEnabled         = $ConfigImportEnabled
-                HuduItemFilter        = $ConfigHuduItemFilter
-                ImportAssetLayoutName = $ConfigImportAssetLayoutName
-                ItemSelect            = $ConfigItemSelect
-                MigrationName         = $ConfigMigrationName
-                ITGImports            = $ParsedITGConfigs
-            }
-	
-            $ReturnedConfigurations = Import-Items @ConfigImportSplat
-            if (($ReturnedConfigurations | measure-object).count -gt 1) {
-                $MatchedConfigurations.addrange($ReturnedConfigurations)
-            } else {
-                $MatchedConfigurations.add($ReturnedConfigurations)
-            }
-        }
-
-
-
     } else {
-        Write-Error "This should never have happened some how you selected something other than 1, 2 or 3 :/"
+        Write-Error "This should never have happened somehow you selected something other than 1 or 2."
         exit 1
     }
 
@@ -974,6 +1031,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     $MatchedContacts = Get-Content "$MigrationLogs\Contacts.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
 
+    $null = Start-MigrationJob -Name "Contacts"
 
     Write-Host "Fetching Contacts from IT Glue" -ForegroundColor Green
     $ContactsSelect = { (Get-ITGlueContacts -page_size 1000 -page_number $i -include related_items).data }
@@ -995,8 +1053,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     $ConImportEnabled = $ImportContacts
 
     $ConMigrationName = "Contacts"
-
-    $LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
 
     $ConAssetLayoutFields = @(
         @{
@@ -1022,13 +1078,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             field_type   = 'Text'
             show_in_list = 'true'
             position     = 4
-        },
-        @{
-            label        = 'Location'
-            field_type   = 'AssetTag'
-            show_in_list = 'false'
-            linkable_id  = $LocationLayout.ID
-            position     = 5
         },
         @{
             label        = 'Important'
@@ -1067,18 +1116,19 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             position     = 11
         }
     )
+    $null = Add-HuduLocationAssetTagLayoutField -AssetLayoutFields ([ref]$ConAssetLayoutFields) -Position 5 -LayoutName $ConImportAssetLayoutName
     if ($settings.IncludeITGlueID -and $true -eq $settings.IncludeITGlueID){
         $ConAssetLayoutFields+=@{
             label        = 'ITGlue ID'
             field_type   = 'Text'
             show_in_list = 'false'
             position     = 502}
-        $ConAssetFieldsMap = { @{ 
+        $ConAssetFieldsMap = {
+            $AssetFields = @{
             'first name'   = $unmatchedImport."ITGObject".attributes."first-name"
             'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            'location'     = $ITGLocationsHashTable["$($unmatchedImport."ITGObject".attributes.'location-id')"] | Select-Object @{N='id';E={$_.HuduID}}, @{N='name';E={$_.Name}} | convertto-json -AsArray -Compress | out-string
             'important'    = $unmatchedImport."ITGObject".attributes."important"
             'notes'        = $unmatchedImport."ITGObject".attributes."notes"
             'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
@@ -1086,21 +1136,33 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             'ITG Date Created'   = $unmatchedImport."ITGObject".attributes."created-at"
             'ITG Date Last Updated'   = $unmatchedImport."ITGObject".attributes."updated-at"
             'ITGlue ID'    = $unmatchedImport."ITGObject".id
-        } } 
+            }
+            $LocationAssetTagValue = Get-HuduLocationAssetTagValue -ITGLocationId $unmatchedImport."ITGObject".attributes.'location-id'
+            if ($LocationAssetTagValue) {
+                $AssetFields['location'] = $LocationAssetTagValue
+            }
+            $AssetFields
+        }
     } else {
-        $ConAssetFieldsMap = { @{ 
+        $ConAssetFieldsMap = {
+            $AssetFields = @{
             'first name'   = $unmatchedImport."ITGObject".attributes."first-name"
             'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            'location'     = $ITGLocationsHashTable["$($unmatchedImport."ITGObject".attributes.'location-id')"] | Select-Object @{N='id';E={$_.HuduID}}, @{N='name';E={$_.Name}} | convertto-json -AsArray -Compress | out-string
             'important'    = $unmatchedImport."ITGObject".attributes."important"
             'notes'        = $unmatchedImport."ITGObject".attributes."notes"
             'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
             'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones"	| convertto-html -fragment | out-string
             'ITG Date Created'   = $unmatchedImport."ITGObject".attributes."created-at"
             'ITG Date Last Updated'   = $unmatchedImport."ITGObject".attributes."updated-at"        
-        } }
+            }
+            $LocationAssetTagValue = Get-HuduLocationAssetTagValue -ITGLocationId $unmatchedImport."ITGObject".attributes.'location-id'
+            if ($LocationAssetTagValue) {
+                $AssetFields['location'] = $LocationAssetTagValue
+            }
+            $AssetFields
+        }
     }
 
     $ConImportSplat = @{
@@ -1135,14 +1197,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     $MatchedLayouts = Get-Content "$MigrationLogs\AssetLayouts.json" -raw | Out-String | ConvertFrom-Json -depth 100
     $AllFields = Get-Content "$MigrationLogs\AssetLayoutsFields.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
+    $null = Start-MigrationJob -Name "Layouts"
 
     $ConfigImportAssetLayoutName = ($MatchedConfigurations.HuduObject | Select-Object name, asset_type | group-object -property asset_type | sort-object count -descending | Select-Object -first 1).name
 
     Write-Host "Fetching Flexible Asset Layouts from IT Glue" -ForegroundColor Green
-    $FlexLayoutSelect = { (Get-ITGlueFlexibleAssetTypes -page_size 1000 -page_number $i -include related_items).data }
-    $FlexLayouts = Import-ITGlueItems -ItemSelect $FlexLayoutSelect
+    if ($PreflightFlexLayouts) {
+        $FlexLayouts = $PreflightFlexLayouts
+        Write-Host "Using IT Glue flexible asset layouts retrieved during pre-flight." -ForegroundColor DarkGray
+    } else {
+        $FlexLayoutSelect = { (Get-ITGlueFlexibleAssetTypes -page_size 1000 -page_number $i -include related_items).data }
+        $FlexLayouts = Import-ITGlueItems -ItemSelect $FlexLayoutSelect
+    }
 
-    $HuduLayouts = Get-HuduAssetLayouts
+    $HuduLayouts = if ($PreflightHuduLayouts) { $PreflightHuduLayouts } else { Get-HuduAssetLayouts }
 
     Write-Host "The script will now migrate IT Glue Flexible Asset Layouts to Hudu"
     Write-Host "Please select the option you would like"
@@ -1200,10 +1268,32 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
 
     if ($ImportFlexibleAssetLayouts -eq $true) {
+        $FlexAssetsByLayoutId = @{}
 
         foreach ($UnmatchedLayout in $MatchedLayouts | Where-Object { $_.Matched -eq $false }) {
+            $LayoutCacheKey = [string]$UnmatchedLayout.ITGID
+            if (-not $FlexAssetsByLayoutId.ContainsKey($LayoutCacheKey)) {
+                Write-Host "Fetching Flexible Assets for $($UnmatchedLayout.Name) to determine whether the layout has assets in scope"
+                $FlexAssetsSelect = { (Get-ITGlueFlexibleAssets -page_size 1000 -page_number $i -filter_flexible_asset_type_id $UnmatchedLayout.ITGID -include related_items).data }
+                $FlexAssets = Import-ITGlueItems -ItemSelect $FlexAssetsSelect
+
+                if ($ScopedMigration) {
+                    $FlexAssets = @($FlexAssets | Where-Object {
+                        $ScopedCompanyIds -contains $_.attributes.'organization-id'
+                    })
+                }
+
+                $FlexAssetsByLayoutId[$LayoutCacheKey] = @($FlexAssets)
+            }
+
+            if (@($FlexAssetsByLayoutId[$LayoutCacheKey]).Count -eq 0) {
+                Write-Host "Skipping layout '$($UnmatchedLayout.Name)' because it has no assets in scope." -ForegroundColor Yellow
+                $UnmatchedLayout.ITGAssets = @()
+                continue
+            }
+
             if ($ImportOption -eq 2) {
-                Confirm-Import -ImportObjectName "$($ITGLayout.attributes.name)" -ImportObject $null -ImportSetting $ImportOption
+                Confirm-Import -ImportObjectName "$($UnmatchedLayout.ITGObject.attributes.name)" -ImportObject $UnmatchedLayout -ImportSetting $ImportOption
             }
 
 
@@ -1254,12 +1344,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 }
                 $NewIcon = $CurrentIcon
             }
-            # account for layout-collision between split configurations and flexible asset layouts [when either not prefixed]
-            if (-not $(Get-HuduAssetLayouts | where-object {$_.name -ieq "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)"} )){
-                $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)" -icon "fas fa-$NewIcon" -color "#6136ff" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
-            } else {
-                $NewLayout = New-HuduAssetLayout -name "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)-Assets" -icon "fas fa-$NewIcon" -color "#6136ff" -icon_color "#ffffff" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields 
+            $TargetLayoutName = "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)"
+            # Defense-in-depth in case Hudu layout state changed after the pre-flight check.
+            if ($(Get-HuduAssetLayouts | Where-Object { $_.name -ieq $TargetLayoutName })) {
+                Write-Host "Flexible asset layout '$TargetLayoutName' now collides with an existing Hudu asset layout. Exiting instead of creating a renamed layout." -ForegroundColor Red
+                exit 1
             }
+            $NewLayout = New-HuduAssetLayout -name $TargetLayoutName -icon "fas fa-$NewIcon" -color "$($LayoutIconBackGroundColor)" -icon_color "$($LayoutIconForegroundColor)" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields
+
             $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
 
             $UnmatchedLayout.HuduObject = $MatchedNewLayout
@@ -1284,10 +1376,29 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             $FlexLayoutFields = Import-ITGlueItems -ItemSelect $FlexLayoutFieldsSelect
 
 				
-            # Grab all the Assets for the layout
-            Write-Host "Fetching Flexible Assets from IT Glue (This may take a while)"
-            $FlexAssetsSelect = { (Get-ITGlueFlexibleAssets -page_size 1000 -page_number $i -filter_flexible_asset_type_id $UpdateLayout.ITGID -include related_items).data }
-            $FlexAssets = Import-ITGlueItems -ItemSelect $FlexAssetsSelect
+            $LayoutCacheKey = [string]$UpdateLayout.ITGID
+            if ($FlexAssetsByLayoutId.ContainsKey($LayoutCacheKey)) {
+                $FlexAssets = @($FlexAssetsByLayoutId[$LayoutCacheKey])
+            } else {
+                # Grab all the Assets for the layout
+                Write-Host "Fetching Flexible Assets from IT Glue (This may take a while)"
+                $FlexAssetsSelect = { (Get-ITGlueFlexibleAssets -page_size 1000 -page_number $i -filter_flexible_asset_type_id $UpdateLayout.ITGID -include related_items).data }
+                $FlexAssets = Import-ITGlueItems -ItemSelect $FlexAssetsSelect
+
+                if ($ScopedMigration) {
+                    $FlexAssets = @($FlexAssets | Where-Object {
+                        $ScopedCompanyIds -contains $_.attributes.'organization-id'
+                    })
+                }
+
+                $FlexAssetsByLayoutId[$LayoutCacheKey] = @($FlexAssets)
+            }
+
+            if (@($FlexAssets).Count -eq 0) {
+                Write-Host "Skipping layout '$($UpdateLayout.Name)' because it has no assets in scope." -ForegroundColor Yellow
+                $UpdateLayout.ITGAssets = @()
+                continue
+            }
             $fullyPopulated = if ($FlexLayoutFields -and $FlexLayoutFields.count -gt 1 -and $FlexAssets -and $FlexAssets.count -gt 1) {Get-ITGFieldPopulated -FlexLayoutFields $FlexLayoutFields -FlexAssets $FlexAssets} else {@{}}
 
             $UpdateLayoutFields = foreach ($ITGField in $FlexLayoutFields) {
@@ -1350,34 +1461,30 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                         switch (($ITGField.Attributes."tag-type").split(":")[0]) {
                             "AccountsUsers" { Write-Host "Tags to Account Users are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!" ; $supported = $false }
                             "Checklists" { 
-                                Write-Host "Tags to Checklists are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false 
+                                Write-Host "Tags to Checklists are computed later, if migrating checklists is enabled."; $supported = $false 
                             }
-                            "ChecklistTemplates" { Write-Host "Tags to Checklists Templates are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
+                            "ChecklistTemplates" { Write-Host "Tags to Checklists Templates are computed later, if migrating checklists is enabled"; $supported = $false }
                             "Contacts" {
                                 $ContactLayout = Get-HuduAssetLayouts -name $ConImportAssetLayoutName
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $ContactLayout.ID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout $ContactLayout -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
                             "Configurations" {
                                 $ConfigLayout = Get-HuduAssetLayouts -name $ConfigImportAssetLayoutName
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $ConfigLayout.ID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout $ConfigLayout -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
-                            "Documents" { Write-Host "Tags to Documents are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false } 
-                            "Domains" { Write-Host "Tags to Websites are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
-                            "Passwords" { Write-Host "Tags to Passwords are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
+                            "Documents" { Write-Host "Tags to Documents are computed later, if migrating documents is enabled"; $supported = $false } 
+                            "Domains" { Write-Host "Tags to websites are computed later, if migrating websites is enabled"; $supported = $false }
+                            "Passwords" { Write-Host "Tags to Passwords are computed later, if migrating passwords is enabled"; $supported = $false }
                             "Locations" {
                                 $LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $LocationLayout.ID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout $LocationLayout -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
-                            "Organizations" { Write-Host "Tags to Companies are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
+                            "Organizations" { Write-Host "Tags to Companies are computed later."; $supported = $false }
                             "SslCertificates" { Write-Host "Tags to SSL Certificates are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "Tickets" { Write-Host "Tags to Tickets are not supported $($ITGField.Attributes.name) in $($UpdateLayout.name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "FlexibleAssetType" {	
                                 $MatchedLayoutID = ($MatchedLayouts | Where-Object { $_.ITGID -eq ($ITGField.Attributes."tag-type").split(" ")[1] }).HuduID
-                                $LayoutField.add("field_type", "AssetTag")
-                                $LayoutField.add("linkable_id", $MatchedLayoutID)
+                                $supported = Add-HuduAssetTagLayoutField -LayoutField $LayoutField -LinkableLayout ([pscustomobject]@{ ID = $MatchedLayoutID }) -FieldName $ITGField.Attributes.name -LayoutName $UpdateLayout.name
                             }
                         }
                     }
@@ -1443,6 +1550,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
     $RelationsToCreate = [System.Collections.ArrayList](Get-Content "$MigrationLogs\RelationsToCreate.json" -raw | Out-String | ConvertFrom-Json -depth 100)
     $ManualActions = [System.Collections.ArrayList](Get-Content "$MigrationLogs\ManualActions.json" -raw | Out-String | ConvertFrom-Json -depth 100)
 } else {
+    $null = Start-MigrationJob -Name "Assets"
+
     # Load raw passwords for embedded fields and future use
     $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
     
@@ -1462,6 +1571,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         }
 
         Foreach ($Layout in $MatchedLayouts) {
+            if ([string]::IsNullOrWhiteSpace([string]$Layout.HuduID) -or @($Layout.ITGAssets).Count -eq 0) {
+                Write-Host "Skipping base asset creation for $($Layout.Name) because the layout was not created or has no assets in scope." -ForegroundColor Yellow
+                continue
+            }
+
             Write-Host "Creating base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
@@ -1492,6 +1606,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
+        
+        # foreach ($UpdateAsset in $MatchedAssets | where-object {$_.ITGObject.attributes.archived -ne $true}) {
         foreach ($UpdateAsset in $MatchedAssets) {
             Write-Host "Populating $($UpdateAsset.Name)"
 		
@@ -1520,7 +1636,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                         $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
                     } elseif ($field.FieldType -eq "Tag") {
                         switch ($field.FieldSubType) {
-                            "AccountsUsers" { Write-Host "Tags to Account Users are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false }
                             "Checklists" {
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Procedure'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Procedure from $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later.";
                                 $supported = $true
@@ -1529,104 +1644,161 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                                 $supported = $true
                             } "Contacts" {
                                 $ContactsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedContacts | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
+                                    $MatchedContacts | Where-Object { $_.ITGID -eq $IDMatch.id }
                                 }
-                                $ReturnData = $ContactsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $ContactsLinked -AssetName $UpdateAsset.Name
                             } "Configurations" {
                                 $ConfigsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedConfigurations | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
+                                    $MatchedConfigurations | Where-Object { $_.ITGID -eq $IDMatch.id }
                                 }
-                                $ReturnData = $ConfigsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $ConfigsLinked -AssetName $UpdateAsset.Name
 											
                             } "Documents" { $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Article'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Articles $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true
-                            } "Domains" { 
-                                $DomainsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $MatchedWebsites | Where-Object { $_.ITGID -eq $IDMatch.id }
-                                } 
-                                $DomainsLinked | ForEach-Object {
-                                    if ($WebsiteRelation = New-HuduRelation -FromableType 'Asset' -ToableType 'Website' -FromableID $UpdateAsset.HuduID -ToableID $_.HuduID) {
-                                        Write-Host "Successully Created relation to $($WebsiteRelation.relation.name)"
-                                    } else {
-                                        Write-Host "Tags to Websites are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false 
-                                }}
+                            } "Domains" {
+                                if ($true -ne $ImportDomains) {
+                                    Write-Host "Skipping website/domain tags for $($field.FieldName) in $($UpdateAsset.Name) because website migration is disabled." -ForegroundColor Yellow
+                                    $supported = $false
+                                } else {
+                                    $DomainsLinked = foreach ($IDMatch in $ITGValues.values) {
+                                        $MatchedWebsites | Where-Object { $_.ITGID -eq $IDMatch.id -and -not [string]::IsNullOrWhiteSpace([string]$_.HuduID) }
+                                    }
+                                    $DomainsLinked | ForEach-Object {
+                                        if ($WebsiteRelation = New-HuduRelation -FromableType 'Asset' -ToableType 'Website' -FromableID $UpdateAsset.HuduID -ToableID $_.HuduID) {
+                                            Write-Host "Successully Created relation to $($WebsiteRelation.relation.name)"
+                                        } else {
+                                            Write-Host "Tags to Websites are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false
+                                    }}
+                                }
                             } "Passwords" { 
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'AssetPassword'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Password $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true 
                             } "Locations" {
                                 $LocationsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedLocations | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
+                                    $MatchedLocations | Where-Object { $_.ITGID -eq $IDMatch.id }
                                 }
-                                $ReturnData = $LocationsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $LocationsLinked -AssetName $UpdateAsset.Name
                             } "Organizations" { 
                                 $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) {@{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Company'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Companies $($field.FieldName) in $($UpdateAsset.Name) has been recorded later."; $supported = $true
+                            } "FlexibleAssetType" {	
+                                $AssetsLinked = foreach ($IDMatch in $ITGValues.values) {
+                                    $MatchedAssets | Where-Object { $_.ITGID -eq $IDMatch.id }
+                                }
+                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $AssetsLinked -AssetName $UpdateAsset.Name
                             } "SslCertificates" { 
                                 Write-Host "Tags to SSL Certificates are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
                             } "Tickets" {
                                 Write-Host "Tags to Tickets are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
-                            } "FlexibleAssetType" {	
-                                $AssetsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $($MatchedAssets | Where-Object { $_.ITGID -eq $IDMatch.id } | Select-Object @{N = 'id'; E = { $_.HuduID } }, @{N = 'name'; E = { $_.Name } })
-                                }
-                                $ReturnData = $AssetsLinked | convertto-json -compress -AsArray | Out-String
-                                $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))	
+                            } "AccountsUsers" {
+                                Write-Host "Tags to Account Users are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false 
                             }
                         }
-                        if ($Supported -eq $False) {
-                            $ManualLog = [PSCustomObject]@{
-                                Document_Name = $UpdateAsset.Name
-                                Type          = ($UpdateAsset.HuduObject.asset_type ?? "Asset") + " Field - Tag"
-                                Company_Name  = $UpdateAsset.HuduObject.company_name
-                                HuduID        = $UpdateAsset.HuduID
-                                Field_Name    = $($field.FieldName)
-                                Notes         = "Unsupported Tag Type Manual Tag Required"
-                                Action        = "Manually tag to Asset"
-                                Data          = $ITGValues.values.name -join ","
-                                Hudu_URL      = $UpdateAsset.HuduObject.url
-                                ITG_URL       = $UpdateAsset.ITGObject.attributes."resource-url"
-                            }; $null = $ManualActions.add($ManualLog);
-                        }
+                        # the only untaggable entities that are left now are entities that we are not creating or cannot create, so there isnt really a manual action to be taken
+                        # if ($Supported -eq $False) {
+                        #     $ManualLog = [PSCustomObject]@{
+                        #         Document_Name = $UpdateAsset.Name
+                        #         Type          = ($UpdateAsset.HuduObject.asset_type ?? "Asset") + " Field - Tag"
+                        #         Company_Name  = $UpdateAsset.HuduObject.company_name
+                        #         HuduID        = $UpdateAsset.HuduID
+                        #         Field_Name    = $($field.FieldName)
+                        #         Notes         = "Unsupported Tag Type Manual Tag Required"
+                        #         Action        = "Manually tag to Asset"
+                        #         Data          = $ITGValues.values.name -join ","
+                        #         Hudu_URL      = $UpdateAsset.HuduObject.url
+                        #         ITG_URL       = $UpdateAsset.ITGObject.attributes."resource-url"
+                        #     }; $null = $ManualActions.add($ManualLog);
+                        # }
                     } elseif ($field.FieldType -eq "Password") {
-                        $ITGPassword = (Get-ITGluePasswords -id $ITGValues -include related_items).data
-                        $ITGPasswordValue = ($ITGPasswordsRaw |Where-Object {$_.id -eq $ITGPassword.id}).password
-                        try {
-                            if ($ITGPasswordValue) {
-                                $NewPasswordObject = [pscustomobject]@{
-                                Name =  "$($UpdateAsset.name) $($Field.fieldname) $($ITGPassword.Username) Password"
-                                Username = $ITGPassword.Username
-                                URL = $ITGPassword.url
-                                ITGID = $ITGPassword.id
-                                Description = $ITGpassword.notes
-                                CompanyId = $UpdateAsset.HuduObject.company_id
-                                Password = $ITGPasswordValue};
-                                $null = $AssetFields.add("$($field.HuduParsedName)", $ITGPasswordValue)
-                                $MigratedPasswordStatus = "Into Asset"
+                        $PasswordIds = @(
+                            $ITGValues
+                            $ITGValues.values
+                        ) | ForEach-Object {
+                            if ($null -ne $_) {
+                                $candidate = if ($_.PSObject.Properties['id']) {
+                                    $_.id
+                                } elseif ($_.PSObject.Properties['resource-id']) {
+                                    $_.'resource-id'
+                                } elseif ($_.PSObject.Properties['resource_id']) {
+                                    $_.'resource_id'
+                                } elseif ($_ -is [string] -or $_.GetType().IsValueType) {
+                                    $_
+                                } else {
+                                    $null
+                                }
+
+                                if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) {
+                                    [string]$candidate
+                                }
                             }
-                        } catch {
-                            Write-Host "Error occured adding field, possible duplicate name" -ForegroundColor Red
-                            $ManualLog = [PSCustomObject]@{
-                                Document_Name = $UpdateAsset.Name
-                                Type          = "Asset Field - Password"
-                                Company_Name  = $UpdateAsset.HuduObject.company_name
-                                HuduID        = $UpdateAsset.HuduID
-                                Field_Name    = "$($field.HuduParsedName)"
-                                Notes         = "Failed to add password to Asset with error $_"
-                                Action        = "Manually add the password to the asset"
-                                Data          = ($ITGPassword.attributes.'resource-url' -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                                Hudu_URL      = $UpdateAsset.HuduObject.url
-                                ITG_URL       = $UpdateAsset.ITGObject.attributes.'resource-url'
-                            }; $null = $ManualActions.add($ManualLog); $MigratedPasswordStatus = "Failed to add";
+                        } | Select-Object -Unique
+
+                        $PasswordFieldWasSet = $false
+                        foreach ($PasswordId in $PasswordIds) {
+                            $ITGPassword = $null
+                            $ITGPasswordValue = $null
+                            $MigratedPasswordStatus = "Skipped"
+
+                            try {
+                                $ITGPassword = (Get-ITGluePasswords -id $PasswordId -include related_items).data
+                                $ITGPasswordValue = ($ITGPasswordsRaw | Where-Object { $_.id -eq $ITGPassword.id } | Select-Object -First 1).password
+
+                                if ($ITGPasswordValue) {
+                                    $NewPasswordObject = [pscustomobject]@{
+                                        Name        = "$($UpdateAsset.name) $($Field.fieldname) $($ITGPassword.Username) Password"
+                                        Username    = $ITGPassword.Username
+                                        URL         = $ITGPassword.url
+                                        ITGID       = $ITGPassword.id
+                                        Description = $ITGpassword.notes
+                                        CompanyId   = $UpdateAsset.HuduObject.company_id
+                                        Password    = $ITGPasswordValue
+                                    }
+
+                                    if (-not $PasswordFieldWasSet) {
+                                        $null = $AssetFields.add("$($field.HuduParsedName)", $ITGPasswordValue)
+                                        $PasswordFieldWasSet = $true
+                                        $MigratedPasswordStatus = "Into Asset"
+                                    } else {
+                                        $ManualLog = [PSCustomObject]@{
+                                            Document_Name = $UpdateAsset.Name
+                                            Type          = "Asset Field - Password"
+                                            Company_Name  = $UpdateAsset.HuduObject.company_name
+                                            HuduID        = $UpdateAsset.HuduID
+                                            Field_Name    = "$($field.HuduParsedName)"
+                                            Notes         = "Multiple embedded IT Glue passwords were found for one Hudu password field. The first value was added to the asset field."
+                                            Action        = "Manually review whether this additional password should be migrated elsewhere"
+                                            Data          = ($ITGPassword.attributes.'resource-url' -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
+                                            Hudu_URL      = $UpdateAsset.HuduObject.url
+                                            ITG_URL       = $UpdateAsset.ITGObject.attributes.'resource-url'
+                                        }; $null = $ManualActions.add($ManualLog)
+                                        $MigratedPasswordStatus = "Manual Review - Additional Embedded Password"
+                                    }
+                                }
+                            } catch {
+                                Write-Host "Error occured adding field, possible duplicate name" -ForegroundColor Red
+                                $ManualLog = [PSCustomObject]@{
+                                    Document_Name = $UpdateAsset.Name
+                                    Type          = "Asset Field - Password"
+                                    Company_Name  = $UpdateAsset.HuduObject.company_name
+                                    HuduID        = $UpdateAsset.HuduID
+                                    Field_Name    = "$($field.HuduParsedName)"
+                                    Notes         = "Failed to add password to Asset with error $_"
+                                    Action        = "Manually add the password to the asset"
+                                    Data          = ($ITGPassword.attributes.'resource-url' -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
+                                    Hudu_URL      = $UpdateAsset.HuduObject.url
+                                    ITG_URL       = $UpdateAsset.ITGObject.attributes.'resource-url'
+                                }; $null = $ManualActions.add($ManualLog); $MigratedPasswordStatus = "Failed to add";
+                            }
+
+                            if ($ITGPassword) {
+                                $MigratedPassword = [PSCustomObject]@{
+                                    "Name"      = $ITGPassword.attributes.name
+                                    "ITGID"     = $ITGPassword.id
+                                    "HuduID"    = $UpdateAsset.HuduID
+                                    "Matched"   = $true
+                                    "ITGObject" = $ITGPassword
+                                    "Imported"  = $MigratedPasswordStatus
+                                }
+                                $null = $MatchedAssetPasswords.add($MigratedPassword)
+                            }
                         }
-                        $MigratedPassword = [PSCustomObject]@{
-                            "Name"      = $ITGPassword.attributes.name
-                            "ITGID"     = $ITGPassword.id
-                            "HuduID"    = $UpdateAsset.HuduID
-                            "Matched"   = $true
-                            "ITGObject" = $ITGPassword
-                            "Imported"  = $MigratedPasswordStatus
-                        }
-                        $null = $MatchedAssetPasswords.add($MigratedPassword)
                     } elseif ($field.FieldType -eq "Number") {
                         # This version won't cast doubles for 'number' fields. It expects only integers.
                         $coerced = Get-CastIfNumeric ($_.value -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
@@ -1641,9 +1813,19 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     Write-Host "Warning $ITGParsed : $ITGValues Could not be added" -ForegroundColor Red
                 }
             }
-            $CleanedAssetFields = @{}
-            $AssetFields.GetEnumerator() | ForEach-Object {
-                $CleanedAssetFields[$_.Key -replace '_', ' '] = $_.Value
+            $CleanedAssetFields = @()
+
+            foreach ($entry in $AssetFields.GetEnumerator()) {
+                $fieldName = ($entry.Key -replace '_', ' ').Trim()
+                $value = $entry.Value
+
+                if ([string]::IsNullOrWhiteSpace($fieldName)) { continue }
+                if ($null -eq $value) { continue }
+                if ($value -is [string] -and [string]::IsNullOrWhiteSpace($value)) { continue }
+                if ($value -is [array] -and $value.Count -eq 0) { continue }
+                if ($value -is [string] -and $value.Trim() -in @('[]', '[,,]', '[,]', 'null')) { continue }
+
+                $CleanedAssetFields += @{ $fieldName = $value }
             }
             $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields $CleanedAssetFields).asset
 
@@ -1671,6 +1853,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
     Write-Host "Loading Article Migration"
     $MatchedArticles = Get-Content "$MigrationLogs\ArticleBase.json" -raw | Out-String | ConvertFrom-Json -depth 100
 } else {
+    $null = Start-MigrationJob -Name "Articles"
 
     if ($ImportArticles -eq $true) {
 
@@ -1716,6 +1899,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 } else {
 	
     if ($ImportArticles -eq $true) {
+        $null = Start-MigrationJob -Name "ArticleContents"
+
         $Attachfiles = Get-ChildItem (Join-Path -Path $ITGLueExportPath -ChildPath "attachments\documents") -recurse
         $ImageMap = $ImageMap ?? @{}
         # Now do the actual work of populating the content of articles
@@ -1831,7 +2016,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                 }
                                 try {                                    
                                     $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
-                                    
+
                                     # Update the <img> tag src
                                     $imageObject.src = [string]$NewImageURL
                                     Write-Host "Setting <img>.src to: $NewImageURL"
@@ -1944,6 +2129,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     Write-Host "Loading Previous Paswords Migration"
     $MatchedPasswords = Get-Content "$MigrationLogs\Passwords.json" -raw | Out-String | ConvertFrom-Json
 } else {
+    $null = Start-MigrationJob -Name "Passwords"
 
     #Import Passwords
     Write-Host "Fetching Passwords from IT Glue" -ForegroundColor Green
@@ -2134,32 +2320,38 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
                         }
                         if ([string]::IsNullOrWhiteSpace($unmatchedPassword.ITGObject.attributes.password) -or $unmatchedPassword.ITGObject.attributes.password.Length -lt 1) {
-                            $manualActions.add([PSCustomObject]@{
-                                name              = "$($unmatchedPassword.ITGObject.attributes.name)"
-                                company_id        = $company.HuduCompanyObject.ID
-                                description       = $unmatchedPassword.ITGObject.attributes.notes
-                                passwordable_type = $PasswordableType
-                                passwordable_id   = $ParentItemID
-                                in_portal         = $false
-                                password          = ""
-                                Type              = "Password"
-				                Hudu_URL      	  = $unmatchedPassword.HuduObject.url
-                                ITG_URL           = if ($url = $unmatchedPassword.ITGObject.attributes.url) {$url} Else {$unmatchedPassword.ITGObject.attributes.'resource-url'}
-                                username          = $unmatchedPassword.ITGObject.attributes.username
-                                otpsecret         = "removed for security purposes"
-                                problem           = "password was null or empty"
-                            })
-                            $unmatchedPassword.matched = $false
-                            Write-Warning "$($HuduNewPassword.Name) Has been skipped and added to manual actions due to being empty"                            
-                        } else {
-                            $HuduNewPassword = (New-HuduPassword @PasswordSplat).asset_password 
-                            $unmatchedPassword.matched = $true
-                            $unmatchedPassword.HuduID = $HuduNewPassword.id
-                            $unmatchedPassword."HuduObject" = $HuduNewPassword
-                            $unmatchedPassword.Imported = "Created-By-Script"
-                            $ImportsMigrated = $ImportsMigrated + 1
-                            Write-host "$($HuduNewPassword.Name) Has been created in Hudu"
+                            if ($true -eq $($AllowEmptyPasswords ?? $true)) {
+                                write-host "Password value is empty for $($unmatchedPassword.ITGObject.attributes.name), assuming it is vaulted. setting blank password with A256GCM encryption to preserve the record and metadata for replacing later." -ForegroundColor DarkCyan
+                                $PasswordSplat.password = "A256GCM.WAS-BLANK-REPLACE-WITH-REAL-PASSWORD"
+                            } else {
+                                $manualActions.add([PSCustomObject]@{
+                                    name              = "$($unmatchedPassword.ITGObject.attributes.name)"
+                                    company_id        = $company.HuduCompanyObject.ID
+                                    description       = $unmatchedPassword.ITGObject.attributes.notes
+                                    passwordable_type = $PasswordableType
+                                    passwordable_id   = $ParentItemID
+                                    in_portal         = $false
+                                    password          = ""
+                                    Type              = "Password"
+                                    Hudu_URL      	  = $unmatchedPassword.HuduObject.url
+                                    ITG_URL           = if ($url = $unmatchedPassword.ITGObject.attributes.url) {$url} Else {$unmatchedPassword.ITGObject.attributes.'resource-url'}
+                                    username          = $unmatchedPassword.ITGObject.attributes.username
+                                    otpsecret         = "removed for security purposes"
+                                    problem           = "password was null or empty"
+                                })
+                                $unmatchedPassword.matched = $false
+                                Write-Warning "$($HuduNewPassword.Name) Has been skipped and added to manual actions due to being empty"
+                                continue
+                            }
                         }
+                        $HuduNewPassword = (New-HuduPassword @PasswordSplat).asset_password 
+                        $unmatchedPassword.matched = $true
+                        $unmatchedPassword.HuduID = $HuduNewPassword.id
+                        $unmatchedPassword."HuduObject" = $HuduNewPassword
+                        $unmatchedPassword.Imported = "Created-By-Script"
+                        $ImportsMigrated = $ImportsMigrated + 1
+                        Write-host "$($HuduNewPassword.Name) Has been created in Hudu"
+                        
                     }
                 }
             }
@@ -2182,6 +2374,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 }
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
+
+$null = Start-MigrationJob -Name "LinkReplacement"
+
 $UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
 $UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -like "*$ITGURL*"}
 $UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -like "*$ITGURL*"}
@@ -2300,35 +2495,61 @@ foreach ($companyFound in $UpdateCompanyNotes.HuduCompanyObject) {
 $companyNotesUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedCompaniesURL.json"
 Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Company Notes URLs Replaced. Continue?"  -DefaultResponse "continue to Manual Actions, please."
 
-if ($null -eq $OptionalImageAnchorReplace -or $OptionalImageAnchorReplace -eq $true -or $OptionalImageAnchorReplace -eq 1){
-    Write-Host "Replacing links to hosted public photos in Hudu Articles"
-    if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
-    . $PSScriptRoot\Public\Replace-HardCodedImages.ps1
-    
-    Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
-} else {write-host "skpping image-anchors replace in Hudu articles"}
+Write-Host "Replacing links to hosted public photos in Hudu Articles"
+if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
+. $PSScriptRoot\Public\Replace-HardCodedImages.ps1
 
+Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
 
 ############################### Wrap-Up ###############################
-write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan
+
+write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Layouts";
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
-if ($DisableWebsiteMonitoring) {write-host "leaving websites unmonitored per user-config"} else {$MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}}
-write-host "wrapup 2/10... adding attachments (this can take a while)"
+if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitored per user-config"} else {$MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}}
+
+write-host "wrapup 2/10... adding attachments and replacing any found attachment links (this can take a while)" ; $null = Start-MigrationJob -Name "Wrap-Up - Attachments";
 . .\Add-HuduAttachmentsViaAPI.ps1
+Write-Host "Attachments - enumerating and replacing attachment links in articles"; $null = Start-MigrationJob -Name "Wrap-Up - Attachment Links";
+$replacedAttachmentURLs = Start-HuduAttachmentLinkReplacement
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
 if ($true -eq $ImportConfigInterfaces){
-    write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"
+    write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"; $null = Start-MigrationJob -Name "Wrap-Up - IPAM/Networks/Addresses";
     $MatchedInterfaces = Invoke-HuduConfigurationIPAMSync -MatchedConfigurations $MatchedConfigurations
 }
 
-write-host "wrapup 4/10... archiving passwords, assets, configurations as they had been in ITGlue (this can take a while)"  -ForegroundColor DarkCyan
+write-host "wrapup 4/10... $(if ($true -eq $allowSettingFlagsAndTypes) {"Setting"} else {"Skipping"}) optional flags and flag types..."
+if ($true -eq $allowSettingFlagsAndTypes){
+    $null = Start-MigrationJob -Name "Wrap-Up - Flags and Flag Types";
+    . .\public\Add-HuduFlagsFlagtypes.ps1
+}
+
+write-host "wrapup 5/10... Setting Standalone articles with attachments to filename..."; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
+foreach ($a in $(Get-HuduArticles | where-object {$_.content -eq "Empty Document in IT Glue Export - Please Check IT Glue" -and $_.name -ilike "*.*"})){Set-HuduArticle -id $a.id -content "Please see attached file, $($a.name)"}
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $false} catch {}}
+
+write-host "wrapup 6/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
+if ($true -eq $importPasswordFolders){
+    $null = Start-MigrationJob -Name "Wrap-Up - Password Folders";
+    . .\public\Process-PasswordFolders.ps1
+}
+write-host "wrapup 7/10... Placing checklists / checklist templates if user-configured to do so... $($importChecklists)"
+if ($true -eq $importChecklists){
+    $null = Start-MigrationJob -Name "Wrap-Up - Checklists";
+    . .\public\Process-Checklists.ps1
+}
+
+write-host "wrapup 8/10... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Relations";
+# set retry to off/false in HuduAPI module, this will save time during adding potentially existent relations.
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
+. .\Get-MissingRelations.ps1
+
+write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Archiving Items";
 $DocsCsv = import-csv "$ITGLueExportPath\documents.csv"
 $ArchivedPasswords = $MatchedPasswords | Where-Object {$_.itgobject.attributes.archived -eq $true}
 $ArchivedConfigurations = $MatchedConfigurations | Where-Object {$_.ITGObject.attributes.archived -eq $true}    
 $ArchivedAssets = $MatchedAssets | Where-Object {$_.ITGObject.attributes.archived -eq $true}
 
-write-host "wrapup 5/10... archiving items..."  -ForegroundColor DarkCyan
 $ptaresults = $ArchivedPasswords | ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduPasswordArchive -id $_.huduid -Archive $true}}
 $ctaresults = $ArchivedConfigurations |ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduAssetArchive -Id $_.huduid -CompanyId $_.huduobject.company_id -Archive $true}}
 $ataresults = $ArchivedAssets |ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduAssetArchive -Id $_.huduid -CompanyId $_.huduobject.company_id -Archive $true}}
@@ -2341,64 +2562,56 @@ foreach ($obj in @(
     @{Name = "docs";            Archived = $documentArchiveResults ?? @() })) {
     $obj.Archived | ConvertTo-Json -depth 75 | Out-File $(join-path $settings.MigrationLogs "archived-$($obj.Name).json")
 }
-write-host "wrapup 6/10... Setting Standalone articles with attachments to filename..."
-foreach ($a in $(Get-HuduArticles | where-object {$_.content -eq "Empty Document in IT Glue Export - Please Check IT Glue" -and $_.name -ilike "*.*"})){Set-HuduArticle -id $a.id -content "Please see attached file, $($a.name)"}
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $false} catch {}}
 
-write-host "wrapup 7/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
-if ($true -eq $importPasswordFolders){
-    . .\public\Process-PasswordFolders.ps1
-}
-write-host "wrapup 8/10... Placing checklists / checklist templates if user-configured to do so... $($importChecklists)"
-if ($true -eq $importChecklists){
-    . .\public\Process-Checklists.ps1
-}
-if ($true -eq $ImportConfigInterfaces){
-    write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"
-    $MatchedInterfaces = Invoke-HuduConfigurationIPAMSync -MatchedConfigurations $MatchedConfigurations
+write-host "wrapup 10/10... $(if ($true -eq ($shouldRunVaultJob ?? $false)) {"Running"} else {"Skipping"}) vault job to update vaulted passwords with real values..."
+if ($true -eq ($shouldRunVaultJob ?? $false)){
+    $null = Start-MigrationJob -Name "Wrap-Up - Vaulted Passwords";
+    . .\Un-Vault-Passwords.ps1
+    $null = Complete-MigrationJob -Name "Wrap-Up - Vaulted Passwords" -CompletedAt $(Get-Date)
+} else {
+    $null = Complete-MigrationJob -Name "Wrap-Up - Archiving Items" -CompletedAt $(Get-Date)
 }
 
+############################### End ###############################
 
-write-host "wrapup 9/10... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."  -ForegroundColor DarkCyan
-# set retry to off/false in HuduAPI module, this will save time during adding potentially existent relations.
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
-. .\Get-MissingRelations.ps1
-
-write-host "wrapup 10/10... $(if ($true -eq $allowSettingFlagsAndTypes) {"Setting"} else {"Skipping"}) optional flags and flag types..."
-if ($true -eq $allowSettingFlagsAndTypes){
-    . .\public\Add-HuduFlagsFlagtypes.ps1
-}
-
-$MatchedUploadFields = $MatchedUploadFields ?? @{}
-$UnresolvedUploadFields = $UnresolvedUploadFields ?? @{}
-foreach ($auxilliaryObj in @(@{Name = "passwordfolders"; Created = $MatchedPasswordFolders ?? @() }, @{Name="UploadFields"; Created = $MatchedUploadFields ?? @() }, @{Name="UnresolvedUploadFields"; Created = $UnresolvedUploadFields ?? @() }, @{Name = "checklists"; Created = $MatchedChecklists ?? @() }, @{Name="Interfaces-IPAM"; Created = ($MatchedInterfaces ?? @())})) {
+$VaultedPasswords = $VaultedPasswords ?? @(); $unvaultedMatches = $unvaultedMatches ?? @();
+$MatchedUploadFields = $MatchedUploadFields ?? @{}; $UnresolvedUploadFields = $UnresolvedUploadFields ?? @{};
+foreach ($auxilliaryObj in @(@{Name="UnvaultedPasswords"; Created = $unvaultedMatches ?? @()}, @{Name = "passwordfolders"; Created = $MatchedPasswordFolders ?? @() }, @{Name="UploadFields"; Created = $MatchedUploadFields ?? @() }, @{Name="UnresolvedUploadFields"; Created = $UnresolvedUploadFields ?? @() }, @{Name = "checklists"; Created = $MatchedChecklists ?? @() }, @{Name="Interfaces-IPAM"; Created = ($MatchedInterfaces ?? @())})) {
     write-host "Writing json dump for $($auxilliaryObj.Name) created during migration for reference in manual actions and for audit purposes"
     $auxilliaryObj.Created | ConvertTo-Json -depth 75 | Out-File $(join-path $settings.MigrationLogs "created-$($auxilliaryObj.Name).json")
 }
-############################### End ###############################
 
-
-$CompletedAt = Get-Date
-$Duration = New-TimeSpan -Start $ScriptStartTime -End $CompletedAt
 $CompletedAt = Get-Date
 $Duration = $CompletedAt - $ScriptStartTime
+$JobDurationReport = @(Get-MigrationJobDurationReport -ReportEndTime $CompletedAt)
+$JobDurationSummary = ($JobDurationReport | Select-Object Job, Status, Started, Finished, Duration | Format-Table -AutoSize | Out-String).TrimEnd()
+
+$MatchedChecklistsForSummary = @($MatchedChecklists | Where-Object { $_ })
+$GlobalProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedure -and -not $_.HuduProcedure.company_id }).Count
+$CompanyProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedure -and $_.HuduProcedure.company_id }).Count
+$ProcessRunsMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedureRun -and $_.HuduProcedureRun.id }).Count
 
 $migratedItems = [ordered]@{
-    'Companies Migrated'                         = Get-SafeCount $MatchedCompanies
-    'Locations Migrated'                         = Get-SafeCount $MatchedLocations
-    'Websites Migrated'                          = Get-SafeCount $MatchedWebsites
-    'Configurations Migrated'                    = Get-SafeCount $MatchedConfigurations
-    'Contacts Migrated'                          = Get-SafeCount $MatchedContacts
-    'Layouts Migrated'                           = Get-SafeCount $MatchedLayouts
-    'Assets Migrated'                            = Get-SafeCount $MatchedAssets
-    'Articles Migrated'                          = Get-SafeCount $MatchedArticles
-    'Passwords Migrated'                         = Get-SafeCount $MatchedPasswords
-    'Password Folders Migrated'                  = Get-SafeCount $MatchedPasswordFolders
-    'Checklists / Checklist Templates Migrated'  = Get-SafeCount $MatchedChecklists
-    'Relations Created'                          = Get-SafeCount $NewRelationsCreated
+    'Companies Migrated'                         = Get-SafeCount $($MatchedCompanies | where-object {[int]($_.HuduID) -gt 0})
+    'Locations Migrated'                         = Get-SafeCount $($MatchedLocations | where-object {[int]($_.HuduID) -gt 0})
+    'Websites Migrated'                          = Get-SafeCount $($MatchedWebsites | where-object {[int]($_.HuduID) -gt 0})
+    'Configurations Migrated'                    = Get-SafeCount $($MatchedConfigurations | where-object {[int]($_.HuduID) -gt 0})
     'IPAM Interfaces/Networks/Addresses Migrated'= Get-SafeCount $MatchedInterfaces
+    'Contacts Migrated'                          = Get-SafeCount $($MatchedContacts | where-object {[int]($_.HuduID) -gt 0})
+    'Layouts Migrated'                           = Get-SafeCount $($MatchedLayouts | where-object {[int]($_.HuduID) -gt 0})
+    'Assets Migrated'                            = Get-SafeCount $($MatchedAssets | where-object {[int]($_.HuduID) -gt 0})
+    'Articles Migrated'                          = Get-SafeCount $($MatchedArticles | where-object {[int]($_.HuduID) -gt 0})
+    'Passwords Migrated'                         = Get-SafeCount $MatchedPasswords
+    'Password Folders Migrated'                  = Get-SafeCount $($MatchedPasswordFolders | where-object {[int]($_.HuduPasswordFolder.ID) -gt 0})
+    'Passwords From Vault'                       = $VaultedPasswords.count ?? 0
+    'Passwords Left Unvaulted'                   = ([int]($VaultedPasswords.count ?? 0) - [int]($unvaultedMatches.count ?? 0))
+    'Relations Created'                          = Get-SafeCount $NewRelationsCreated
     'Upload Fields Migrated'                     = $MatchedUploadFields.count ?? 0
     'Upload Fields Unresolved'                   = $UnresolvedUploadFields.count ?? 0
+    'Checklists / Checklist Templates Migrated'  = Get-SafeCount ($MatchedChecklists ?? @())
+    'Hudu Global Process Templates Migrated'     = $GlobalProcessTemplatesMigrated
+    'Hudu Company Process Templates Migrated'    = $CompanyProcessTemplatesMigrated
+    'Hudu Process Runs Migrated'                 = $ProcessRunsMigrated
 }
 
 $archivedItems = [ordered]@{
@@ -2408,6 +2621,18 @@ $archivedItems = [ordered]@{
     'Documents Archived'       = $documentArchiveResults.count ?? 0
 }
 $MigrationSummary = "$(Format-MigrationSummary -ScriptStartTime $ScriptStartTime -CompletedAt $CompletedAt -Duration $Duration -DebugFolder ($debugFolder ?? "$PSScriptRoot\debug") -MigrationLogs ($MigrationLogs ?? "$PSScriptRoot\debug\logs") -migratedItems $migratedItems -archivedItems $archivedItems)"
+if ($JobDurationReport.Count -gt 0) {
+    $MigrationSummary = @(
+        $MigrationSummary
+        '-------------------------------------------------------'
+        'Job Durations'
+        '-------------------------------------------------------'
+        $JobDurationSummary
+    ) -join [Environment]::NewLine
+
+    $JobDurationReport | ConvertTo-Json -Depth 5 | Out-File "$MigrationLogs\JobDurations.json" -Encoding utf8
+    $JobDurationSummary | Out-File "$MigrationLogs\JobDurations.txt" -Encoding utf8
+}
 $MigrationSummary | Out-File -FilePath "$MigrationLogs\MigrationSummary.txt" -Encoding utf8
 Format-ManualActionsReport -ManualActions $ManualActions -OutputPath "$MigrationLogs\ManualActions.html" -summary $MigrationSummary
 Write-Host $MigrationSummary -ForegroundColor DarkCyan

@@ -67,8 +67,6 @@ function ConvertSecureStringToPlainText {
     return $plainText
 }
 
-
-
 # Prompt the user for various settings and save the responses
 function CollectAndSaveSettings {
     # Create a hash table to store the settings
@@ -83,9 +81,9 @@ function CollectAndSaveSettings {
     $settings.ITGAPIEndpoint = $settings.ITGAPIEndpoint ?? 
         $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
     $customBrandedDomain = $customBrandedDomain ?? 
-        $(Read-Host -Prompt "Do you have additional hostnames you'd like to include in the URL Replacement? For example custom branded ITGlue Domain Name. (y/n)").ToLower().Trim()
+        [bool]$($(Select-ObjectFromList -message "Do you have additional hostnames you'd like to include in the URL Replacement? For example custom branded ITGlue Domain Name." -objects @($false, $true) -allowNull $false) ?? $false)
     $instance = $settings.ITGURL.replace('https://','')
-    if ($customBrandedDomain.ToLower() -eq 'y') {
+    if ($customBrandedDomain -eq $true -or $customBrandedDomain.ToString().ToLower() -eq 'y') {
     	$settings.ITGCustomDomains = Read-Host -Prompt "Please enter comma separated list of URLs to check for, following the same format of the main domain URL. If only one, don't include the comma."
     }
 
@@ -112,25 +110,11 @@ function CollectAndSaveSettings {
     Write-Host "Settings- Global KnowledgeBase:" -ForegroundColor Yellow
     $settings.InternalCompany = $settings.InternalCompany ??
         $(Read-Host 'Enter the exact name of the ITGlue Organization that represents your Internal Company ').ToString().Trim()
-    if ($null -eq $settings.PlaceInternalDocsInInternalCompany) {
-        while ($null -eq $settings.PlaceInternalDocsInInternalCompany) {
-            $internalDocsChoice = $(Read-Host -Prompt 'Do you want documents from your Internal Company to stay under that company instead of going to Global KB? [Default behavior is N/$false] (y/n)').ToString().Trim().ToLower()
-            switch ($internalDocsChoice) {
-                { $_ -in @('y','yes') } { $settings.PlaceInternalDocsInInternalCompany = $true; break }
-                { $_ -in @('n','no') } { $settings.PlaceInternalDocsInInternalCompany = $false; break }
-                default { Write-Host "Please re-enter, y or n" }
-            }
-        }
-    }
+    $settings.PlaceInternalDocsInInternalCompany = $settings.PlaceInternalDocsInInternalCompany ??
+        [bool]$($(Select-ObjectFromList -message 'Do you want documents from your Internal Company to stay under that company instead of going to Global KB? [Default behavior is N/$false]' -objects @($false, $true) -allowNull $false) ?? $false)
     if ($true -ne $settings.PlaceInternalDocsInInternalCompany) {
         $settings.GlobalKBFolder = $settings.GlobalKBFolder ??
-            ""
-        while ($settings.GlobalKBFolder.Length -ne 1 -or $settings.GlobalKBFolder.ToLower() -notin @('y','n')) {
-            $settings.GlobalKBFolder = $(Read-Host -Prompt 'Do you want all documents in Global KB to be placed into a subfolder? (y/n)').ToString().Trim().ToLower()
-            if ($settings.GlobalKBFolder -notin @("y","n")){
-                Write-Host "Please re-enter, y or n"
-            }
-        }
+            $(Select-ObjectFromList -message 'Do you want all documents in Global KB to be placed into a subfolder?' -objects @("n", "y"))
         Write-Host "The documents from the company $($settings.InternalCompany) will be migrated to Hudu's Global KB section " -ForegroundColor Cyan
     } else {
         Write-Host "The documents from the company $($settings.InternalCompany) will stay under that company in Hudu" -ForegroundColor Cyan
@@ -237,14 +221,14 @@ function PromptForSettingsPath {
 if ($environmentSettings -and $InitType -eq 'Lite') {
     Write-Host "Lite init and settings detected."
  }
- else {
-    $choice = $choice ?? $(Read-Host -Prompt "Do you want to `n(I)mport `n settings or start from `n(N)ew ?")
+else {
+    $choice = $choice ?? $(Select-ObjectFromList -message "Do you want to import settings or start from new?" -objects @("I", "N"))
 
     switch ($choice) {
         'I' { 
             if (Test-Path -Path $defaultSettingsPath) {
                 Write-Host "Default settings file found at $defaultSettingsPath" -ForegroundColor Cyan
-                $importChoice = $importChoice ?? $(Read-Host -Prompt "Do you want to use the `n(D)efault settings`n file or `n(S)pecify`n a different path?")
+                $importChoice = $importChoice ?? $(Select-ObjectFromList -message "Do you want to use the default settings file or specify a different path?" -objects @("D", "S"))
                 
                 switch ($importChoice) {
                     'D' {
@@ -293,7 +277,31 @@ catch {
 $HuduBaseDomain = $environmentSettings.HuduBaseDomain
 
 # IT Glue - MAKE SURE TO USE AN API KEY WITH PASSWORD ACCESS
-$ITGAPIEndpoint = $environmentSettings.ITGAPIEndpoint
+$ITGAPIEndpoint = @(
+    $ITGAPIEndpoint
+    $environmentSettings.ITGAPIEndpoint
+    $settings.ITGAPIEndpoint
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+if ([string]::isNullOrWhiteSpace($ITGAPIEndpoint)){
+    $ITGAPIEndpoint = $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
+}
+$ITGAPIEndpoint = $ITGAPIEndpoint.Trim() -replace '[\\/]+$', ''
+if ($environmentSettings) {
+    $savedITGAPIEndpoint = if ($environmentSettings -is [hashtable]) {
+        $environmentSettings['ITGAPIEndpoint']
+    } else {
+        $environmentSettings.ITGAPIEndpoint
+    }
+
+    if ($savedITGAPIEndpoint -ne $ITGAPIEndpoint) {
+        if ($environmentSettings -is [hashtable]) {
+            $environmentSettings['ITGAPIEndpoint'] = $ITGAPIEndpoint
+        } else {
+            $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGAPIEndpoint -Value $ITGAPIEndpoint -Force
+        }
+        UpdateSavedSettings -newSettings $environmentSettings
+    }
+}
 
 try {
     $ITGKey = ConvertSecureStringToPlainText -SecureString ($environmentSettings.ITGKey|ConvertTo-SecureString)
@@ -316,198 +324,132 @@ $ITGLueExportPath = $environmentSettings.ITGLueExportPath
 
 
 # Choose if you want to resume previous attempts from the last successful section
-while ($resumeQuestion -notin ('yes','no')) {
-	$resumeQuestion = Read-Host "Would you like to resume a previous migration? (yes/no)"
-}
-$ResumePrevious = if ($resumeQuestion -eq 'yes') {$true} else {$false}
+$resumeQuestion = $resumeQuestion ?? $(Select-ObjectFromList -message "Would you like to resume a previous migration?" -objects @($true, $false) -allowNull $false)
+$ResumePrevious = $ResumePrevious ?? $(if ($resumeQuestion -eq 'yes' -or $resumeQuestion -eq $true) {$true} else {$false})
 $GlobalKBFolder = if ($PlaceInternalDocsInInternalCompany) { $null } else { $environmentSettings.GlobalKBFolder }
 
 # These settings should only run when doing a full settings initialization.
 if ($InitType -eq 'Full') {
     ############################### Company Settings ###############################
-    while ($ImportCompanies -notin (1,2)) {$ImportCompanies = Read-Host "1) Import Companies `n2) Skip Companies`n(1/2)"}
-    switch ($ImportCompanies) {
-        "1" {$ImportCompanies = $true}
-        "2" {$ImportCompanies = $false}
-    }
+    $ImportCompanies = $ImportCompanies ?? $(Select-ObjectFromList -message "Import Companies?" -objects @($true, $false) -allowNull $false)
 
     ############################### Location Settings ###############################
-    while ($ImportLocations -notin (1,2)) {$ImportLocations = Read-Host "1) Import Locations `n2) Skip Locations`n(1/2)"}
-    switch ($ImportLocations) {
-        "1" {$ImportLocations = $true}
-        "2" {$ImportLocations = $false}
-    }
+    $ImportLocations = $ImportLocations ?? $(Select-ObjectFromList -message "Import Locations?" -objects @($true, $false) -allowNull $false)
 
-    # The asset layout name how locations will appear in Hudu
-    $LocImportAssetLayoutName = $LocImportAssetLayoutName ?? "Locations"
+    # The asset layout names and icons
+    $ConImportIcon = "fas fa-users"
+    $LocImportIcon = "fas fa-building"
+    $ConfigImportIcon = "fas fa-sitemap"    
+    $ConfigMigrationName = $ConfigMigrationName ?? "Configurations" # name for configs layout
+    $ConImportAssetLayoutName = $ConImportAssetLayoutName ?? "People" # name for people layout
+    $LocImportAssetLayoutName = $LocImportAssetLayoutName ?? "Locations" # name for location layout
+    $LayoutIconBackGroundColor = $LayoutIconBackGroundColor ?? "#6136ff" # hudu-purple background for layout icons (fallback)
+    $LayoutIconForegroundColor = $LayoutIconForegroundColor ?? "#ffffff" # White Foreground for layout icons (fallback)
+
 
     # The font awesome name for the locations icon in Hudu
-    $LocImportIcon = "fas fa-building"
-
     # Here set two arrays of the different names you have used to identify the primary location in both ITGlue And Hudu
     $ITGPrimaryLocationNames = @("Primary Address", "Main", "Head Office", "Main Office")
     $HuduPrimaryLocationNames = @("Primary Address")
 
     ############################### Domain / Website Settings ###############################
-    while ($ImportDomains -notin (1,2)) {$ImportDomains = Read-Host "Domains are used for Website, DNS and SSL Monitoring.`n 1) Import Domains`n 2) Skip Domains`n(1/2)"}
-    switch ($ImportDomains) {
-        "1" {$ImportDomains = $true}
-        "2" {$ImportDomains = $false}
-    }
+    $ImportDomains = $ImportDomains ?? $(Select-ObjectFromList -message "Domains are used for Website, DNS and SSL Monitoring. Import Domains?" -objects @($true, $false) -allowNull $false)
 
-    while ($MergedOrganizationTypes -notin (1,2)) {$MergedOrganizationTypes = Read-Host "Would you like to merge certain organization types in ITGlue to a given existing hudu company?.`n 1) Operate as normal`n 2) Scope ITGlue Org Type to a Company in Hudu`n(1/2)"}
-    switch ($MergedOrganizationTypes) {
-        "1" {$MergedOrganizationTypes = $false}
-        "2" {$MergedOrganizationTypes = $true}
-    }    
+    $MergedOrganizationTypes = $MergedOrganizationTypes ?? $(Select-ObjectFromList -message "Would you like to merge certain organization types in ITGlue to a given existing Hudu company?" -objects @($false, $true) -allowNull $false)
 
     # Choose if you would like to enable monitoring for the imported websites.
-    while ($DisableWebsiteMonitoring -notin (1,2)) {$DisableWebsiteMonitoring = Read-Host "1) Leave Website Monitoring enabled `n2) Disable Website Monitoring`n(1/2)"}
-    switch ($DisableWebsiteMonitoring) {
-        "1" {$DisableWebsiteMonitoring = $false}
-        "2" {$DisableWebsiteMonitoring = $true}
-    }
-
+    $DisableWebsiteMonitoring = $DisableWebsiteMonitoring ?? $(Select-ObjectFromList -message "Would you like to disable website monitoring?" -objects @($false, $true) -allowNull $false)
 
     ############################### Configuration Settings ###############################
-    while ($ImportConfigurations -notin (1,2)) {$ImportConfigurations = Read-Host "1) Import Configurations `n2) Skip Configurations`n(1/2)"}
-    switch ($ImportConfigurations) {
-        "1" {$ImportConfigurations = $true}
-        "2" {$ImportConfigurations = $false}
-    }
+    $ImportConfigurations = $ImportConfigurations ?? $(Select-ObjectFromList -message "Import Configurations?" -objects @($true, $false) -allowNull $false)
 
-
-    # The font awesome name for the locations icon in Hudu
-    $ConfigImportIcon = "fas fa-sitemap"
-
-    # Set if you would like a Prefix in front of configuration names created in Hudu. This can make it easy to review and you can rename them later set to ""if you dont want one
-    $ConfigurationPrefix = $environmentSettings.ConPromptPrefix
-
-
-    ############################### Contact Settings ###############################
-    while ($ImportContacts -notin (1,2)) {$ImportContacts = Read-Host "1) Import Contacts `n2) Skip Contacts`n(1/2)"}
-    switch ($ImportContacts) {
-        "1" {$ImportContacts = $true}
-        "2" {$ImportContacts = $false}
-    }
-
-    # The asset layout name how locations will appear in Hudu
-    $ConImportAssetLayoutName = $ConImportAssetLayoutName ?? "People"
-
-    # The font awesome name for the locations icon in Hudu
-    $ConImportIcon = "fas fa-users"
-
-    ############################### Flexible Asset Layouts ###############################
-    while ($ImportFlexibleAssetLayouts -notin (1,2)) {$ImportFlexibleAssetLayouts = Read-Host "1) Import Asset Layouts `n2) Skip Asset Layouts`n(1/2)"}
-    switch ($ImportFlexibleAssetLayouts) {
-        "1" {$ImportFlexibleAssetLayouts = $true}
-        "2" {$ImportFlexibleAssetLayouts = $false}
-    }
-
-    # Set if you would like a Prefix in front of Layout names created in Hudu. This can make it easy to review and you can rename them later set to ""if you don't want one
-
+    $ConfigurationPrefix = $settings.ConPromptPrefix ?? $environmentSettings.ConPromptPrefix ?? ""
     $FlexibleLayoutPrefix = $environmentSettings.FAPromptPrefix
 
-    ############################### Flexible Assets ###############################
-    while ($ImportFlexibleAssets -notin (1,2)) {$ImportFlexibleAssets = Read-Host "1) Import Assets `n2) Skip Assets`n(1/2)"}
-    switch ($ImportFlexibleAssets) {
-        "1" {$ImportFlexibleAssets = $true}
-        "2" {$ImportFlexibleAssets = $false}
-    }
+    ############################### Contact Settings ###############################
+    $ImportContacts = $ImportContacts ?? $(Select-ObjectFromList -message "Import Contacts?" -objects @($true, $false) -allowNull $false)
 
+    ############################### Flexible Asset Layouts ###############################
+    $ImportFlexibleAssetLayouts = $ImportFlexibleAssetLayouts ?? $(Select-ObjectFromList -message "Import Asset Layouts?" -objects @($true, $false) -allowNull $false)
+
+    ############################### Flexible Assets ###############################
+    $ImportFlexibleAssets = $ImportFlexibleAssets ?? $(Select-ObjectFromList -message "Import Assets?" -objects @($true, $false) -allowNull $false)
 
     ############################### Articles ###############################
-    while ($ImportArticles -notin (1,2)) {$ImportArticles = Read-Host "1) Import Articles `n2) Skip Articles`n(1/2)"}
-    switch ($ImportArticles) {
-        "1" {$ImportArticles = $true}
-        "2" {$ImportArticles = $false}
-    }
+    $ImportArticles = $ImportArticles ?? $(Select-ObjectFromList -message "Import Articles?" -objects @($true, $false) -allowNull $false)
+    $IncludeIgnoredFirstArticleDirectory = $IncludeIgnoredFirstArticleDirectory ?? [bool]($(Select-ObjectFromList -message "would you like to include root directories when migrating article folders? default behavior is no/false" -objects @($false,$true) -allowNull $false) ?? $false)
 
     ############################### Passwords ###############################
-    while ($ImportPasswords -notin (1,2)) {$ImportPasswords = Read-Host "1) Import Passwords `n2) Skip Passwords`n(1/2)"}
-    switch ($ImportPasswords) {
-        "1" {$ImportPasswords = $true}
-        "2" {$ImportPasswords = $false}
-    }
+    $ImportPasswords = $ImportPasswords ?? $(Select-ObjectFromList -message "Import Passwords?" -objects @($true, $false) -allowNull $false)
 
     ############################### Unattended ###############################
-    while ($NonInteractive -notin (1,2)) {$NonInteractive = Read-Host "1) Run normally `n2) Perform this migration noninteractively `n(1/2)"}
-    switch ($NonInteractive) {
-        "1" {$NonInteractive = $false}
-        "2" {$NonInteractive = $true}
-    }    
-    ############################### Scoping ###############################
-    while ($ScopedMigration -notin (1,2)) {$ScopedMigration = Read-Host "1) Run normally `n2) Perform migration scoped to certain companies `n(1/2)"}
-    switch ($ScopedMigration) {
-        "1" {$ScopedMigration = $false}
-        "2" {$ScopedMigration = $true}
-    }
-    ############################## Checklists ##############################
-    while ($importChecklists -notin  @(1,2, $true, $false)) {$importChecklists = Read-Host "Would you like to import Checklists? (requires web access to ITGlue).`n 1) No, Skip Checklists (Default)`n 2) Yes, Import Checklists (requires JWT, more difficult)`n(1/2)"}
-    switch ($importChecklists) {
-        "1" {$importChecklists = $false}
-        "2" {$importChecklists = $true}
-    }
+    $NonInteractive = $NonInteractive ?? $(Select-ObjectFromList -message "Would you like to perform this migration noninteractively?" -objects @($false, $true) -allowNull $false)
 
-    ############################ PasswordFolders ############################
-    while ($importPasswordFolders -notin @(1,2, $true, $false)) {$importPasswordFolders = Read-Host "Would you like to import Password Folders?`n 1) Yes`n 2) No, Skip Password Folders`n(1/2)"}
-    switch ($importPasswordFolders) {
-        "1" {$importPasswordFolders = $true; 
-            $GlobalPasswordFolderMode =  $GlobalPasswordFolderMode ?? $([bool]$("global" -eq $(Select-ObjectFromList -message "Password folder import mode-" -objects @("global","per-company"))))
-            $companyPasswordFolderAttributionMove = $companyPasswordFolderAttributionMove ?? $(if ($true -eq $GlobalPasswordFolderMode) {[bool]$("yes" -eq $(Select-ObjectFromList -message "Password Folders with only one company of passwords- do you want to move those to company-scope password folders? (if you aren't sure, 'yes' is generally a good bet)" -objects @("yes","no")))} else {$false})
-        }
-        "2" {$importPasswordFolders = $false; $GlobalPasswordFolderMode = $null; $companyPasswordFolderAttributionMove = $false}
-    }    
+    ############################### Scoping ###############################
+    $ScopedMigration = $ScopedMigration ?? $(Select-ObjectFromList -message "Would you like to perform migration scoped to certain companies?" -objects @($false, $true) -allowNull $false)
+
+    ############################## Checklists ##############################
+    $importChecklists = $importChecklists ?? $(Select-ObjectFromList -message "Would you like to import Checklists? (requires web access to ITGlue)." -objects @($true, $false) -allowNull $false)
+
+    $importPasswordFolders = $importPasswordFolders ?? $(Select-ObjectFromList -message "Would you like to import Password Folders?" -objects @($true, $false) -allowNull $false)
+    if ($true -eq $importPasswordFolders) {
+        $GlobalPasswordFolderMode = $GlobalPasswordFolderMode ?? [bool]("global" -eq $(Select-ObjectFromList -message "Password folder import mode-" -objects @("global","per-company")))
+        $companyPasswordFolderAttributionMove = $companyPasswordFolderAttributionMove ?? $(if ($true -eq $GlobalPasswordFolderMode) {[bool]($(Select-ObjectFromList -message "Password Folders with only one company of passwords- do you want to move those to company-scope password folders? (if you aren't sure, 'yes' is generally a good bet)" -objects @($true,$false)) ?? $true)} else {$false})
+    } else {
+        $GlobalPasswordFolderMode = $null
+        $companyPasswordFolderAttributionMove = $false
+    }
 
     ############################## Interfaces ##############################
-    while ($ImportConfigInterfaces -notin @(1,2, $true, $false)) {$ImportConfigInterfaces = Read-Host "Would you like to import configuration interfaces (IP Addresses) into IPam in Hudu (requires more time)?.`n 1) Yes`n 2) No, Skip Interfaces/Addresses`n(1/2)"}
-    switch ($ImportConfigInterfaces) {
-        "1" {$ImportConfigInterfaces = $true}
-        "2" {$ImportConfigInterfaces = $false}
-    }
+    $ImportConfigInterfaces = $ImportConfigInterfaces ?? $(Select-ObjectFromList -message "Would you like to import configuration interfaces (IP Addresses) into IPam in Hudu (requires more time)?" -objects @($true, $false) -allowNull $false)
 
-
-    ############################ Image Anchors Regex ############################
+    ############################# Junk Layouts #############################
+    $skipIntegratorLayouts = $skipIntegratorLayouts ?? $(Select-ObjectFromList -message "[Other, default false] Would you like to skip importing Integrator Layouts? These are often containing data that goes unused." -objects @($true, $false) -allowNull $false)
+    
+    ############################ Sane deafaults that can be overridden ############################
     $OptionalImageAnchorReplace = $OptionalImageAnchorReplace ?? $true
-    while ($OptionalImageAnchorReplace -notin @(1,2, $true, $false)) {$OptionalImageAnchorReplace = Read-Host "[Other, default 1/$true] Would you like to replace links to hosted images in Hudu? (Not commonly needed but can be good for images-as-links in articles).`n 1) Yes`n 2) No, skip image-links`n(1/2)"}
-    switch ($OptionalImageAnchorReplace) {
-        "1" {$OptionalImageAnchorReplace = $true}
-        "2" {$OptionalImageAnchorReplace = $false}
-    }    
-    while ($skipIntegratorLayouts -notin @(1,2, $true, $false)){
-        $skipIntegratorLayoutsInput = Read-Host "[Other, default false] Would you like to skip importing Integrator Layouts? These are often containing data that goes unused.`n 1) Yes`n 2) No, import all layouts`n(1/2)"
-        switch ($skipIntegratorLayoutsInput) {
-            "1" {$skipIntegratorLayouts = $true}
-            "2" {$skipIntegratorLayouts = $false}
-        }
-    }
     $allowSettingFlagsAndTypes = $allowSettingFlagsAndTypes ?? $false
-    while ($allowSettingFlagsAndTypes -notin @(1,2, $true, $false)){
-        $allowSettingFlagsAndTypes = Read-Host "Would you like to apply flags and flag types during the migration? This requires Hudu version 2.40.0 or later.`n 1) Yes`n 2) No, skip setting Flags and FlagTypes`n(1/2)"
-        switch ($allowSettingFlagsAndTypes) {
-            "1" {$allowSettingFlagsAndTypes = $true}
-            "2" {$allowSettingFlagsAndTypes = $false}
-    }
+    $AllowEmptyPasswords = $AllowEmptyPasswords ?? $true
 
-    $IncludeIgnoredFirstArticleDirectory = $IncludeIgnoredFirstArticleDirectory ?? [bool]((select-objectfromlist -message "would you like to include root directories when migrating article folders? default behavior is no/false" -objects @("no","yes")) -eq "yes")
+
+    # $AllowEmptyPasswords = $AllowEmptyPasswords ?? [bool]($(Select-ObjectFromList -message "would you like to skip empty passwords if there are any in ITGlue. Make sure this is false if you have vaulted passwords. (default - no - keep empty passwords/false)" -objects @($false,$true) -allowNull $false) ?? $false)
+
 }
-}
+
 ############################ Migration Logs Path ##############################
 $MigrationLogs = $environmentSettings.MigrationLogs
 
 # Now that ITGlue export jobs require a user to elect to include passwords via checkbox, we need to check for the presence of the passwords.csv and warn user in relation to their migration strategy.
+$resolvedITGlueExportPath = $ITGLueExportPath ?? $environmentSettings.ITGLueExportPath ?? $settings.ITGLueExportPath
+$passwordsCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) { Join-Path -Path $resolvedITGlueExportPath -ChildPath "passwords.csv" } else { $null }
+$vaultedCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) { Join-Path -Path $resolvedITGlueExportPath -ChildPath "vaulted" } else { $null }
+$passwordsCSVOptional = ($InitType -ne 'Full' -or ((2,$false) -contains $ImportPasswords -and (2,$false) -contains $ImportFlexibleAssets))
+$passwordsCSVOptionalReason = if ($InitType -ne 'Full') { "this is a Lite initialization, so password and flexible asset imports are not being configured" } else { "you have chosen to skip both flexible assets and passwords" }
 $passwordsCSVvalidated = $false
+$passwordsCSVFound = $false
+
+$VaultedPasswords = @()
+$possiblyVaultedPasswords = $false
+$uniqueVaultedOrgs = @()
+$userVaultedPasswordsDirPresent = $false
+$vaultCSVsPresent = @()
+$shouldRunVaultJob = $false
+
+if ([string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) {
+    throw "ITGlue export path is blank. Please set ITGLueExportPath before checking for passwords.csv."
+}
 
 while ($passwordsCSVvalidated -eq $false) {
-    if (Test-Path -Path $(join-path -path $ITGLueExportPath -childpath "passwords.csv") -ErrorAction SilentlyContinue) {
-        Write-Host "Password CSV found at $(join-path -path $ITGLueExportPath -childpath "passwords.csv")" -ForegroundColor Cyan
+    if (Test-Path -LiteralPath $passwordsCSVPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        Write-Host "Password CSV found at $passwordsCSVPath" -ForegroundColor Cyan
+        $passwordsCSVFound = $true
         $passwordsCSVvalidated = $true
-    } elseif ((2,$false) -contains $ImportPasswords -and (2,$false) -contains $ImportFlexibleAssets) {
-        write-host "passwords.csv not found at $(join-path -path $ITGLueExportPath -childpath "passwords.csv"), but since you have chosen to skip both flexible assets and passwords, this file is not needed specifically for your migration. If you later choose to migrate either of those sections, make sure to have a passwords.csv in your export folder." -ForegroundColor Yellow; start-sleep -seconds 2;
+    } elseif ($passwordsCSVOptional) {
+        Write-Host "passwords.csv not found at $passwordsCSVPath, but since $passwordsCSVOptionalReason, this file is not needed specifically for your migration. If you later choose to migrate either of those sections, make sure to have a passwords.csv in your export folder." -ForegroundColor Yellow; Start-Sleep -Seconds 2
         $passwordsCSVvalidated = $true
     } else {
-        Write-Host "passwords.csv not found at $(join-path -path $ITGLueExportPath -childpath "passwords.csv"). You'll want to take another export, this time ensuring that passwords are included. Failure to do so will result in missing password data. Passwords.csv is used in both flexible assets and passwords portions of the migration." -ForegroundColor Red;  start-sleep -seconds 2;
-        $overrideNoPassCSV = read-host "Press Enter to re-check for the file if you have extracted a new export to $($ITGLueExportPath), or Ctrl+C to exit. To continue anyway without passwords CSV (not reccomended), please enter this phrase exactly with no quotes: 'migrate-anyway'"
+        Write-Host "passwords.csv not found at $passwordsCSVPath. You'll want to take another export, this time ensuring that passwords are included. Failure to do so will result in missing password data. Passwords.csv is used in both flexible assets and passwords portions of the migration." -ForegroundColor Red; Start-Sleep -Seconds 2
+        $overrideNoPassCSV = Read-Host "Press Enter to re-check for the file if you have extracted a new export to $resolvedITGlueExportPath, or Ctrl+C to exit. To continue anyway without passwords CSV (not recommended), please enter this phrase exactly with no quotes: 'migrate-anyway'"
         if ($overrideNoPassCSV -ieq 'migrate-anyway') {
             Write-Host "Continuing without passwords.csv. Password data will be missing from the migration." -ForegroundColor Yellow
             $passwordsCSVvalidated = $true
@@ -515,23 +457,39 @@ while ($passwordsCSVvalidated -eq $false) {
     }
 }
 
-############################### End of Settings ###############################
+if ($passwordsCSVFound -and $overrideNoPassCSV -ine 'migrate-anyway') {
+    try {
+        $passwordRows = @(Import-Csv -LiteralPath $passwordsCSVPath -ErrorAction Stop)
+    } catch {
+        Write-Warning "Unable to parse passwords.csv at $passwordsCSVPath. Vaulted password detection will be skipped. Error: $($_.Exception.Message)"
+        $passwordRows = @()
+    }
 
-############################## Load ImageMagick ###############################
-# Import ImageMagick Modules, prompt for path if the module is missing
-#Write-Host "Adding Imagemagick commands from dot NET assemblies" -ForegroundColor Cyan
-#$ImageMagickPath = "$PSScriptRoot\Magick.NET-Q16-AnyCPU.dll"
-<# while (!('ImageMagick.MagickImage'-as [type])) {
-    if (Test-Path "$ImageMagickPath") {
-        try {
-            Add-Type -Path $ImageMagickPath -ErrorAction Stop
-        }
-        catch { 
-            throw "Failed to load ImageMagick, please check the files and try again. `n $_"
-        }
+    $passwordCsvHeaders = @($passwordRows | Select-Object -First 1 | ForEach-Object { $_.PSObject.Properties.Name })
+    if ($passwordRows.Count -gt 0 -and $passwordCsvHeaders -inotcontains 'password') {
+        Write-Warning "passwords.csv at $passwordsCSVPath does not appear to contain a 'password' column. Vaulted password detection will be skipped."
+    } elseif ($passwordRows.Count -gt 0) {
+        $VaultedPasswords = @($passwordRows | Where-Object {
+            [string]::IsNullOrWhiteSpace($_.password) -or
+            $_.password -ilike "AES256GCM*" -or
+            $_.password -ilike "AES-256-GCM*"
+        })
+        $possiblyVaultedPasswords = ($VaultedPasswords.Count -gt 0)
+        $uniqueVaultedOrgs = @($VaultedPasswords | ForEach-Object { $_.organization } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     }
-    else {
-        $ImageMagickPath = (Read-Host "Failed to load ImageMagick. Please provide path for the three DLLs.") + "\Magick.NET-Q16-AnyCPU.dll"
+
+    $userVaultedPasswordsDirPresent = Test-Path -LiteralPath $vaultedCSVPath -PathType Container -ErrorAction SilentlyContinue
+    $vaultCSVsPresent = if ($userVaultedPasswordsDirPresent) { @(Get-ChildItem -LiteralPath $vaultedCSVPath -Filter "*.csv" -File -ErrorAction SilentlyContinue) } else { @() }
+
+    if ($possiblyVaultedPasswords -eq $true -and ($userVaultedPasswordsDirPresent -eq $false -or $vaultCSVsPresent.Count -eq 0)) {
+        Write-Host "It looks like you may have around $($VaultedPasswords.Count) vaulted passwords from $($uniqueVaultedOrgs.Count) unique organizations in this export, but the vaulted passwords directory doesn't seem to be present or has no CSV files. If you have vaulted passwords, place the unvaulted password CSV files in $vaultedCSVPath" -ForegroundColor Yellow
+        New-Item -Path $vaultedCSVPath -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+        Write-Host "You can un-vault passwords at a later time, but it is recommended to download password CSVs for the following orgs and place them in the vaulted password directory to ensure those passwords are decrypted:" -ForegroundColor Yellow
+        $uniqueVaultedOrgs | ForEach-Object { Write-Host "Organization: $_" -ForegroundColor Cyan }
+        Read-Host "Press Enter after placing unvaulted CSV files in $vaultedCSVPath, or press Enter to continue without them"
     }
-} #>
-################### Initialization Complete #############################
+
+    $userVaultedPasswordsDirPresent = Test-Path -LiteralPath $vaultedCSVPath -PathType Container -ErrorAction SilentlyContinue
+    $vaultCSVsPresent = if ($userVaultedPasswordsDirPresent) { @(Get-ChildItem -LiteralPath $vaultedCSVPath -Filter "*.csv" -File -ErrorAction SilentlyContinue) } else { @() }
+    $shouldRunVaultJob = [bool](($possiblyVaultedPasswords -eq $true) -and ($vaultCSVsPresent.Count -gt 0))
+}
