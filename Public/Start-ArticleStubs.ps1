@@ -14,6 +14,7 @@ function Start-ArticleStubs {
         [switch]$PlaceInternalDocsInInternalCompany
     )
     $doc = $Document
+    
 
     Write-Host "Starting $($doc.name)" -ForegroundColor Green
 
