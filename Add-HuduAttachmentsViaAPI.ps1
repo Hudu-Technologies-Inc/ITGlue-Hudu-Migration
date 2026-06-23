@@ -30,30 +30,26 @@ $AttachmentUrlMap = $AttachmentUrlMap ?? @{}
 $ITGlueAttachmentCache = @{}
 
 ###################### Initial Setup and Confirmations ###############################
-Write-Host "#######################################################" -ForegroundColor Yellow
-Write-Host "#                                                     #" -ForegroundColor Yellow
-Write-Host "#          IT Glue to Hudu Migration Script           #" -ForegroundColor Yellow
-Write-Host "#           - File Attachment Uploads                 #" -ForegroundColor Yellow
-Write-Host "#          Version: 2.0  -Beta                        #" -ForegroundColor Yellow
-Write-Host "#          Date: 01/08/2023                           #" -ForegroundColor Yellow
-Write-Host "#                                                     #" -ForegroundColor Yellow
-Write-Host "#                                                     #" -ForegroundColor Yellow
-Write-Host "#                                                     #" -ForegroundColor Yellow
-Write-Host "#         The script will attempt to upload your      #" -ForegroundColor Yellow
-Write-Host "#         files directly to Hudu using the API.       #" -ForegroundColor Yellow
-Write-Host "#         Performance will depend on the Hudu         #" -ForegroundColor Yellow
-Write-Host "#           backend, such as API Limits and WAN       #" -ForegroundColor Yellow
-Write-Host "#                                                     #" -ForegroundColor Yellow
-Write-Host "#######################################################" -ForegroundColor Yellow
-Write-Host "# Note: This is an unofficial script, please do not   #" -ForegroundColor Yellow
-Write-Host "# contact Hudu support if you run into issues.        #" -ForegroundColor Yellow
-Write-Host "# For support please visit the Hudu Sub-Reddit:       #" -ForegroundColor Yellow
-Write-Host "# https://www.reddit.com/r/hudu/                      #" -ForegroundColor Yellow
-Write-Host "# The #v-hudu channel on the MSPGeek Slack/Discord:   #" -ForegroundColor Yellow
-Write-Host "# https://join.mspgeek.com/                           #" -ForegroundColor Yellow
-Write-Host "# Or log an issue in the Github Respository:          #" -ForegroundColor Yellow
-Write-Host "# https://github.com/lwhitelock/ITGlue-Hudu-Migration #" -ForegroundColor Yellow
-Write-Host "#######################################################" -ForegroundColor Yellow
+Write-Host "##################################################################" -ForegroundColor Yellow
+Write-Host "#                                                                #" -ForegroundColor Yellow
+Write-Host "#          IT Glue to Hudu Migration Script                      #" -ForegroundColor Yellow
+Write-Host "#           - File Attachment Uploads                            #" -ForegroundColor Yellow
+Write-Host "#          Version: 3.0                                          #" -ForegroundColor Yellow
+Write-Host "#          Date: 06/23/2026                                      #" -ForegroundColor Yellow
+Write-Host "#                                                                #" -ForegroundColor Yellow
+Write-Host "#                                                                #" -ForegroundColor Yellow
+Write-Host "#                                                                #" -ForegroundColor Yellow
+Write-Host "#         The script will upload your attachmens                 #" -ForegroundColor Yellow
+Write-Host "#         directly to Hudu.                                      #" -ForegroundColor Yellow
+Write-Host "##################################################################" -ForegroundColor Yellow
+Write-Host "# contact Hudu support if you run into issues.                   #" -ForegroundColor Yellow
+Write-Host "# visit the Hudu Sub-Reddit:                                     #" -ForegroundColor Yellow
+Write-Host "# https://www.reddit.com/r/hudu/                                 #" -ForegroundColor Yellow
+Write-Host "# The #v-hudu channel on the MSPGeek Slack/Discord:              #" -ForegroundColor Yellow
+Write-Host "# https://join.mspgeek.com/                                      #" -ForegroundColor Yellow
+Write-Host "# Or log an issue in the Github Respository:                     #" -ForegroundColor Yellow
+Write-Host "# https://github.com/Hudu-Technologies-Inc/ITGlue-Hudu-Migration #" -ForegroundColor Yellow
+Write-Host "##################################################################" -ForegroundColor Yellow
 
 ################### Supporting Functions ###############################
 
@@ -418,25 +414,25 @@ if (-not $MatchedWebsites) {$MatchedWebsites = (Get-Content -path "$MigrationLog
 $AttachmentsToUpload = Get-ChildItem -Path $AttachmentsPath -Recurse -File
 $filesById = $AttachmentsToUpload | Group-Object { $_.Directory.Name } -AsHashTable -AsString
 
-$foundContactsToAttach = $MatchedContacts | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
+$foundContactsToAttach = $MatchedContacts | Where-Object {$filesById.ContainsKey([string]$_.ITGID) -and [int]$($_.HuduID) -gt 0}
 if ($foundContactsToAttach -and $foundContactsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $foundContactsToAttach -UploadType "Asset" -FileSuffix "Contacts"}
 
-$FoundConfigurationsToAttach = $MatchedConfigurations | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
+$FoundConfigurationsToAttach = $MatchedConfigurations | Where-Object {$filesById.ContainsKey([string]$_.ITGID) -and [int]$($_.HuduID) -gt 0}
 if ($FoundConfigurationsToAttach -and $FoundConfigurationsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundConfigurationsToAttach -UploadType "Asset" -FileSuffix "Configurations"}
 
-$FoundDocumentsToAttach = $MatchedArticles | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
+$FoundDocumentsToAttach = $MatchedArticles | Where-Object {$filesById.ContainsKey([string]$_.ITGID) -and [int]$($_.HuduID) -gt 0}
 if ($FoundDocumentsToAttach -and $FoundDocumentsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundDocumentsToAttach -UploadType "Article"}
 
-$FoundLocationsToAttach = $MatchedLocations | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
+$FoundLocationsToAttach = $MatchedLocations | Where-Object {$filesById.ContainsKey([string]$_.ITGID) -and [int]$($_.HuduID) -gt 0}
 if ($FoundLocationsToAttach -and $FoundLocationsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundLocationsToAttach -UploadType "Asset" -FileSuffix "Locations"}
 
-$FoundPasswordsToAttach = $MatchedPasswords| Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
+$FoundPasswordsToAttach = $MatchedPasswords| Where-Object {$filesById.ContainsKey([string]$_.ITGID) -and [int]$($_.HuduID) -gt 0}
 if ($FoundPasswordsToAttach -and $FoundPasswordsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundPasswordsToAttach -UploadType "AssetPassword"}
 
-$MatchedAssetsToAttach = $MatchedAssets | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
+$MatchedAssetsToAttach = $MatchedAssets | Where-Object {$filesById.ContainsKey([string]$_.ITGID) -and [int]$($_.HuduID) -gt 0}
 if ($MatchedAssetsToAttach -and $MatchedAssetsToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $MatchedAssetsToAttach -UploadType "Asset" -FileSuffix "FlexibleAssets"}
 
-$FoundWebsitesToAttach = $MatchedWebsites | Where-Object {$filesById.ContainsKey([string]$_.ITGID)}
+$FoundWebsitesToAttach = $MatchedWebsites | Where-Object {$filesById.ContainsKey([string]$_.ITGID) -and [int]$($_.HuduID) -gt 0}
 if ($FoundWebsitesToAttach -and $FoundWebsitesToAttach.count -gt 0) {Add-HuduAttachment -FoundAssetsToAttach $FoundWebsitesToAttach -UploadType "Website"}
 
 
