@@ -287,8 +287,10 @@ param(
     # $UploadedAttachments = $ExistingAttachments | Select-Object @{n='id'; e={ $_.uploadable_id}},@{n='file';e={($_.file_data|Convertfrom-json).metadata.filename}},@{n='url';e={($_.file_data|Convertfrom-json).id}}
     ##### Replace above lines with new method that doesn't require database. Also commenting lines 149 and 150, 155-158
     
+    $__atIdx = 0; $__atTotal = @($FoundAssetsToAttach).count
     $Results = foreach ($FoundAsset in $FoundAssetsToAttach) {
-        Write-Host "Finding attachments for $($FoundAsset.name) with ITGlueID $($FoundAsset.itgid) to Hudu $($UploadType) $($FoundAsset.HuduID)" -ForegroundColor Cyan
+        $__atIdx++
+        Write-Host "Finding attachments for $($FoundAsset.name) with ITGlueID $($FoundAsset.itgid) to Hudu $($UploadType) $($FoundAsset.HuduID) (asset $__atIdx of $__atTotal)" -ForegroundColor Cyan
         # Write-Host "Checking existing attachments from database"
         # $CurrentAssetAttachments = $UploadedAttachments | Where-Object {$_.id -eq $FoundAsset.HuduID}
         
