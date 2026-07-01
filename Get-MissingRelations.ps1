@@ -726,23 +726,42 @@ foreach ($DiagnosticFileName in @('unknown-relation-types.json', 'unresolved-rel
 }
 
 write-host "refreshing $($MatchedAssets.count) assets"
-$FreshITGAssets= $FreshITGAssets ?? $($MatchedAssets |ForEach-Object { Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items})
+$__asIdx = 0; $__asTotal = $MatchedAssets.count
+$FreshITGAssets= $FreshITGAssets ?? $($MatchedAssets |ForEach-Object {
+    $__asIdx++
+    if ($__asIdx % 100 -eq 0 -or $__asIdx -eq $__asTotal) { Write-Host "  ...refreshed $__asIdx of $__asTotal assets" }
+    Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items})
 $RelatedAssets = $RelatedAssets ?? $($FreshITGAssets | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
 write-host "refreshing $($MatchedConfigurations.count) configs"
-$FreshConfigurations = $FreshConfigurations ?? $($MatchedConfigurations | ForEach-Object {Get-ITGlueConfigurations -id $_.itgobject.id -include related_items})
+$__cfgIdx = 0; $__cfgTotal = $MatchedConfigurations.count
+$FreshConfigurations = $FreshConfigurations ?? $($MatchedConfigurations | ForEach-Object {
+    $__cfgIdx++
+    if ($__cfgIdx % 100 -eq 0 -or $__cfgIdx -eq $__cfgTotal) { Write-Host "  ...refreshed $__cfgIdx of $__cfgTotal configs" }
+    Get-ITGlueConfigurations -id $_.itgobject.id -include related_items})
 $RelatedConfigurations = $RelatedConfigurations ?? $($FreshConfigurations | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
 write-host "refreshing $($MatchedPasswords.count) passwords"
-$FreshPasswords = $FreshPasswords ?? $($MatchedPasswords | ForEach-Object {Get-ITGluePasswords -id $_.itgobject.id -include related_items})
+$__pwIdx = 0; $__pwTotal = $MatchedPasswords.count
+$FreshPasswords = $FreshPasswords ?? $($MatchedPasswords | ForEach-Object {
+    $__pwIdx++
+    if ($__pwIdx % 100 -eq 0 -or $__pwIdx -eq $__pwTotal) { Write-Host "  ...refreshed $__pwIdx of $__pwTotal passwords" }
+    Get-ITGluePasswords -id $_.itgobject.id -include related_items})
 $RelatedPasswords = $RelatedPasswords ?? $($FreshPasswords | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
 write-host "refreshing $($MatchedContacts.count) contacts"
-$FreshContacts = $FreshContacts ?? $($MatchedContacts | ForEach-Object {Get-ITGlueContacts -id $_.ITGObject.id -include related_items})
+$__ctIdx = 0; $__ctTotal = $MatchedContacts.count
+$FreshContacts = $FreshContacts ?? $($MatchedContacts | ForEach-Object {
+    $__ctIdx++
+    if ($__ctIdx % 100 -eq 0 -or $__ctIdx -eq $__ctTotal) { Write-Host "  ...refreshed $__ctIdx of $__ctTotal contacts" }
+    Get-ITGlueContacts -id $_.ITGObject.id -include related_items})
 $RelatedContacts = $RelatedContacts ?? $($FreshContacts | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
 write-host "refreshing $($MatchedArticles.count) articles"
+$__arIdx = 0; $__arTotal = $MatchedArticles.count
 $FreshDocuments = $FreshDocuments ?? ($MatchedArticles | ForEach-Object {
+    $__arIdx++
+    if ($__arIdx % 100 -eq 0 -or $__arIdx -eq $__arTotal) { Write-Host "  ...refreshed $__arIdx of $__arTotal articles" }
     $ArticleLookup = Get-ArticleLookupInfo -Article $_
     if ($ArticleLookup) {
         Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI $settings.ITGAPIEndpoint
@@ -843,8 +862,11 @@ $AllRelationsToCreate =
 
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
 write-host "Creating approximately $($AllRelationsToCreate.count) relations"
+$__relIdx = 0; $__relTotal = $AllRelationsToCreate.count
 $NewRelationsCreated = @(
     $AllRelationsToCreate | ForEach-Object {
+        $__relIdx++
+        if ($__relIdx % 100 -eq 0 -or $__relIdx -eq $__relTotal) { Write-Host "  ...creating relation $__relIdx of $__relTotal" }
         New-HuduRelation -FromableType $_.FromableType -FromableID $_.FromableID -ToableType $_.ToableType -ToableID $_.ToableID
     }
 )
