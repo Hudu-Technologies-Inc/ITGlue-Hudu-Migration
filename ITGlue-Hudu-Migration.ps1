@@ -21,8 +21,8 @@ if ((get-host).version.major -ne 7) {
 
 try {Set-StrictMode -Off} catch {}
 
-############################## Functions ###############################
-# Import ImageMagick for Invoke-ImageTest Function (Disabled)
+############################### Functions ###############################
+# Import ImageMagick for Invoke-ImageTest Function
  . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
 
 # Used to determine if a file is an image and what type of image
@@ -1887,7 +1887,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
 
 ############################### Documents / Articles Bodies ###############################
 
-# #Check for Articles Resume
+#Check for Articles Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
     Write-Host "Loading Article Content Migration"
     $MatchedArticles = Get-Content "$MigrationLogs\Articles.json" -raw | Out-String | ConvertFrom-Json -depth 100
@@ -2504,7 +2504,7 @@ if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyC
 
 Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
 
-# ############################### Wrap-Up ###############################
+############################### Wrap-Up ###############################
 
 write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Layouts";
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
