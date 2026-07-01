@@ -53,7 +53,7 @@ function Normalize-And-ConvertImage {
     $safePath = Join-Path $WorkingDirectory $safeName
     write-verbose "MOVING IMAGE FROM $InputPath to SAFE PATH $safePath"
 
-    Copy-Item -Path $InputPath -Destination $safePath -Force
+    Copy-Item -LiteralPath $InputPath -Destination $safePath -Force
 
     # If no extension, guess and rename
     if (-not $originalExt) {
@@ -61,7 +61,7 @@ function Normalize-And-ConvertImage {
         $guessedExt = (New-Object ImageMagick.MagickImage($safePath)).Format.ToString().ToLower()
         $safePathWithExt = "$safePath.$guessedExt"
         write-verbose "NO EXTENTION IMAGE MOVED TO: $safePathWithExt"
-        Move-Item -Path $safePath -Destination $safePathWithExt -Force
+        Move-Item -LiteralPath $safePath -Destination $safePathWithExt -Force
         $safePath = $safePathWithExt
     }
 
@@ -106,7 +106,7 @@ function Normalize-And-ConvertImage {
     $finalPath = Join-Path -Path $directory -ChildPath $finalFilename
 
     if ($safePath -ne $finalPath) {
-        Copy-Item -Path $safePath -Destination $finalPath -Force
+        Copy-Item -LiteralPath $safePath -Destination $finalPath -Force
         write-verbose "FINAL IMAGE FROM $InputPath PLACED AS $safePath"
     }
 

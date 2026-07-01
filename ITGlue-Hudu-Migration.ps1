@@ -1,27 +1,27 @@
-# if ($MyInvocation.InvocationName -eq '.') {
-#     Write-Host "Script was dot-sourced" -ForegroundColor Green
-# } else {
-#     Write-Host "Script was executed without dot-sourcing, this is the recommended method of running the script to ensure settings are retained in the session" -ForegroundColor Yellow; write-warning "exiting to prevent issues later on, please dot-source the script by running `. .\ITGlue-Hudu-Migration.ps1` from powershell 7 or using the provided ITGlue-Hudu-Migration.exe frontend.";
-#     exit 1
-# }
+if ($MyInvocation.InvocationName -eq '.') {
+    Write-Host "Script was dot-sourced" -ForegroundColor Green
+} else {
+    Write-Host "Script was executed without dot-sourcing, this is the recommended method of running the script to ensure settings are retained in the session" -ForegroundColor Yellow; write-warning "exiting to prevent issues later on, please dot-source the script by running `. .\ITGlue-Hudu-Migration.ps1` from powershell 7 or using the provided ITGlue-Hudu-Migration.exe frontend.";
+    exit 1
+}
 
-# if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-# $ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
+if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
+$ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
 
-# # Main settings load
-# . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
+# Main settings load
+. $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
 
-# # Use this to set the context of the script runs
-# $FirstTimeLoad = 1
+# Use this to set the context of the script runs
+$FirstTimeLoad = 1
 
-# if ((get-host).version.major -ne 7) {
-#     Write-Host "Powershell 7 Required" -foregroundcolor Red
-#     exit 1
-# }
+if ((get-host).version.major -ne 7) {
+    Write-Host "Powershell 7 Required" -foregroundcolor Red
+    exit 1
+}
 
-# try {Set-StrictMode -Off} catch {}
+try {Set-StrictMode -Off} catch {}
 
-############################### Functions ###############################
+############################## Functions ###############################
 # Import ImageMagick for Invoke-ImageTest Function (Disabled)
  . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
 
@@ -1841,7 +1841,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Assets Migrated Continue?" -DefaultResponse "continue to Documents/Articles, please."
     }
 }
-# ############################### Documents / Articles ###############################
+############################### Documents / Articles ###############################
+write-host "clearing articles"
+$todayArticles = Get-HuduArticles | Where-Object {     ([datetime]$_.created_at).Date -eq $today}
+$todayArticles | ForEach-Object {Remove-HuduArticle -id $_.id -Confirm:$false};
 
 #Check for Article Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
@@ -1887,7 +1890,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
 
 ############################### Documents / Articles Bodies ###############################
 
-#Check for Articles Resume
+# #Check for Articles Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
     Write-Host "Loading Article Content Migration"
     $MatchedArticles = Get-Content "$MigrationLogs\Articles.json" -raw | Out-String | ConvertFrom-Json -depth 100
@@ -1916,6 +1919,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
             Write-Host "Starting $($Article.Name) in $($Article.Company.CompanyName)" -ForegroundColor Green
 				
             $InFile = $Article.FullPath
+            # if ($null -eq $InFile){continue}
 				
             $html = New-Object -ComObject "HTMLFile"
             $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
@@ -1982,7 +1986,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                             continue
                     }
                     # Test the path to ensure that a file extension exists, if no file extension we get problems later on. We rename it if there's no ext.
-                    if ($imagePath -and (Test-Path $imagePath -ErrorAction SilentlyContinue)) {
+                    if ($imagePath -and (Test-Path -LiteralPath $imagePath -ErrorAction SilentlyContinue)) {
                         write-verbose "File present at purported image path: $imagePath... checking for image..."
 
                             $imageType = Invoke-ImageTest $imagePath
@@ -2501,9 +2505,9 @@ Write-Host "Replacing links to hosted public photos in Hudu Articles"
 if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
 . $PSScriptRoot\Public\Replace-HardCodedImages.ps1
 
-Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
+Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles -UpdatedAfter $(Get-Date).AddDays(-1) -UpdatedBefore $(Get-Date).AddDays(1))
 
-############################### Wrap-Up ###############################
+# ############################### Wrap-Up ###############################
 
 write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Layouts";
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }

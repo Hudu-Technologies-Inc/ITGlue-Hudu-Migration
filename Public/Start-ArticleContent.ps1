@@ -126,13 +126,13 @@ if (-not ($FirstTimeLoad -eq 1)) {
                         }
 
                             # Test the path to ensure that a file extension exists, if no file extension we get problems later on. We rename it if there's no ext.
-                            if ($imagePath -and (Test-Path $imagePath -ErrorAction SilentlyContinue)) {
+                            if ($imagePath -and (Test-Path -LiteralPath $imagePath -ErrorAction SilentlyContinue)) {
                                 if ((Get-Item -LiteralPath $imagePath).extension -eq '') {
                                     Write-Warning "$imagePath is undetermined image. Testing..."
                                     if ($Magick = New-Object ImageMagick.MagickImage($imagePath)) {
                                         $OriginalFullImagePath = $imagePath
                                         $imagePath = "$($imagePath).$($Magick.format)"
-                                        $MovedItem = Move-Item -Path "$OriginalFullImagePath" -Destination "$imagePath"
+                                        $MovedItem = Move-Item -LiteralPath "$OriginalFullImagePath" -Destination "$imagePath"
                                     }
                                 }                        
                                 $imageType = Invoke-ImageTest($imagePath)
@@ -158,7 +158,7 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                         }
                                     }
                                     if ($Magick -and $MovedItem) {
-                                        Move-Item -Path "$imagePath" -Destination "$OriginalFullImagePath"
+                                        Move-Item -LiteralPath "$imagePath" -Destination "$OriginalFullImagePath"
                                     }
             
                                 }
