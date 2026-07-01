@@ -1842,9 +1842,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
     }
 }
 ############################### Documents / Articles ###############################
-write-host "clearing articles"
-$todayArticles = Get-HuduArticles | Where-Object {     ([datetime]$_.created_at).Date -eq $today}
-$todayArticles | ForEach-Object {Remove-HuduArticle -id $_.id -Confirm:$false};
 
 #Check for Article Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
@@ -2505,7 +2502,7 @@ Write-Host "Replacing links to hosted public photos in Hudu Articles"
 if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
 . $PSScriptRoot\Public\Replace-HardCodedImages.ps1
 
-Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles -UpdatedAfter $(Get-Date).AddDays(-1) -UpdatedBefore $(Get-Date).AddDays(1))
+Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
 
 # ############################### Wrap-Up ###############################
 
