@@ -78,6 +78,13 @@ if (-not ($FirstTimeLoad -eq 1)) {
                         
                         
                         if (($_.src -notmatch '^http[s]?://') -or ($_.src -match [regex]::Escape($ITGURL))) {
+                            $fullImgUrl = $null
+                            $fullImgPath = $null
+                            $tnImgUrl = $null
+                            $tnImgPath = $null
+                            $imagePath = $null
+                            $foundFile = $null
+
                             $script:HasImages = $true
                             $imgHTML = $_.outerHTML
                             Write-Host "Processing HTML: $imgHTML"
@@ -98,15 +105,15 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                 if ($fullImgUrl) {$fullImgPath = Join-Path -Path $basepath -ChildPath $fullImgUrl.replace('/','\')}
                                 $tnImgPath = Join-Path -Path $basepath -ChildPath $tnImgUrl.replace('/','\')
                             }
-                            
+
                             Write-Host "Processing IMG: $tnImgPath"
-                            
+
                             # Some logic to test for the original data source being specified vs the thumbnail. Grab the Thumbnail or final source.
-                            if ($fullImgUrl -and ($foundFile = Get-Item -LiteralPath "$fullImgPath*" -ErrorAction SilentlyContinue)) {
+                            if ($fullImgPath -and ($foundFile = Resolve-ImageFilePath -Path $fullImgPath)) {
                                 $imagePath = $foundFile.FullName
-                            } elseif ($tnImgUrl -and ($foundFile = Get-Item -LiteralPath "$tnImgPath*" -ErrorAction SilentlyContinue)) {
+                            } elseif ($tnImgPath -and ($foundFile = Resolve-ImageFilePath -Path $tnImgPath)) {
                                 $imagePath = $foundFile.FullName
-                            } else { 
+                            } else {
                                 Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                                 Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
                                 Write-Warning "Unable to validate image file."

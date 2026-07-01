@@ -1,25 +1,25 @@
-if ($MyInvocation.InvocationName -eq '.') {
-    Write-Host "Script was dot-sourced" -ForegroundColor Green
-} else {
-    Write-Host "Script was executed without dot-sourcing, this is the recommended method of running the script to ensure settings are retained in the session" -ForegroundColor Yellow; write-warning "exiting to prevent issues later on, please dot-source the script by running `. .\ITGlue-Hudu-Migration.ps1` from powershell 7 or using the provided ITGlue-Hudu-Migration.exe frontend.";
-    exit 1
-}
+# if ($MyInvocation.InvocationName -eq '.') {
+#     Write-Host "Script was dot-sourced" -ForegroundColor Green
+# } else {
+#     Write-Host "Script was executed without dot-sourcing, this is the recommended method of running the script to ensure settings are retained in the session" -ForegroundColor Yellow; write-warning "exiting to prevent issues later on, please dot-source the script by running `. .\ITGlue-Hudu-Migration.ps1` from powershell 7 or using the provided ITGlue-Hudu-Migration.exe frontend.";
+#     exit 1
+# }
 
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-$ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
+# if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
+# $ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
 
-# Main settings load
-. $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
+# # Main settings load
+# . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
 
-# Use this to set the context of the script runs
-$FirstTimeLoad = 1
+# # Use this to set the context of the script runs
+# $FirstTimeLoad = 1
 
-if ((get-host).version.major -ne 7) {
-    Write-Host "Powershell 7 Required" -foregroundcolor Red
-    exit 1
-}
+# if ((get-host).version.major -ne 7) {
+#     Write-Host "Powershell 7 Required" -foregroundcolor Red
+#     exit 1
+# }
 
-try {Set-StrictMode -Off} catch {}
+# try {Set-StrictMode -Off} catch {}
 
 ############################### Functions ###############################
 # Import ImageMagick for Invoke-ImageTest Function (Disabled)
@@ -52,6 +52,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 
 # Add Replace URL functions
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
+. $PSScriptRoot\Private\Resolve-ImageFilePath.ps1
 
 # Add Hudu Relations Function
 . $PSScriptRoot\Public\Add-HuduRelation.ps1
@@ -95,11 +96,7 @@ Write-Host $LiabilityWarning -ForegroundColor Red
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
 
-$CurrentVersion =  Set-ExternalModulesInitialized `
-        -RequiredHuduVersion ([version]"2.42.0") `
-        -DisallowedVersions @([version]"2.37.0") `
-        -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) `
-        -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
+$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion ([version]"2.42.0") -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
@@ -1844,9 +1841,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Assets Migrated Continue?" -DefaultResponse "continue to Documents/Articles, please."
     }
 }
-
-
-############################### Documents / Articles ###############################
+# ############################### Documents / Articles ###############################
 
 #Check for Article Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
@@ -1932,6 +1927,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 
                 foreach ($imageObject in $images) {                    
                     if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL))) {
+                        $fullImgUrl = $null
+                        $fullImgPath = $null
+                        $tnImgUrl = $null
+                        $tnImgPath = $null
+                        $imagePath = $null
+                        $foundFile = $null
+
                         $script:HasImages = $true
                         $imgHTML = $imageObject.outerHTML
                         Write-Host "Processing HTML: $imgHTML"
@@ -1956,9 +1958,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                         Write-Host "Processing IMG: $tnImgPath"
                         
                         # Some logic to test for the original data source being specified vs the thumbnail. Grab the Thumbnail or final source.
-                        if ($fullImgUrl -and ($foundFile = Get-Item -Path "$fullImgPath*" -ErrorAction SilentlyContinue)) {
+                        if ($fullImgPath -and ($foundFile = Resolve-ImageFilePath -Path $fullImgPath)) {
                             $imagePath = $foundFile.FullName
-                        } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path "$tnImgPath*" -ErrorAction SilentlyContinue)) {
+                        } elseif ($tnImgPath -and ($foundFile = Resolve-ImageFilePath -Path $tnImgPath)) {
                             $imagePath = $foundFile.FullName
                         } else { 
                             Remove-Variable -Name imagePath -ErrorAction SilentlyContinue

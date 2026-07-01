@@ -1,5 +1,8 @@
 # This will be used to remake the ITGlue Links to Hudu, and relies on the articles logs existing.
 
+if (-not (Get-Command -Name Resolve-ImageFilePath -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Resolve-ImageFilePath.ps1
+}
 
 $EscapedITGURL = [regex]::Escape($ITGURL)
 
@@ -108,7 +111,7 @@ function Update-StringWithCaptureGroups {
                 $OriginalArticle = ($MatchedArticles | Where-Object {$_.ITGID -eq $match.groups[2].value}).Path
                 $ImagePath = $match.groups[1].value.replace('/','\')
                 $FullImagePath = Join-Path -Path $OriginalArticle -ChildPath $ImagePath
-                $ImageItem = Get-Item -Path "$FullImagePath*" -ErrorAction SilentlyContinue
+                $ImageItem = Resolve-ImageFilePath -Path $FullImagePath
                 if ($ImageItem) {
                     Return [pscustomobject]@{
                         "path" = $ImageItem.FullName
