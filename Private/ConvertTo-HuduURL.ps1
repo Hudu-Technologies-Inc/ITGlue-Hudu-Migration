@@ -17,16 +17,20 @@ if ($environmentSettings.ITGCustomDomains) {
 # 3 = type of Entity (Important for location)
 # 4 = ITGlue Entity ID
 
-$RichRegexPatternToMatchSansAssets = "<(A|a) href=\S$EscapedITGURL/([0-9]{1,20})/(docs|passwords|configurations|assets)/([0-9]{1,20})\S.*?</(A|a)>"
-$RichRegexPatternToMatchWithAssets = "<(A|a) href=\S$EscapedITGURL/([0-9]{1,20})/(assets)/.*?/([0-9]{1,20})\S.*?</(A|a)>"
+# NOTE: `<(A|a)\s[^>]*?href=` (not `<(A|a) href=`) so anchors with attributes before href still match.
+# The COM HTML parser reorders attributes (e.g. IT Glue auto-linkified URLs become
+# `<A class=linkified href="...">`), which the href-first pattern silently skipped. [^>]*? is
+# non-capturing so the switch's group indices (type/id) are unchanged.
+$RichRegexPatternToMatchSansAssets = "<(A|a)\s[^>]*?href=\S$EscapedITGURL/([0-9]{1,20})/(docs|passwords|configurations|assets)/([0-9]{1,20})\S.*?</(A|a)>"
+$RichRegexPatternToMatchWithAssets = "<(A|a)\s[^>]*?href=\S$EscapedITGURL/([0-9]{1,20})/(assets)/.*?/([0-9]{1,20})\S.*?</(A|a)>"
 $ImgRegexPatternToMatch = @"
 $EscapedITGURL/([0-9]{1,20}/docs/([0-9]{1,20})/(images)/([0-9]{1,20}).*?)(?=")
 "@
 $RichDocLocatorUrlPatternToMatch = @"
-<(A|a) href=\S$EscapedITGURL/(DOC-.*?)(?=")\S.*?</(A|a)>
+<(A|a)\s[^>]*?href=\S$EscapedITGURL/(DOC-.*?)(?=")\S.*?</(A|a)>
 "@
 $RichDocLocatorRelativeURLPatternToMatch = @"
-<(A|a) href=\S/(DOC-.*?)(?=")\S.*?</(A|a)>
+<(A|a)\s[^>]*?href=\S/(DOC-.*?)(?=")\S.*?</(A|a)>
 "@
 
 $TextRegexPatternToMatchSansAssets = "$EscapedITGURL/([0-9]{1,20})/(docs|passwords|configurations)/([0-9]{1,20})"
