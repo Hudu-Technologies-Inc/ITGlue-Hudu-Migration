@@ -21,19 +21,61 @@ function Set-HuduImageAnchorsReplaced {
         )
     }
 
-    # 1) Remove existing anchors that ONLY wrap an <img> tag
-    # <a ...><img ...></a>  ->  <img ...>
+    $isHuduHostedImage = {
+        param([string]$src)
+
+        foreach ($p in $serverPatterns) {
+            if ($src -match $p) {
+                return $true
+            }
+        }
+
+        return $false
+    }
+
+    $getFullImageUrl = {
+        param([string]$src)
+
+        if ($src -match '^https?://') {
+            return $src
+        }
+
+        if ($src.StartsWith('/')) {
+            return "$base$src"
+        }
+
+        return "$base/$src"
+    }
+
+    $imgPattern = '<img\b[^>]*\bsrc\s*=\s*["'']([^"'']+)["''][^>]*>'
+
+    # 1) Remove existing anchors that ONLY wrap one of our hosted <img> tags.
+    # <a ...><img src="/public_photo/..."></a>  ->  <img src="/public_photo/...">
+    # External image links are preserved.
     $noAnchors = [regex]::Replace(
         $Html,
         '<a\b[^>]*>\s*(<img\b[^>]*>)\s*</a>',
-        '$1',
+        {
+            param($match)
+
+            $imgTag = $match.Groups[1].Value
+            $imgMatch = [regex]::Match($imgTag, $imgPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if (-not $imgMatch.Success) {
+                return $match.Value
+            }
+
+            $src = $imgMatch.Groups[1].Value
+            if (& $isHuduHostedImage $src) {
+                return $imgTag
+            }
+
+            return $match.Value
+        },
         [System.Text.RegularExpressions.RegexOptions]::IgnoreCase `
             -bor [System.Text.RegularExpressions.RegexOptions]::Singleline
     )
 
     # 2) Wrap qualifying <img> tags in <a href="fullsrc">
-    $imgPattern = '<img\b[^>]*\bsrc\s*=\s*["'']([^"'']+)["''][^>]*>'
-
     $result = [regex]::Replace(
         $noAnchors,
         $imgPattern,
@@ -44,30 +86,11 @@ function Set-HuduImageAnchorsReplaced {
             $src    = $match.Groups[1].Value
 
             # Only touch "our" images (public_photo / uploads)
-            $isOurImage = $false
-            foreach ($p in $serverPatterns) {
-                if ($src -match $p) {
-                    $isOurImage = $true
-                    break
-                }
-            }
-
-            if (-not $isOurImage) {
+            if (-not (& $isHuduHostedImage $src)) {
                 return $imgTag   # leave external images alone
             }
 
-            # Normalize to absolute URL
-            if ($src -match '^https?://') {
-                $full = $src
-            }
-            else {
-                if ($src.StartsWith('/')) {
-                    $full = "$base$src"
-                }
-                else {
-                    $full = "$base/$src"
-                }
-            }
+            $full = & $getFullImageUrl $src
 
             "<a href=""$full"">$imgTag</a>"
         },
@@ -78,9 +101,58 @@ function Set-HuduImageAnchorsReplaced {
 }
 
 function Get-AllHuduHostedImageAnchorsReplaced {
+    [CmdletBinding(SupportsShouldProcess)]
     param ([array]$allHuduArticles=@(),[bool]$includeUploads=$false)
-    foreach ($a in $allarticles) {
-    if ([string]::IsNullOrEmpty($a.content)){write-host "skipping $($a.id)"; continue;}
-        Set-HuduArticle -id $a.id -Content "$(Set-HuduImageAnchorsReplaced -Html $a.content -IncludeUploads $includeUploads)"
+
+    foreach ($a in @($allHuduArticles)) {
+        if ([string]::IsNullOrEmpty($a.content)) {
+            Write-Host "skipping $($a.id)"
+            [pscustomobject]@{
+                Status      = 'skipped'
+                ArticleId   = $a.id
+                ArticleName = $a.name
+                Reason      = 'empty content'
+            }
+            continue
+        }
+
+        $newContent = Set-HuduImageAnchorsReplaced -Html $a.content -IncludeUploads $includeUploads
+        if ($newContent -eq $a.content) {
+            [pscustomobject]@{
+                Status      = 'clean'
+                ArticleId   = $a.id
+                ArticleName = $a.name
+            }
+            continue
+        }
+
+        try {
+            $updatedArticle = $null
+            if ($PSCmdlet.ShouldProcess("Article $($a.id) '$($a.name)'", "replace hosted image anchors")) {
+                $setArticleSplat = @{
+                    Id      = $a.id
+                    Content = $newContent
+                }
+                if ($a.name) { $setArticleSplat.Name = $a.name }
+                if ($a.company_id) { $setArticleSplat.CompanyId = $a.company_id }
+
+                $updatedArticle = Set-HuduArticle @setArticleSplat -ErrorAction Stop
+            }
+
+            [pscustomobject]@{
+                Status         = if ($WhatIfPreference) { 'whatif' } else { 'replaced' }
+                ArticleId      = $a.id
+                ArticleName    = $a.name
+                UpdatedArticle = $updatedArticle
+            }
+        }
+        catch {
+            [pscustomobject]@{
+                Status      = 'failed'
+                ArticleId   = $a.id
+                ArticleName = $a.name
+                Error       = $_.Exception.Message
+            }
+        }
     }
 }
