@@ -581,6 +581,9 @@ foreach ($ITGL in $($MatchedLocations ?? @())) {
     $ITGLocationsHashTable["$($ITGL.itgid)"] = $ITGL
 }
 $LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
+if ($null -ne $LocationLayout -and $null -ne $LocationLayout.id) {
+    try {set-huduassetlayout -id $LocationLayout.id -isLocation $true} catch {}
+}
 
 ############################### Websites ###############################
 
