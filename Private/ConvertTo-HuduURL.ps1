@@ -108,7 +108,7 @@ function Update-StringWithCaptureGroups {
                 $OriginalArticle = ($MatchedArticles | Where-Object {$_.ITGID -eq $match.groups[2].value}).Path
                 $ImagePath = $match.groups[1].value.replace('/','\')
                 $FullImagePath = Join-Path -Path $OriginalArticle -ChildPath $ImagePath
-                $ImageItem = Get-Item -Path "$FullImagePath*" -ErrorAction SilentlyContinue
+                $ImageItem = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($FullImagePath) + '*') -ErrorAction SilentlyContinue
                 if ($ImageItem) {
                     Return [pscustomobject]@{
                         "path" = $ImageItem.FullName
