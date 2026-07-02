@@ -53,7 +53,8 @@ function Normalize-And-ConvertImage {
     $safePath = Join-Path $WorkingDirectory $safeName
     write-verbose "MOVING IMAGE FROM $InputPath to SAFE PATH $safePath"
 
-    Copy-Item -Path $InputPath -Destination $safePath -Force
+    # -LiteralPath: $InputPath is a concrete file and can contain [ ] (e.g. "[ADP]"), which -Path would treat as wildcards
+    Copy-Item -LiteralPath $InputPath -Destination $safePath -Force
 
     # If no extension, guess and rename
     if (-not $originalExt) {
