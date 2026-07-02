@@ -32,6 +32,11 @@ param(
     [switch]$DryRun,
     [string[]]$OnlyHuduIds,
     [switch]$SkipFork,
+    # Force-include specific Hudu article IDs in the affected set even if their own path has no brackets.
+    # Use for articles that embed cross-doc images from a BRACKETED source doc (those failed via the same
+    # bracket bug in ConvertTo-HuduURL but the article itself isn't bracketed). Only pass IDs whose images
+    # are all still-unmigrated, or re-processing will re-upload already-migrated images.
+    [string[]]$AlsoIncludeHuduIds,
     # Explicit path to the completed migration's logs folder (contains Articles.json / ManualActions.json).
     # Overrides the value Initialize-Module derives - use this to point at the timestamped debug\...\logs folder.
     [string]$MigrationLogsPath,
@@ -99,7 +104,12 @@ $missingFiles = $ManualActions |
     Where-Object { $_.Type -eq 'Article - Image' -and $_.Notes -eq 'Missing image, file not found' } |
     Select-Object -ExpandProperty Data -Unique
 
-$affected = $MatchedArticles | Where-Object { $_.FullPath -match '[\[\]]' -and $_.FullPath -in $missingFiles }
+$affected = @($MatchedArticles | Where-Object { $_.FullPath -match '[\[\]]' -and $_.FullPath -in $missingFiles })
+if ($AlsoIncludeHuduIds) {
+    $extra = $MatchedArticles | Where-Object { "$($_.HuduID)" -in $AlsoIncludeHuduIds -and $affected.HuduID -notcontains $_.HuduID }
+    $affected = @($affected) + @($extra)
+    Write-Host ("Force-included $(@($extra).Count) article(s) via -AlsoIncludeHuduIds" ) -ForegroundColor Yellow
+}
 if ($OnlyHuduIds) { $affected = $affected | Where-Object { "$($_.HuduID)" -in $OnlyHuduIds } }
 
 Write-Host ("Affected articles (bracket path + logged missing image): {0}" -f @($affected).Count) -ForegroundColor Cyan
