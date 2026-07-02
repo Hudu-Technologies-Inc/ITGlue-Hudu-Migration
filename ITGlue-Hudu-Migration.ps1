@@ -2498,11 +2498,9 @@ foreach ($companyFound in $UpdateCompanyNotes.HuduCompanyObject) {
 $companyNotesUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedCompaniesURL.json"
 Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Company Notes URLs Replaced. Continue?"  -DefaultResponse "continue to Manual Actions, please."
 
-Write-Host "Replacing links to hosted public photos in Hudu Articles"
+Write-Host "Replacing hard-coded IT Glue image links in Hudu Articles"
 if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
 . $PSScriptRoot\Public\Replace-HardCodedImages.ps1
-
-Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(get-huduarticles)
 
 ############################### Wrap-Up ###############################
 
@@ -2514,6 +2512,9 @@ write-host "wrapup 2/10... adding attachments and replacing any found attachment
 . .\Add-HuduAttachmentsViaAPI.ps1
 Write-Host "Attachments - enumerating and replacing attachment links in articles"; $null = Start-MigrationJob -Name "Wrap-Up - Attachment Links";
 $replacedAttachmentURLs = Start-HuduAttachmentLinkReplacement
+Write-Host "Replacing hosted image-only anchors in Hudu Articles"
+$imageAnchorReplacementResults = Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(Get-HuduArticles) -includeUploads $true
+$imageAnchorReplacementResults | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedImageAnchors.json"
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
 if ($true -eq $ImportConfigInterfaces){
