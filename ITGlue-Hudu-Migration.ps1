@@ -52,6 +52,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 
 # Add Replace URL functions
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
+. $PSScriptRoot\Private\Update-AllITGlueUrls.ps1   # comprehensive all-type/plain-text URL rewriter
 
 # Add Hudu Relations Function
 . $PSScriptRoot\Public\Add-HuduRelation.ps1
@@ -2380,29 +2381,57 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
 $null = Start-MigrationJob -Name "LinkReplacement"
 
-$UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
-$UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -like "*$ITGURL*"}
-$UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -like "*$ITGURL*"}
-$UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object {$_.ITGObject.attributes.notes -like "*$ITGURL*"}
-$UpdateCompanyNotes = $MatchedCompanies | Where-Object {$_.HuduCompanyObject.notes -like "*$ITGURL*"}
+# Build comprehensive ITGlue-id -> Hudu-url maps once, for the all-type / plain-text rewriter
+# (Update-AllITGlueUrls). It runs alongside the original anchor-only rewriter so EVERY IT Glue URL
+# form - plain text as well as anchors, encoded wrappers, kb.itglue.com, and every entity type
+# (docs/passwords/configurations/assets/contacts/locations/websites) - is repointed to Hudu. Links to
+# items that were NOT migrated (deleted in IT Glue, index/list pages) are left in place and collected
+# in $itgDeadLinks for the manual-actions report.
+$ItgDomain = ($ITGURL -replace '^https?://', '').TrimEnd('/')
+$itgUrlMaps = Get-ITGlueUrlMaps -HuduBaseDomain $HuduBaseDomain -Articles $MatchedArticles `
+    -Passwords $MatchedPasswords -AssetPasswords $MatchedAssetPasswords -Configurations $MatchedConfigurations `
+    -Assets $MatchedAssets -Contacts $MatchedContacts -Locations $MatchedLocations -Websites $MatchedWebsites
+$itgDeadLinks = [System.Collections.Generic.List[object]]::new()
+
+# Filters widened from -like "*$ITGURL*" to -match 'itglue\.com' so kb.itglue.com, encoded and other
+# host forms are caught too (articles are enumerated from the full matched set below, not the list
+# endpoint, because that endpoint can silently drop paginated / company-scoped articles).
+$UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -match 'itglue\.com'}
+$UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -match 'itglue\.com'}
+$UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object {$_.ITGObject.attributes.notes -match 'itglue\.com'}
+$UpdateCompanyNotes = $MatchedCompanies | Where-Object {$_.HuduCompanyObject.notes -match 'itglue\.com'}
 
 
-# Articles
+# Articles - iterate the FULL matched set (the list endpoint can drop paginated / company-scoped
+# articles, leaving their IT Glue links un-rewritten) and full-fetch each body. Run the original
+# anchor rewriter first (it renders anchors with the target's Hudu name and handles relative /DOC-
+# locator links), then the comprehensive shared pass to catch plain-text, encoded, kb.itglue.com and
+# every other entity-type URL. Dead links (target not migrated) are left and reported.
 $articlesUpdated = @()
-foreach ($articleFound in $UpdateArticles) {
-    if ($NewContent = Update-StringWithCaptureGroups -inputString $articleFound.content -pattern $RichRegexPatternToMatchSansAssets -type "rich") {
-        $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
-	$NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorUrlPatternToMatch -type "rich"
- 	$NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorRelativeURLPatternToMatch -type "rich"
-        Write-Host "Updating Article $($articleFound.name) with replaced Content" -ForegroundColor 'Green'
-	try {
-        $ArticlePost = Set-HuduArticle -Name $articleFound.name -id $articleFound.id -Content $NewContent -ErrorAction Stop
-        $articlesUpdated = $articlesUpdated + @{"status" = "replaced"; "original_article" = $articleFound; "updated_article" = $ArticlePost}
-	} catch { $articlesUpdated = $articlesUpdated + @{"status" = "failed"; "original_article" = $articleFound; "attempted_changes" = $newContent} }
-        }
+foreach ($matchedArticle in ($MatchedArticles | Where-Object { $_.HuduID -and $_.HuduID -gt 0 })) {
+    $liveResp = Get-HuduArticles -id $matchedArticle.HuduID
+    $liveArticle = if ($liveResp.article) { $liveResp.article } else { $liveResp }
+    if (-not $liveArticle -or -not $liveArticle.id) { continue }
+    $origContent = [string]$liveArticle.content
+    if ($origContent -notmatch 'itglue\.com') { continue }
+
+    $NewContent = Update-StringWithCaptureGroups -inputString $origContent -pattern $RichRegexPatternToMatchSansAssets -type "rich"
+    $NewContent = Update-StringWithCaptureGroups -inputString $NewContent  -pattern $RichRegexPatternToMatchWithAssets -type "rich"
+    $NewContent = Update-StringWithCaptureGroups -inputString $NewContent  -pattern $RichDocLocatorUrlPatternToMatch -type "rich"
+    $NewContent = Update-StringWithCaptureGroups -inputString $NewContent  -pattern $RichDocLocatorRelativeURLPatternToMatch -type "rich"
+    $sweep = Update-AllITGlueUrls -Content $NewContent -Maps $itgUrlMaps -ItgDomain $ItgDomain
+    $NewContent = $sweep.Content
+    foreach ($dl in $sweep.DeadLinks) { $itgDeadLinks.Add([pscustomobject]@{ Area='Article'; Name=$liveArticle.name; HuduID=$liveArticle.id; Url=$dl.Url; Type=$dl.Type; Id=$dl.Id }) }
+
+    if ($NewContent -ne $origContent) {
+        Write-Host "Updating Article $($liveArticle.name) with replaced Content" -ForegroundColor 'Green'
+        try {
+            $ArticlePost = Set-HuduArticle -Name $liveArticle.name -id $liveArticle.id -Content $NewContent -ErrorAction Stop
+            $articlesUpdated = $articlesUpdated + @{"status" = "replaced"; "original_article" = $matchedArticle; "updated_article" = $ArticlePost}
+        } catch { $articlesUpdated = $articlesUpdated + @{"status" = "failed"; "original_article" = $matchedArticle; "attempted_changes" = $NewContent} }
+    }
     else {
-        Write-Warning "Article $articleFound.id found ITGlue URL but didn't match"
-        $articlesUpdated = $articlesUpdated + @{"status" = "clean"; "original_article" = $articleFound}
+        $articlesUpdated = $articlesUpdated + @{"status" = "clean"; "original_article" = $matchedArticle}
     }
 }
 
@@ -2420,21 +2449,23 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
         # Convert the caption to snake_case to match API expectations for 2.37.1
         $label = ($field.caption -replace '[^\w\s]', '') -replace '\s+', '_' | ForEach-Object { $_.ToLower() }
 
-        if ($label -in @('itglue_url', 'itglue_id', 'imported_from_itglue') -and $field.value -like "*$ITGURL*") {
-            $NewContent = Update-StringWithCaptureGroups -inputString $field.value -pattern $RichRegexPatternToMatchSansAssets -type "rich"
-            $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
-
-            if ($NewContent -and $NewContent -ne $field.value) {
-                Write-Host "Replacing Asset $($assetFound.name) field $($field.caption) with updated content" -ForegroundColor 'Red'
-                $customFields += @{ $label = $NewContent }
-                $replacedStatus = 'replaced'
-            } else {
-                $customFields += @{ $label = $field.value }
+        $fieldVal = $field.value
+        if ($fieldVal -is [string] -and $fieldVal -match 'itglue\.com') {
+            # original narrow rewrite for the IT Glue metadata fields (keeps prior behaviour + logging)
+            if ($label -in @('itglue_url', 'itglue_id', 'imported_from_itglue')) {
+                $fieldVal = Update-StringWithCaptureGroups -inputString $fieldVal -pattern $RichRegexPatternToMatchSansAssets -type "rich"
+                $fieldVal = Update-StringWithCaptureGroups -inputString $fieldVal -pattern $RichRegexPatternToMatchWithAssets -type "rich"
             }
-        } else {
-            # For other fields, preserve existing value (optional)
-            $customFields += @{ $label = $field.value }
+            # comprehensive sweep across EVERY field so embedded IT Glue links are repointed too
+            $sweep = Update-AllITGlueUrls -Content ([string]$fieldVal) -Maps $itgUrlMaps -ItgDomain $ItgDomain
+            $fieldVal = $sweep.Content
+            foreach ($dl in $sweep.DeadLinks) { $itgDeadLinks.Add([pscustomobject]@{ Area='Asset'; Name=$assetFound.name; HuduID=$assetFound.id; Url=$dl.Url; Type=$dl.Type; Id=$dl.Id }) }
+            if ($fieldVal -ne $field.value) {
+                Write-Host "Replacing Asset $($assetFound.name) field $($field.caption) with updated content" -ForegroundColor 'Red'
+                $replacedStatus = 'replaced'
+            }
         }
+        $customFields += @{ $label = $fieldVal }
     }
 
     if ($replacedStatus -eq 'replaced') {
@@ -2459,9 +2490,13 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Assets URLs Replaced. C
 # Passwords
 $passwordsUpdated = @()
 foreach ($passwordFound in $UpdatePasswords.HuduObject) {
-    $NewContent = Update-StringWithCaptureGroups -inputString $passwordFound.description -pattern $TextRegexPatternToMatchSansAssets -type "plain"
+    $origDesc = [string]$passwordFound.description
+    $NewContent = Update-StringWithCaptureGroups -inputString $origDesc -pattern $TextRegexPatternToMatchSansAssets -type "plain"
     $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $TextRegexPatternToMatchWithAssets -type "plain"
-    if ($NewContent) {
+    $sweep = Update-AllITGlueUrls -Content $NewContent -Maps $itgUrlMaps -ItgDomain $ItgDomain
+    $NewContent = $sweep.Content
+    foreach ($dl in $sweep.DeadLinks) { $itgDeadLinks.Add([pscustomobject]@{ Area='Password'; Name=$passwordFound.name; HuduID=$passwordFound.id; Url=$dl.Url; Type=$dl.Type; Id=$dl.Id }) }
+    if ($NewContent -ne $origDesc) {
         Write-Host "Updating Password $($passwordFound.name) with updated description" -ForegroundColor 'Green'
         $passwordsUpdated = $passwordsUpdated + @{"original_password" = $passwordFound; "updated_password" = (Set-HuduPassword -id $passwordFound.id -Description $NewContent).asset_password}
     }
@@ -2473,13 +2508,17 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Password URLs Replaced.
 $assetPasswordsUpdated = @()
 foreach ($passwordFound in $UpdateAssetPasswords) {
     $passwordFound = Get-HuduPasswords -id $passwordFound.HuduID
-    $NewContent = Update-StringWithCaptureGroups -inputString $passwordFound.description -pattern $TextRegexPatternToMatchSansAssets -type "plain"
+    $origDesc = [string]$passwordFound.description
+    $NewContent = Update-StringWithCaptureGroups -inputString $origDesc -pattern $TextRegexPatternToMatchSansAssets -type "plain"
     $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $TextRegexPatternToMatchWithAssets -type "plain"
-    if ($NewContent)   {
+    $sweep = Update-AllITGlueUrls -Content $NewContent -Maps $itgUrlMaps -ItgDomain $ItgDomain
+    $NewContent = $sweep.Content
+    foreach ($dl in $sweep.DeadLinks) { $itgDeadLinks.Add([pscustomobject]@{ Area='AssetPassword'; Name=$passwordFound.name; HuduID=$passwordFound.id; Url=$dl.Url; Type=$dl.Type; Id=$dl.Id }) }
+    if ($NewContent -ne $origDesc)   {
         Write-Host "Updating Asset Password $($passwordFound.name) with updated description" -ForegroundColor 'Green'
         $assetPasswordsUpdated = $assetPasswordsUpdated + @{"original_password" = $passwordFound; "updated_password" = (Set-HuduPassword -Id $passwordFound.id -Description $NewContent).asset_password}
     }
-    
+
 }
 $assetPasswordsUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedAssetPasswordsURL.json"
 Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Asset Passwords URLs Replaced. Continue?"  -DefaultResponse "continue to Company Notes, please."
@@ -2487,15 +2526,24 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Asset Passwords URLs Re
 # Company Notes
 $companyNotesUpdated = @()
 foreach ($companyFound in $UpdateCompanyNotes.HuduCompanyObject) {
-    $NewContent = Update-StringWithCaptureGroups -inputString $companyFound.notes -pattern $RichRegexPatternToMatchSansAssets -type "rich"
+    $origNotes = [string]$companyFound.notes
+    $NewContent = Update-StringWithCaptureGroups -inputString $origNotes -pattern $RichRegexPatternToMatchSansAssets -type "rich"
     $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
-    if ($NewContent) {
+    $sweep = Update-AllITGlueUrls -Content $NewContent -Maps $itgUrlMaps -ItgDomain $ItgDomain
+    $NewContent = $sweep.Content
+    foreach ($dl in $sweep.DeadLinks) { $itgDeadLinks.Add([pscustomobject]@{ Area='CompanyNote'; Name=$companyFound.name; HuduID=$companyFound.id; Url=$dl.Url; Type=$dl.Type; Id=$dl.Id }) }
+    if ($NewContent -ne $origNotes) {
         Write-Host "Updating Company $($companyFound.name) with updated notes" -ForegroundColor 'Green'
         $companyNotesUpdated = $companyNotesUpdated + @{"original_company" = $companyFound; "updated_company" = (Set-HuduCompany -id $companyFound.id -Notes $NewContent).company}
     }
 
 }
 $companyNotesUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedCompaniesURL.json"
+
+# IT Glue links whose target was NOT migrated (deleted in IT Glue, or index/list pages). Per policy
+# these are left pointing at IT Glue rather than invented a destination - record them for review.
+Write-Host ("IT Glue URL rewrite complete. Dead links left (target not migrated): {0}" -f $itgDeadLinks.Count) -ForegroundColor Cyan
+$itgDeadLinks | ConvertTo-Json -depth 10 | Out-File "$MigrationLogs\RemainingITGlueDeadLinks.json"
 Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Company Notes URLs Replaced. Continue?"  -DefaultResponse "continue to Manual Actions, please."
 
 Write-Host "Replacing links to hosted public photos in Hudu Articles"

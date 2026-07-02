@@ -38,39 +38,31 @@ if ($MigrationLogsPath) { $MigrationLogs = $MigrationLogsPath }
 $MigrationLogs  = $MigrationLogs  ?? $environmentSettings.MigrationLogs
 if (-not $HuduAPIKey) { $HuduAPIKey = ConvertSecureStringToPlainText -SecureString ($environmentSettings.HuduAPIKey | ConvertTo-SecureString) }
 
-# --- ITGlue-ID -> Hudu-URL maps per entity type ---
-function ConvertTo-FullHuduUrl([string]$u) {
-    if ([string]::IsNullOrWhiteSpace($u)) { return $u }
-    if ($u -match '^https?://') { return $u }
-    return ($HuduBaseDomain.TrimEnd('/') + '/' + $u.TrimStart('/'))
+# --- ITGlue-ID -> Hudu-URL maps, built by the SHARED rewriter used by the migration too ---
+. $PSScriptRoot\Private\Update-AllITGlueUrls.ps1
+
+function Import-Log($file) {
+    $p = "$MigrationLogs\$file"
+    if (Test-Path -LiteralPath $p) { @(Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -Depth 100) } else { @() }
 }
-function New-IdMap($file) {
-    $h = @{}
-    if (Test-Path -LiteralPath "$MigrationLogs\$file") {
-        foreach ($x in (Get-Content -LiteralPath "$MigrationLogs\$file" -Raw | ConvertFrom-Json -Depth 100)) {
-            if ($x.ITGID -and $x.HuduObject.url) { $h["$($x.ITGID)"] = (ConvertTo-FullHuduUrl ([string]$x.HuduObject.url)) }
-        }
-    }
-    return $h
-}
-$maps = @{
-    docs      = New-IdMap 'Articles.json'
-    passwords = New-IdMap 'Passwords.json'
-    assets    = New-IdMap 'Assets.json'
-    contacts  = New-IdMap 'Contacts.json'
-    locations = New-IdMap 'Locations.json'
-    websites  = New-IdMap 'Websites.json'
-}
-Write-Host ("Maps: " + (($maps.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value.Count)" }) -join '  ')) -ForegroundColor DarkGray
-$MatchedArticles = @(Get-Content -LiteralPath "$MigrationLogs\Articles.json" -Raw | ConvertFrom-Json -Depth 100)
+$MatchedArticles = Import-Log 'Articles.json'
+$itgUrlMaps = Get-ITGlueUrlMaps -HuduBaseDomain $HuduBaseDomain -Articles $MatchedArticles `
+    -Passwords (Import-Log 'Passwords.json') -AssetPasswords (Import-Log 'AssetPasswords.json') `
+    -Configurations (Import-Log 'Configurations.json') -Assets (Import-Log 'Assets.json') `
+    -Contacts (Import-Log 'Contacts.json') -Locations (Import-Log 'Locations.json') -Websites (Import-Log 'Websites.json')
+$ItgDomain = ($ITGURL -replace '^https?://', '').TrimEnd('/')
+Write-Host ("Maps: " + (($itgUrlMaps.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value.Count)" }) -join '  ')) -ForegroundColor DarkGray
 $byHudu = @{}; foreach ($x in $MatchedArticles) { if ($x.HuduID) { $byHudu["$($x.HuduID)"] = $x } }
 
-# Company (IT Glue org id) -> full Hudu company URL. Used for index links (/contacts, /documents, /domains
-# with no record) and as the fallback for links to deleted items, so no enstep.itglue.com URL survives.
+# Company (IT Glue org id) -> full Hudu company URL. This standalone remediation goes FURTHER than the
+# migration's default (leave-and-report): links to DELETED items and index/list pages are re-pointed to
+# the owning company page, and anything with no company either is stripped, so ZERO enstep.itglue.com
+# survives in the instance.
 $companyMap = @{}
-if (Test-Path -LiteralPath "$MigrationLogs\Companies.json") {
-    foreach ($c in (Get-Content -LiteralPath "$MigrationLogs\Companies.json" -Raw | ConvertFrom-Json -Depth 100)) {
-        if ($c.ITGID -and $c.HuduCompanyObject.url) { $companyMap["$($c.ITGID)"] = (ConvertTo-FullHuduUrl ([string]$c.HuduCompanyObject.url)) }
+foreach ($c in (Import-Log 'Companies.json')) {
+    if ($c.ITGID -and $c.HuduCompanyObject.url) {
+        $u = [string]$c.HuduCompanyObject.url
+        $companyMap["$($c.ITGID)"] = if ($u -match '^https?://') { $u } else { $HuduBaseDomain.TrimEnd('/') + '/' + $u.TrimStart('/') }
     }
 }
 Write-Host ("Company map: {0}" -f $companyMap.Count) -ForegroundColor DarkGray
@@ -135,35 +127,27 @@ $rewriteReport = foreach ($hid in $ids) {
     if ($orig -notmatch 'itglue\.com') { continue }   # any itglue.com form: enstep, kb, encoded, wrapped
     $art = $byHudu["$($a.id)"]
 
-    $mapped = 0; $deadUrls = @{}
-    # Match ANY http(s) URL mentioning itglue.com: the customer instance, URL-encoded redirect wrappers,
-    # or IT Glue's public kb.itglue.com help centre. URL-decode first so wrapped enstep URLs are seen.
-    $new = [regex]::Replace($orig, 'https?://[^\s"''<>\)]*?itglue\.com[^\s"''<>\)]*', {
-        param($m)
-        $u = $m.Value
-        $dec = try { [uri]::UnescapeDataString($u) } catch { $u }
-        # flexible-asset URLs put the record id after /records/; other types are /<type>/<id>.
-        $org = ([regex]::Match($dec, 'enstep\.itglue\.com/(\d+)', 'IgnoreCase')).Groups[1].Value
-        $assetM = [regex]::Match($dec, 'enstep\.itglue\.com/\d+/assets/(?:[^/\s]+/)?records/(\d+)', 'IgnoreCase')
-        $genM   = [regex]::Match($dec, 'enstep\.itglue\.com/\d+/(docs|documents|passwords|configurations|contacts|locations|websites)/(\d+)', 'IgnoreCase')
-        if ($assetM.Success)   { $type='assets'; $eid=$assetM.Groups[1].Value }
-        elseif ($genM.Success) { $type=$genM.Groups[1].Value.ToLower(); if ($type -eq 'documents') { $type='docs' }; $eid=$genM.Groups[2].Value }
-        else                   { $type='index';  $eid='' }
-        # 1) specific migrated item -> its Hudu URL
-        if ($type -ne 'index' -and $maps.ContainsKey($type) -and $maps[$type].ContainsKey($eid)) {
-            return $maps[$type][$eid]
-        }
-        # 2) index link, or link to a deleted item -> the company page (so nothing points at IT Glue)
+    # Shared comprehensive rewrite: mapped IT Glue URLs -> Hudu (all types, plain-text + anchors,
+    # encoded, kb). Everything it can't map comes back as a dead link for this tool to redirect/strip.
+    $sweep = Update-AllITGlueUrls -Content $orig -Maps $itgUrlMaps -ItgDomain $ItgDomain
+    $new = $sweep.Content
+    $mapped = $sweep.Rewritten
+    $deadUrls = @{}
+    # Aggressive cleanup layer (standalone only): re-point dead links to the owning company page, or
+    # strip them, so no enstep.itglue.com survives. Group by URL so each is handled once.
+    foreach ($dl in $sweep.DeadLinks) {
+        $u = $dl.Url
+        if ($deadUrls.ContainsKey($u)) { continue }
+        $org = ([regex]::Match([uri]::UnescapeDataString($u), "$([regex]::Escape($ItgDomain))/(\d+)", 'IgnoreCase')).Groups[1].Value
         if ($org -and $companyMap.ContainsKey($org)) {
-            $deadUrls[$u] = @{ type=$type; id=$eid; disp='company' }
-            return $companyMap[$org]
+            $deadUrls[$u] = @{ type=$dl.Type; id=$dl.Id; disp='company' }
+            $new = $new.Replace($u, $companyMap[$org])
+        } else {
+            $deadUrls[$u] = @{ type=$dl.Type; id=$dl.Id; disp='stripped' }
+            $new = $new.Replace($u, '')
         }
-        # 3) org itself not in Hudu -> strip the URL entirely
-        $deadUrls[$u] = @{ type=$type; id=$eid; disp='stripped' }
-        return ''
-    }, 'IgnoreCase')
+    }
 
-    $mapped = ([regex]::Matches($orig,'https?://enstep\.itglue\.com','IgnoreCase')).Count - ([regex]::Matches($new,'https?://enstep\.itglue\.com','IgnoreCase')).Count
     $changed = ($new -ne $orig)
     $totMapped += $mapped; $totDead += $deadUrls.Count
 
