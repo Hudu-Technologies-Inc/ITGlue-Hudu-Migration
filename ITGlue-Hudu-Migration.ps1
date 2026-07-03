@@ -53,6 +53,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 # Add Replace URL functions
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
 . $PSScriptRoot\Private\Update-AllITGlueUrls.ps1   # comprehensive all-type/plain-text URL rewriter
+. $PSScriptRoot\Private\ConvertTo-NormalizedOtpSecret.ps1   # normalise/validate TOTP seeds (no silent drops)
 
 # Add Hudu Relations Function
 . $PSScriptRoot\Public\Add-HuduRelation.ps1
@@ -2297,16 +2298,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 					
                     if (!($($unmatchedPassword.ITGObject.attributes."resource-type") -eq "flexible-asset-traits")) {
 
-                        $validated_otp = "$($unmatchedPassword.ITGObject.attributes.otp_secret)".Trim().ToUpper()
-                        if ($validated_otp) {
-                            $isValidBase32 = $validated_otp -match '^[A-Z2-7]+$'
-                            $lengthOK = $validated_otp.Length -ge 16 -and $validated_otp.Length -le 80
-
-                            $validated_otp = if ($isValidBase32 -and $lengthOK) { $validated_otp } else { $null }
-
-                            if (-not ($isValidBase32 -and $lengthOK)) {
-                                Write-Warning "Invalid OTP secret for $($unmatchedPassword.ITGObject.attributes.name): $($unmatchedPassword.ITGObject.attributes.otp_secret)... valid base32? $isValidBase32 length ok? $lengthOK (min / max is 16 / 80 chars)"
-                            }                            
+                        # Normalise the IT Glue seed (otpauth:// URIs, '=' padding, display spaces, and
+                        # long-but-valid base32 that the old 16-80 char cap wrongly rejected) via the
+                        # shared helper. $otpDropped flags a seed that WAS present but is unusable, so it
+                        # is surfaced as a manual action after the password is created rather than lost.
+                        $srcOtp = "$($unmatchedPassword.ITGObject.attributes.otp_secret)"
+                        $validated_otp = ConvertTo-NormalizedOtpSecret $srcOtp
+                        $otpDropped = (-not [string]::IsNullOrWhiteSpace($srcOtp)) -and (-not $validated_otp)
+                        if ($otpDropped) {
+                            Write-Warning "OTP secret for $($unmatchedPassword.ITGObject.attributes.name) is not usable base32 after normalisation; flagging as a manual action."
                         }
 
 
@@ -2355,6 +2355,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
                         $unmatchedPassword.Imported = "Created-By-Script"
                         $ImportsMigrated = $ImportsMigrated + 1
                         Write-host "$($HuduNewPassword.Name) Has been created in Hudu"
+                        if ($otpDropped) {
+                            $manualActions.add([PSCustomObject]@{
+                                name       = "$($unmatchedPassword.ITGObject.attributes.name)"
+                                company_id = $company.HuduCompanyObject.ID
+                                Type       = "Password - OTP"
+                                Hudu_URL   = $HuduNewPassword.url
+                                ITG_URL    = if ($url = $unmatchedPassword.ITGObject.attributes.url) {$url} Else {$unmatchedPassword.ITGObject.attributes.'resource-url'}
+                                otpsecret  = "removed for security purposes"
+                                problem    = "OTP seed present in IT Glue but not valid base32 after normalisation; confirm and set the seed manually."
+                            })
+                        }
                         
                     }
                 }
