@@ -75,7 +75,6 @@ $resumeQuestion = "yes"; $reenterChoice = "Continue"; $choice = "N";
 $ImportCompanies                     = $true  # default true;
 $ImportLocations                     = $true  # default true;
 $ImportDomains                       = $true  # default true;
-$DisableWebsiteMonitoring            = $true  # default true;
 $ImportConfigurations                = $true  # default true;
 $ImportContacts                      = $true  # default true;
 $ImportFlexibleAssetLayouts          = $true  # default true;
@@ -89,6 +88,7 @@ $ImportConfigInterfaces              = $true  # default true;  this creates IPAM
 $NonInteractive                      = $true  # Select $false for interactive steps, $true for noninteractive/no pauses (default)
 $skipIntegratorLayouts               = $true  # do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name
          
+$DisableWebsiteMonitoring            = $false # default false;
 $allowSettingFlagsAndTypes           = $false # Apply flags and flag types during the migration; requires Hudu 2.40+
 $ScopedMigration                     = $false # If you want to scope migration to just come companies, set to 2/$true  (default 1/$false)
 $MergedOrganizationTypes             = $false # if you want to merge vendors or other org types from ITG into a single organization, set to 2/$true (default 1/$false)
