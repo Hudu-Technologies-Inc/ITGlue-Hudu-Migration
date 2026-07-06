@@ -40,7 +40,7 @@ while ($true) {
         }catch{
             Write-host "Error getting checklist items $_"
         }
-        $ITGLueChecklists.Add($checklistEntry)
+        $ITGlueChecklists.Add($checklistEntry)
     }
     $PageNum = $PageNum +1
     if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
@@ -59,18 +59,18 @@ while ($true) {
             Write-host "Error getting checklist template items $_"
         }
 
-        $ITGLueChecklists.Add($checklistTemplate)
+        $ITGlueChecklists.Add($checklistTemplate)
     }
     $PageNum = $PageNum +1
     if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
 }
-$ChecklistCount = @($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $false }).Count
-$ChecklistTemplateCount = @($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $true }).Count
-$ChecklistItemCount = ($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $false } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
-$ChecklistTemplateItemCount = ($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $true } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
+$ChecklistCount = @($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $false }).Count
+$ChecklistTemplateCount = @($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $true }).Count
+$ChecklistItemCount = ($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $false } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
+$ChecklistTemplateItemCount = ($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $true } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
 Write-Host "Got $ChecklistCount ITGlue checklists ($ChecklistItemCount tasks) and $ChecklistTemplateCount ITGlue checklist templates ($ChecklistTemplateItemCount template tasks)."
-if ($ITGLueChecklists.Count -gt 0) {
-    $ITGLueChecklists | convertto-json -depth 99 | Out-File "$MigrationLogs\RetrievedChecklists.json"
+if ($ITGlueChecklists.Count -gt 0) {
+    $ITGlueChecklists | convertto-json -depth 99 | Out-File "$MigrationLogs\RetrievedChecklists.json"
 } else {
     Write-Host "No checklists retrieved from ITGlue, skipping saving to file."
 }

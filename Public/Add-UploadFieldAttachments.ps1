@@ -120,17 +120,17 @@ function Get-ITGAttachmentMatch {
     return $null
 }
 
-$AttachRoot = Join-Path $ITGLueExportPath "attachments"
+$AttachRoot = Join-Path $ITGlueExportPath "attachments"
 $Attachfiles = if (Test-Path $AttachRoot) { @(Get-ChildItem $AttachRoot -Recurse -File) } else { @() }
 $UploadFieldExportDirs = @(
-    Get-ChildItem $ITGLueExportPath -Directory |
+    Get-ChildItem $ITGlueExportPath -Directory |
         Where-Object { $_.Name -ne 'attachments' -and $_.Name -match '^[^-]+-.+' }
 )
 $UploadFieldFiles = @($UploadFieldExportDirs | ForEach-Object { Get-ChildItem $_.FullName -Recurse -File })
 $AllUploadCandidateFiles = @($Attachfiles + $UploadFieldFiles)
 $AttachFilesByAssetType = @{}
 foreach ($file in $AllUploadCandidateFiles) {
-    $relative = $file.FullName.Substring((Resolve-Path $ITGLueExportPath).Path.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Length).TrimStart([char[]]@('\', '/'))
+    $relative = $file.FullName.Substring((Resolve-Path $ITGlueExportPath).Path.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Length).TrimStart([char[]]@('\', '/'))
     $assetType = if ($relative -like "attachments\*" -or $relative -like "attachments/*") {
         ($relative -split '[\\/]', 3)[1]
     } else {

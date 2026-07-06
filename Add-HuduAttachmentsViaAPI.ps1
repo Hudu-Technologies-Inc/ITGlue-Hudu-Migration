@@ -25,7 +25,7 @@ if (-not ($FirstTimeLoad -eq 1)) {
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
 
 # Attachments Path
-$AttachmentsPath = (Join-Path -Path $ITGLueExportPath -ChildPath "attachments")
+$AttachmentsPath = (Join-Path -Path $ITGlueExportPath -ChildPath "attachments")
 $AttachmentUrlMap = $AttachmentUrlMap ?? @{}
 $ITGlueAttachmentCache = @{}
 
@@ -465,7 +465,7 @@ if (!($CSVMapping = Get-Content $CSVMapPath|ConvertFrom-Json -Depth 10)) {
 if ($CSVMapping) {
     foreach ($n in $CSVMapping) { 
         try {
-            $CSVPath = Join-Path -Path $ITGLueExportPath -ChildPath $n.csv_file
+            $CSVPath = Join-Path -Path $ITGlueExportPath -ChildPath $n.csv_file
             $CSV = Import-Csv -Path $CSVPath
             $CSVHeader = $n.csv_header 
         

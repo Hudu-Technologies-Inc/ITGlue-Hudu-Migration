@@ -115,7 +115,7 @@ if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
 }
 
 write-host "Checking available disk space for migration artifacts" -ForegroundColor DarkCyan
-$preflightExportPath = $settings.ITGLueExportPath ?? $environmentSettings.ITGLueExportPath ?? $ITGLueExportPath
+$preflightExportPath = $settings.ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $ITGlueExportPath
 $preflightTargetPath = $settings.MigrationLogs ?? $environmentSettings.MigrationLogs ?? $MigrationLogs ?? $preflightExportPath
 $diskSpaceCheck = Test-ITGlueExportDiskSpace -ExportPath $preflightExportPath -TargetPath $preflightTargetPath -BufferPercent 15 -Detailed
 Write-Host $diskSpaceCheck.Message -ForegroundColor $(if ($diskSpaceCheck.Success) { 'Green' } else { 'Red' })
@@ -1556,7 +1556,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
     $null = Start-MigrationJob -Name "Assets"
 
     # Load raw passwords for embedded fields and future use
-    $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
+    $ITGPasswordsRaw = Import-CSV -Path "$ITGlueExportPath\passwords.csv"
     
     if ($ImportFlexibleAssets -eq $true) {
         $RelationsToCreate = [System.Collections.ArrayList]@()
@@ -1870,8 +1870,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
    	}
 
 
-    $ITGDocuments = Import-CSV -Path (Join-Path -path $ITGLueExportPath -ChildPath "documents.csv")
-    [string]$ITGDocumentsPath = Join-Path -path $ITGLueExportPath -ChildPath "Documents"
+    $ITGDocuments = Import-CSV -Path (Join-Path -path $ITGlueExportPath -ChildPath "documents.csv")
+    [string]$ITGDocumentsPath = Join-Path -path $ITGlueExportPath -ChildPath "Documents"
 
     $files = Get-ChildItem -Path $ITGDocumentsPath -recurse
     $MatchedArticles = foreach ($doc in $ITGDocuments) {
@@ -1904,7 +1904,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
     if ($ImportArticles -eq $true) {
         $null = Start-MigrationJob -Name "ArticleContents"
 
-        $Attachfiles = Get-ChildItem (Join-Path -Path $ITGLueExportPath -ChildPath "attachments\documents") -recurse
+        $Attachfiles = Get-ChildItem (Join-Path -Path $ITGlueExportPath -ChildPath "attachments\documents") -recurse
         $ImageMap = $ImageMap ?? @{}
         # Now do the actual work of populating the content of articles
         $ArticleErrors = foreach ($Article in $MatchedArticles) {
@@ -2152,7 +2152,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
     try {
         Write-Host "Loading Passwords from CSV for faster import" -foregroundcolor Cyan
-        $ITGPasswordsRaw = Import-CSV -Path "$ITGLueExportPath\passwords.csv"
+        $ITGPasswordsRaw = Import-CSV -Path "$ITGlueExportPath\passwords.csv"
     }
 	catch {
         $ITGPasswordsSingle = foreach ($ITGRawPass in $ITGPasswords) {
@@ -2552,7 +2552,7 @@ if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try
 . .\Get-MissingRelations.ps1
 
 write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Archiving Items";
-$DocsCsv = import-csv "$ITGLueExportPath\documents.csv"
+$DocsCsv = import-csv "$ITGlueExportPath\documents.csv"
 $ArchivedPasswords = $MatchedPasswords | Where-Object {$_.itgobject.attributes.archived -eq $true}
 $ArchivedConfigurations = $MatchedConfigurations | Where-Object {$_.ITGObject.attributes.archived -eq $true}    
 $ArchivedAssets = $MatchedAssets | Where-Object {$_.ITGObject.attributes.archived -eq $true}

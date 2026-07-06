@@ -72,7 +72,7 @@ function CollectAndSaveSettings {
     # Create a hash table to store the settings
     $settings = $settings ?? @{}
 
-    # 1. Unser Entry- Urls
+    # 1. User Entry- Urls
     Write-Host "Settings- URLs:" -ForegroundColor Yellow
     $settings.HuduBaseDomain = $settings.HuduBaseDomain ?? 
         $((Read-Host -Prompt 'Set the base domain of your Hudu instance (e.g https://myinstance.huducloud.com)') -replace '[\\/]+$', '') -replace '^(?!https://)', 'https://'
@@ -128,8 +128,8 @@ function CollectAndSaveSettings {
     
     # 4. User-Entry Paths and Folders
     Write-Host "️Settings- Paths and Folders:" -ForegroundColor Yellow
-    $settings.ITGLueExportPath = $settings.ITGLueExportPath ?? 
-        $(Read-Host 'Enter the path of the ITGLue Export. (e.g. C:\Temp\ITGlue\Export) ️')
+    $settings.ITGlueExportPath = $settings.ITGlueExportPath ?? 
+        $(Read-Host 'Enter the path of the ITGlue Export. (e.g. C:\Temp\ITGlue\Export) ️')
     $settings.MigrationLogs = $settings.MigrationLogs ??
         $(Read-Host "Enter the path for the migration logs, or press enter to accept the Default path ($settingsTop\HuduMigration\$instance\MigrationLogs)")
     # Fallback for Migrationlogs setting
@@ -320,7 +320,7 @@ $ITGURL = $environmentSettings.ITGURL
 $InternalCompany = $environmentSettings.InternalCompany
 $PlaceInternalDocsInInternalCompany = [bool]$environmentSettings.PlaceInternalDocsInInternalCompany ?? $false
 
-$ITGLueExportPath = $environmentSettings.ITGLueExportPath
+$ITGlueExportPath = $environmentSettings.ITGlueExportPath
 
 
 # Choose if you want to resume previous attempts from the last successful section
@@ -420,7 +420,7 @@ if ($InitType -eq 'Full') {
 $MigrationLogs = $environmentSettings.MigrationLogs
 
 # Now that ITGlue export jobs require a user to elect to include passwords via checkbox, we need to check for the presence of the passwords.csv and warn user in relation to their migration strategy.
-$resolvedITGlueExportPath = $ITGLueExportPath ?? $environmentSettings.ITGLueExportPath ?? $settings.ITGLueExportPath
+$resolvedITGlueExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath
 $passwordsCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) { Join-Path -Path $resolvedITGlueExportPath -ChildPath "passwords.csv" } else { $null }
 $vaultedCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) { Join-Path -Path $resolvedITGlueExportPath -ChildPath "vaulted" } else { $null }
 $passwordsCSVOptional = ($InitType -ne 'Full' -or ((2,$false) -contains $ImportPasswords -and (2,$false) -contains $ImportFlexibleAssets))
@@ -436,7 +436,7 @@ $vaultCSVsPresent = @()
 $shouldRunVaultJob = $false
 
 if ([string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) {
-    throw "ITGlue export path is blank. Please set ITGLueExportPath before checking for passwords.csv."
+    throw "ITGlue export path is blank. Please set ITGlueExportPath before checking for passwords.csv."
 }
 
 while ($passwordsCSVvalidated -eq $false) {
