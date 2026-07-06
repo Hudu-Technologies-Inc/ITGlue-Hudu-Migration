@@ -41,7 +41,7 @@ $settings = @{
     FAPromptPrefix          = ""
 
     # Absolute path to 7zip-extracted export
-    ITGLueExportPath        = "c:\tmp\export"
+    ITGlueExportPath        = "c:\tmp\export"
 
     # Alternative logs folder?
     MigrationLogs           = "$logs_folder"

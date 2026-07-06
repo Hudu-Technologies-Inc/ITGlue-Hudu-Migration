@@ -64,7 +64,7 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
             }catch{
                 Write-host "Error getting checklist items $_"
             }
-            $ITGLueChecklists.Add($checklistEntry)
+            $ITGlueChecklists.Add($checklistEntry)
         }
         $PageNum = $PageNum +1
         if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
@@ -83,27 +83,27 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
                 Write-host "Error getting checklist template items $_"
             }
 
-            $ITGLueChecklists.Add($checklistTemplate)
+            $ITGlueChecklists.Add($checklistTemplate)
         }
         $PageNum = $PageNum +1
         if (-not $ITGlueRawChecklists -or $ITGlueRawChecklists.count -lt $PageSize) {break}
     }
-    $ChecklistCount = @($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $false }).Count
-    $ChecklistTemplateCount = @($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $true }).Count
-    $ChecklistItemCount = ($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $false } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
-    $ChecklistTemplateItemCount = ($ITGLueChecklists | Where-Object { $_.IsTemplate -eq $true } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
+    $ChecklistCount = @($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $false }).Count
+    $ChecklistTemplateCount = @($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $true }).Count
+    $ChecklistItemCount = ($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $false } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
+    $ChecklistTemplateItemCount = ($ITGlueChecklists | Where-Object { $_.IsTemplate -eq $true } | ForEach-Object { @($_.ITGChecklistItems | Where-Object { $_ }).Count } | Measure-Object -Sum).Sum
     Write-Host "Got $ChecklistCount ITGlue checklists ($ChecklistItemCount tasks) and $ChecklistTemplateCount ITGlue checklist templates ($ChecklistTemplateItemCount template tasks)."
-    $ITGLueChecklists | convertto-json -depth 99 | Out-File "$MigrationLogs\RetrievedChecklists.json"    
+    $ITGlueChecklists | convertto-json -depth 99 | Out-File "$MigrationLogs\RetrievedChecklists.json"    
 } else {
     write-host "Preloaded checklists found, loading from file if needed."
-    if (-not $ITGLueChecklists) {
+    if (-not $ITGlueChecklists) {
         $loaded = Get-Content "$MigrationLogs\RetrievedChecklists.json" -Raw | ConvertFrom-Json -Depth 99
-        $ITGLueChecklists = [System.Collections.ArrayList]@()
+        $ITGlueChecklists = [System.Collections.ArrayList]@()
         foreach ($item in @($loaded)) {
-            [void]$ITGLueChecklists.Add($item)
+            [void]$ITGlueChecklists.Add($item)
         }
     } else {
-        Write-Host "ITGLueChecklists variable already populated, skipping loading from file."
+        Write-Host "ITGlueChecklists variable already populated, skipping loading from file."
     }
 }
 
@@ -115,7 +115,7 @@ if (-not (test-path "$MigrationLogs\RetrievedChecklists.json")){
 # - ITGlue checklists are single-use company records. On Hudu 2.41.0+, a company process is kicked off
 #   as a run only when run-only metadata like due dates, assignees, or start/completion dates is present.
 $ChecklistIDX=0
-foreach ($checklist in $ITGLueChecklists) {
+foreach ($checklist in $ITGlueChecklists) {
     $ChecklistIDX=$ChecklistIDX+1
 
     $HuduProcedureTasks = @()
@@ -188,7 +188,7 @@ foreach ($checklist in $ITGLueChecklists) {
 
     if ($newProcedure -and $newProcedure.Id) {
         $checklist | Add-Member -MemberType 'NoteProperty' -Name 'HuduProcedure' -Value $newProcedure -Force
-        Write-Host "Created $(if (-not $newProcedure.company_id) {'Global'} else {'Company'}) Procedure $(if ($true -eq $checklist.IsTemplate) {'Template'}) $($ChecklistIDX) of $($ITGLueChecklists.count)"
+        Write-Host "Created $(if (-not $newProcedure.company_id) {'Global'} else {'Company'}) Procedure $(if ($true -eq $checklist.IsTemplate) {'Template'}) $($ChecklistIDX) of $($ITGlueChecklists.count)"
 
         $sourceTasks = @($checklist.ITGChecklistItems | Where-Object { $_ })
         if ($sourceTasks.Count -eq 0) {

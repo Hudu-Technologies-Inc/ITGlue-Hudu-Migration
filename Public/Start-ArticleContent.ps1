@@ -28,7 +28,7 @@ if (-not ($FirstTimeLoad -eq 1)) {
 
         # This is specifically for the article content, skipping stubs for right now.
         # Get Attachment directories so we can match on the name per article, this needs to be outside the loop so we don't constantly re-run it
-		$AttchmentsPath = Join-Path -Path $ITGLueExportPath -ChildPath "attachments\documents"
+		$AttchmentsPath = Join-Path -Path $ITGlueExportPath -ChildPath "attachments\documents"
 		$AttchmentsPath = "\\?\$AttchmentsPath"
         $Attachfiles = Get-ChildItem -LiteralPath $AttchmentsPath -Recurse -Force
         

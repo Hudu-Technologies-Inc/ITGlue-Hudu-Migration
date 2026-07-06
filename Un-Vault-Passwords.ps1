@@ -1,8 +1,8 @@
 
 
-$resolvedITGlueExportPath = $ITGLueExportPath ?? $environmentSettings.ITGLueExportPath ?? $settings.ITGLueExportPath
+$resolvedITGlueExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath
 if ([string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) {
-    throw "ITGlue export path is blank. Please set ITGLueExportPath before running the vaulted password update."
+    throw "ITGlue export path is blank. Please set ITGlueExportPath before running the vaulted password update."
 }
 
 $sourceCSVpath = $vaultedCSVPath ?? $(Join-Path -Path $resolvedITGlueExportPath -ChildPath "vaulted")
