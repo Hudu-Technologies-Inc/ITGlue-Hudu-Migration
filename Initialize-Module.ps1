@@ -72,7 +72,7 @@ function CollectAndSaveSettings {
     # Create a hash table to store the settings
     $settings = $settings ?? @{}
 
-    # 1. Unser Entry- Urls
+    # 1. User Entry- Urls
     Write-Host "Settings- URLs:" -ForegroundColor Yellow
     $settings.HuduBaseDomain = $settings.HuduBaseDomain ?? 
         $((Read-Host -Prompt 'Set the base domain of your Hudu instance (e.g https://myinstance.huducloud.com)') -replace '[\\/]+$', '') -replace '^(?!https://)', 'https://'
