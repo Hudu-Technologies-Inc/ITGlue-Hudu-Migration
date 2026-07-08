@@ -272,8 +272,6 @@ These are used only when the image extension was not properly retained in the ex
 # Known Issues
  - Relations to SSL Certificates are not currently included
 
-Password relations are only available from ITGlue when querying the API directly for each password individually. Since this will increase the runtime of the script by hours or days potentially we have a script to run at the end which will loop through passwords and update the relations at that time. For right now relationships between Passwords and any entity that is not available in the API (SSL Certificates) are completely invisible to this migration script.
-
 # Disclaimer
 
 This migration tool (PowerShell scripts, packaged executable, and all other items in the repository) is provided "as-is" without any warranties or guarantees, express or implied. The authors and Hudu Technologies make no guarantees regarding the accuracy, reliability, or suitability of the script for any purpose.
