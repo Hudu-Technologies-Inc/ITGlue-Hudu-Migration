@@ -204,7 +204,7 @@ function Set-ExternalModulesInitialized {
             [string]$HAPImodulePath = "C:\Users\$env:USERNAME\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1",
             [bool]$use_hudu_fork = $true,
             [bool]$RefreshHuduApiForkEachRun = $true,
-            [version]$RequiredHuduVersion = [version]"2.39.6",
+            [version]$RequiredHuduVersion = [version]"2.43.1",
             $DisallowedVersions = @([version]"2.37.0"),
             [string]$HuduApiRepositoryUrl = $($env:HUDUAPI_REPOSITORY_URL ?? "https://github.com/Hudu-Technologies-Inc/HuduAPI.git"),
             [string]$HuduApiBranch = $($env:HUDUAPI_REPOSITORY_BRANCH ?? "master"),

@@ -71,7 +71,7 @@ If you've already elected to run through setup, that is fine, but you will need 
 
 **1. Make sure you are on a known-compatible Hudu version**
 
-This fork requires **Hudu `2.39.6` or newer**. Version **`2.37.0` is blocked** (incompatible). Upgrade self-hosted instances before running the migration.
+This fork requires **Hudu `2.43.1` or newer**. Version **`2.37.0` is blocked** (incompatible). Upgrade self-hosted instances before running the migration.
 
 **Optional — flags and flag types:** If you choose to migrate flags during setup, that path expects **Hudu `2.40.0` or later** (the script will prompt accordingly).
 
