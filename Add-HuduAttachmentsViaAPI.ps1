@@ -371,11 +371,11 @@ $HAPImodulePath = "C:\Users\$env:USERNAME\Documents\GitHub\HuduAPI\HuduAPI\HuduA
 if (Test-Path $HAPImodulePath) {
     Import-Module $HAPImodulePath -Force
     Write-Host "Module imported from $HAPImodulePath"
-} elseif ((Get-Module -ListAvailable -Name HuduAPI).version -ge '2.4.4') {
+} elseif ((Get-Module -ListAvailable -Name HuduAPI).version -ge '4.1.0') {
     Write-Host "Module imported from $HAPImodulePath"
     Import-Module HuduAPI
 } else {
-    Install-Module HuduAPI -MinimumVersion 2.4.5 -Scope CurrentUser
+    Install-Module HuduAPI -MinimumVersion 4.1.0 -Scope CurrentUser
     Import-Module HuduAPI
 }
   
