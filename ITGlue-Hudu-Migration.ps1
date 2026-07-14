@@ -1633,7 +1633,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                             if ($field.HuduLayoutField.required) {
                                 $ReturnData = (Get-Date).ToString('MM/dd/yyyy', [CultureInfo]::InvariantCulture)
                             } else {
-                                continue
+                                return
                             }
                         }
                         $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
@@ -1808,7 +1808,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                         $null = $AssetFields.add("$($field.HuduParsedName)", [string]"$coerced")
                     } elseif ($field.FieldType -ieq "Upload") {
                         $UploadFieldsArePresent = $true
-                        continue
+                        return
                     } else {
                         $null = $AssetFields.add("$($field.HuduParsedName)", [string]"$($_.value)")
                     }
