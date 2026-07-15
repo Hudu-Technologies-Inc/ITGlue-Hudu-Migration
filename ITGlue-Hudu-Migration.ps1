@@ -1226,7 +1226,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     # Match to existing layouts
     $MatchedLayouts = foreach ($ITGLayout in $FlexLayouts) {
         if ($skipIntegratorLayouts -and $true -eq $skipIntegratorLayouts){
-            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or "$($ITGLayout.attributes.name)" -ilike "*(liongard)*"){
+            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or "$($ITGLayout.attributes.name)" -ilike "*(liongard)*" -or "$($ITGLayout.attributes.name)" -ilike "*datto*rmm*" -or "$($ITGLayout.attributes.name)" -ilike "*connectwise*"  -or "$($ITGLayout.attributes.name)" -ilike "*autotask*" ){
                 Write-warning "Skipping Integrator Layout $($ITGLayout.attributes.name)"
                 continue
             }
@@ -1365,7 +1365,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
         foreach ($UpdateLayout in $MatchedLayouts) {
             if ($skipIntegratorLayouts -and $true -eq $skipIntegratorLayouts){
-                if ("$($UpdateLayout.Name)" -ilike "*(auto)*" -or "$($UpdateLayout.Name)" -ilike "*(liongard)*"){
+                if ("$($UpdateLayout.Name)" -ilike "*(auto)*" -or "$($UpdateLayout.Name)" -ilike "*(liongard)*" -or "$($UpdateLayout.Name)" -ilike "*datto*rmm*" -or "$($UpdateLayout.Name)" -ilike "*connectwise*"  -or "$($UpdateLayout.Name)" -ilike "*autotask*" ){ 
                     Write-Host "Skipping Integrator Layout $($UpdateLayout.Name)" -ForegroundColor Yellow
                     continue
                 }
@@ -2237,6 +2237,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
                     $PasswordableType = 'Asset'
                     $ParentItemID = $null
+                    $RelatedWebsiteID = $null
 		    
                     if ($($unmatchedPassword.ITGObject.attributes."resource-id")) {
 						
@@ -2267,9 +2268,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
                             if ($($unmatchedPassword.ITGObject.attributes."resource-type") -eq "domains") {
                                 $ParentItemID = ($MatchedWebsites | Where-Object { $_.ITGID -eq $($unmatchedPassword.ITGObject.attributes."resource-id") }).HuduID
                                 if ($ParentItemID) {
-                                    Write-Host "Matched to $ParentItemID" -ForegroundColor Green
+                                    Write-Host "Matched to website/domain $ParentItemID; creating password at company scope because Hudu asset passwords cannot attach to websites." -ForegroundColor Yellow
+                                    $RelatedWebsiteID = $ParentItemID
+                                    $ParentItemID = $null
+                                    $PasswordableType = $null
                                 } else {
-                                    Write-Host "Could not find asset to Match. ParentID: $($unmatchedPassword.ITGObject.attributes.`"resource-id`")"
+                                    Write-Host "Could not find website/domain to Match. ParentID: $($unmatchedPassword.ITGObject.attributes.`"resource-id`")"
                                     $ManualLog = [PSCustomObject]@{
                                         Document_Name = $unmatchedPassword.ITGObject.attributes.name
                                         Field_Name    = "N/A"
@@ -2316,14 +2320,16 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
                             name              = "$($unmatchedPassword.ITGObject.attributes.name)"
                             company_id        = $company.HuduCompanyObject.ID
                             description       = $unmatchedPassword.ITGObject.attributes.notes
-                            passwordable_type = $PasswordableType
-                            passwordable_id   = $ParentItemID
                             in_portal         = $false
                             password          = $unmatchedPassword.ITGObject.attributes.password
                             url               = if ($url = $unmatchedPassword.ITGObject.attributes.url) {$url} Else {$unmatchedPassword.ITGObject.attributes.'resource-url'}
                             username          = $unmatchedPassword.ITGObject.attributes.username
                             otpsecret         = $validated_otp
 
+                        }
+                        if (-not [string]::IsNullOrWhiteSpace([string]$PasswordableType) -and $ParentItemID) {
+                            $PasswordSplat.passwordable_type = $PasswordableType
+                            $PasswordSplat.passwordable_id = $ParentItemID
                         }
                         if ([string]::IsNullOrWhiteSpace($unmatchedPassword.ITGObject.attributes.password) -or $unmatchedPassword.ITGObject.attributes.password.Length -lt 1) {
                             if ($true -eq $($AllowEmptyPasswords ?? $true)) {
@@ -2351,6 +2357,29 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
                             }
                         }
                         $HuduNewPassword = (New-HuduPassword @PasswordSplat).asset_password 
+                        if ($RelatedWebsiteID -and $HuduNewPassword.id) {
+                            try {
+                                $WebsitePasswordRelation = New-HuduRelation -FromableType 'Website' -FromableID $RelatedWebsiteID -ToableType 'AssetPassword' -ToableID $HuduNewPassword.id -Description 'Imported IT Glue domain password'
+                                if ($WebsitePasswordRelation) {
+                                    Write-Host "Related Website $RelatedWebsiteID to Password $($HuduNewPassword.id)" -ForegroundColor Green
+                                }
+                            } catch {
+                                Write-Warning "Password $($HuduNewPassword.id) was created, but the website relation to $RelatedWebsiteID failed: $_"
+                                $ManualLog = [PSCustomObject]@{
+                                    Document_Name = $unmatchedPassword.ITGObject.attributes.name
+                                    Field_Name    = "N/A"
+                                    Type          = "Domain Password Relation"
+                                    Company_Name  = $company.CompanyName
+                                    HuduID        = $HuduNewPassword.id
+                                    Notes         = "Password was created, but could not be related to its website/domain."
+                                    Action        = "Manually relate password to website/domain"
+                                    Data          = "WebsiteID: $RelatedWebsiteID"
+                                    Hudu_URL      = $HuduNewPassword.url ?? $company.HuduCompanyObject.url
+                                    ITG_URL       = $unmatchedPassword.ITGObject.attributes."parent-url"
+                                }
+                                $null = $ManualActions.add($ManualLog)
+                            }
+                        }
                         $unmatchedPassword.matched = $true
                         $unmatchedPassword.HuduID = $HuduNewPassword.id
                         $unmatchedPassword."HuduObject" = $HuduNewPassword
