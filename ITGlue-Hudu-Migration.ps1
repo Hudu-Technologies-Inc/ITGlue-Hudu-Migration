@@ -2412,20 +2412,24 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
 $null = Start-MigrationJob -Name "LinkReplacement"
 
-$UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
-$UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -like "*$ITGURL*"}
-$UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -like "*$ITGURL*"}
-$UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object {$_.ITGObject.attributes.notes -like "*$ITGURL*"}
-$UpdateCompanyNotes = $MatchedCompanies | Where-Object {$_.HuduCompanyObject.notes -like "*$ITGURL*"}
+Reset-HuduURLReplacementLookup
+$null = Initialize-HuduURLReplacementLookup -Force
+
+$UpdateArticles = (Get-HuduArticles | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.content) })
+$UpdateAssets = $MatchedAssets | Where-Object {
+    @($_.HuduObject.fields | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.value) }).Count -gt 0
+}
+$UpdatePasswords = $MatchedPasswords | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.HuduObject.description) }
+$UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.ITGObject.attributes.notes) }
+$UpdateCompanyNotes = $MatchedCompanies | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.HuduCompanyObject.notes) }
 
 
 # Articles
 $articlesUpdated = @()
 foreach ($articleFound in $UpdateArticles) {
-    if ($NewContent = Update-StringWithCaptureGroups -inputString $articleFound.content -pattern $RichRegexPatternToMatchSansAssets -type "rich") {
-        $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
-	$NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorUrlPatternToMatch -type "rich"
- 	$NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorRelativeURLPatternToMatch -type "rich"
+    $NewContent = Convert-ITGlueLinksToHudu -Content $articleFound.content -Type "rich"
+
+    if ($NewContent -and $NewContent -ne $articleFound.content) {
         Write-Host "Updating Article $($articleFound.name) with replaced Content" -ForegroundColor 'Green'
 	try {
         $ArticlePost = Set-HuduArticle -Name $articleFound.name -id $articleFound.id -Content $NewContent -ErrorAction Stop
@@ -2445,6 +2449,7 @@ Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Article URLs Replaced. C
 $assetsUpdated = @()
 foreach ($assetFound in $UpdateAssets.HuduObject) {
     $originalAsset = $assetFound
+    $AssetPost = $null
     $replacedStatus = 'clean'
     $customFields = @()
 
@@ -2452,9 +2457,11 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
         # Convert the caption to snake_case to match API expectations for 2.37.1
         $label = ($field.caption -replace '[^\w\s]', '') -replace '\s+', '_' | ForEach-Object { $_.ToLower() }
 
-        if ($label -in @('itglue_url', 'itglue_id', 'imported_from_itglue') -and $field.value -like "*$ITGURL*") {
-            $NewContent = Update-StringWithCaptureGroups -inputString $field.value -pattern $RichRegexPatternToMatchSansAssets -type "rich"
-            $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
+        if (Test-ITGlueURLReplacementCandidate -Content ([string]$field.value)) {
+            $NewContent = Convert-ITGlueLinksToHudu -Content $field.value -Type "rich"
+            if ($NewContent -eq $field.value) {
+                $NewContent = Convert-ITGlueLinksToHudu -Content $field.value -Type "plain"
+            }
 
             if ($NewContent -and $NewContent -ne $field.value) {
                 Write-Host "Replacing Asset $($assetFound.name) field $($field.caption) with updated content" -ForegroundColor 'Red'
@@ -2491,9 +2498,8 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Assets URLs Replaced. C
 # Passwords
 $passwordsUpdated = @()
 foreach ($passwordFound in $UpdatePasswords.HuduObject) {
-    $NewContent = Update-StringWithCaptureGroups -inputString $passwordFound.description -pattern $TextRegexPatternToMatchSansAssets -type "plain"
-    $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $TextRegexPatternToMatchWithAssets -type "plain"
-    if ($NewContent) {
+    $NewContent = Convert-ITGlueLinksToHudu -Content $passwordFound.description -Type "plain"
+    if ($NewContent -and $NewContent -ne $passwordFound.description) {
         Write-Host "Updating Password $($passwordFound.name) with updated description" -ForegroundColor 'Green'
         $passwordsUpdated = $passwordsUpdated + @{"original_password" = $passwordFound; "updated_password" = (Set-HuduPassword -id $passwordFound.id -Description $NewContent).asset_password}
     }
@@ -2505,9 +2511,8 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Password URLs Replaced.
 $assetPasswordsUpdated = @()
 foreach ($passwordFound in $UpdateAssetPasswords) {
     $passwordFound = Get-HuduPasswords -id $passwordFound.HuduID
-    $NewContent = Update-StringWithCaptureGroups -inputString $passwordFound.description -pattern $TextRegexPatternToMatchSansAssets -type "plain"
-    $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $TextRegexPatternToMatchWithAssets -type "plain"
-    if ($NewContent)   {
+    $NewContent = Convert-ITGlueLinksToHudu -Content $passwordFound.description -Type "plain"
+    if ($NewContent -and $NewContent -ne $passwordFound.description)   {
         Write-Host "Updating Asset Password $($passwordFound.name) with updated description" -ForegroundColor 'Green'
         $assetPasswordsUpdated = $assetPasswordsUpdated + @{"original_password" = $passwordFound; "updated_password" = (Set-HuduPassword -Id $passwordFound.id -Description $NewContent).asset_password}
     }
@@ -2519,9 +2524,8 @@ Write-TimedMessage -Timeout 3 -Message  "Snapshot Point: Asset Passwords URLs Re
 # Company Notes
 $companyNotesUpdated = @()
 foreach ($companyFound in $UpdateCompanyNotes.HuduCompanyObject) {
-    $NewContent = Update-StringWithCaptureGroups -inputString $companyFound.notes -pattern $RichRegexPatternToMatchSansAssets -type "rich"
-    $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
-    if ($NewContent) {
+    $NewContent = Convert-ITGlueLinksToHudu -Content $companyFound.notes -Type "rich"
+    if ($NewContent -and $NewContent -ne $companyFound.notes) {
         Write-Host "Updating Company $($companyFound.name) with updated notes" -ForegroundColor 'Green'
         $companyNotesUpdated = $companyNotesUpdated + @{"original_company" = $companyFound; "updated_company" = (Set-HuduCompany -id $companyFound.id -Notes $NewContent).company}
     }
