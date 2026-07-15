@@ -26,7 +26,7 @@ if ([string]::IsNullOrWhiteSpace($EscapedITGURL)) {
 }
 
 $ITGlueUrlPrefixPattern = "(?:$EscapedITGURL)?"
-$ITGlueURLReplacementCandidatePattern = "$EscapedITGURL|/[0-9]{1,20}/(?:docs|passwords|configurations|assets)/|/?DOC-[0-9]{0,20}-[0-9]{0,20}"
+$ITGlueURLReplacementCandidatePattern = "$EscapedITGURL|/[0-9]{1,20}/(?:docs|passwords|configurations|assets|domains)(?:/|(?=$|[?#""'']))|/?DOC-[0-9]{0,20}-[0-9]{0,20}"
 $ITGlueURLReplacementRegexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
     [System.Text.RegularExpressions.RegexOptions]::Singleline -bor
     [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
@@ -36,12 +36,14 @@ $ITGlueURLReplacementCandidateRegex = [regex]::new($ITGlueURLReplacementCandidat
 # Named captures are used by Update-StringWithCaptureGroups, while the resolver still supports the older positional captures.
 $RichRegexPatternToMatchSansAssets = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>docs|passwords|configurations|assets)/(?<EntityId>[0-9]{1,20})[^>]*>.*?</a>'
 $RichRegexPatternToMatchWithAssets = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>assets)/.*?/(?<EntityId>[0-9]{1,20})[^>]*>.*?</a>'
+$RichDomainsPatternToMatch = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>domains)(?:/(?<EntityId>[0-9]{1,20}))?(?:[^"''\s<>]*)?[^>]*>.*?</a>'
 $ImgRegexPatternToMatch = $EscapedITGURL + '/(?<ImageRelativePath>(?<CompanyId>[0-9]{1,20})/docs/(?<ArticleId>[0-9]{1,20})/(?<EntityType>images)/(?<ImageId>[0-9]{1,20}).*?)(?=")'
 $RichDocLocatorUrlPatternToMatch = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<DocLocator>DOC-[0-9]{0,20}-[0-9]{0,20})(?:[^"''\s<>]*)?[^>]*>.*?</a>'
 $RichDocLocatorRelativeURLPatternToMatch = '<a\b[^>]*?href\s*=\s*["'']?/(?<DocLocator>DOC-[0-9]{0,20}-[0-9]{0,20})(?:[^"''\s<>]*)?[^>]*>.*?</a>'
 
 $TextRegexPatternToMatchSansAssets = $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>docs|passwords|configurations)/(?<EntityId>[0-9]{1,20})'
 $TextRegexPatternToMatchWithAssets = $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>assets)/.*?/(?<EntityId>[0-9]{1,20})'
+$TextDomainsPatternToMatch = $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>domains)(?:/(?<EntityId>[0-9]{1,20}))?(?:[^\s<>"'']*)?'
 $TextDocLocatorUrlPatternToMatch = $ITGlueUrlPrefixPattern + '/(?<DocLocator>DOC-[0-9]{0,20}-[0-9]{0,20})(?:[^\s<>"'']*)?'
 
 $script:HuduURLReplacementLookup = $null
@@ -97,12 +99,24 @@ function Get-MatchGroupValue {
 function Get-HuduURLReplacementRecord {
     param(
         [Parameter(Mandatory = $true)]
-        $Source
+        $Source,
+
+        [string]$EntityType
     )
 
     $huduObject = $Source.HuduObject ?? $Source.HuduCompanyObject ?? $Source
     $url = $huduObject.url
     $name = $huduObject.name ?? $Source.Name ?? $Source.CompanyName
+
+    if ([string]::IsNullOrWhiteSpace([string]$url)) {
+        if ($EntityType -eq 'domains' -and -not [string]::IsNullOrWhiteSpace([string]$huduObject.id)) {
+            $url = "/websites/$($huduObject.id)"
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$Source.HuduID)) {
+            $url = "/companies/$($Source.HuduID)"
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$huduObject.id)) {
+            $url = "/companies/$($huduObject.id)"
+        }
+    }
 
     if ([string]::IsNullOrWhiteSpace([string]$url)) {
         return $null
@@ -132,7 +146,7 @@ function Add-HuduURLReplacementRecord {
             continue
         }
 
-        $record = Get-HuduURLReplacementRecord -Source $source
+        $record = Get-HuduURLReplacementRecord -Source $source -EntityType $EntityType
         if (-not $record) {
             continue
         }
@@ -161,6 +175,8 @@ function Initialize-HuduURLReplacementLookup {
         passwords      = @{}
         configurations = @{}
         assets         = @{}
+        domains        = @{}
+        CompanyDomains = @{}
         DocLocators    = @{}
     }
 
@@ -168,6 +184,18 @@ function Initialize-HuduURLReplacementLookup {
     Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'passwords' -Item $MatchedPasswords
     Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'configurations' -Item $MatchedConfigurations
     Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'assets' -Item $MatchedAssets
+    Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'domains' -Item $MatchedWebsites
+
+    foreach ($company in @($MatchedCompanies)) {
+        if (-not $company -or [string]::IsNullOrWhiteSpace([string]$company.ITGID)) {
+            continue
+        }
+
+        $record = Get-HuduURLReplacementRecord -Source $company
+        if ($record) {
+            $lookup.CompanyDomains["$($company.ITGID)"] = $record
+        }
+    }
 
     $script:HuduURLReplacementLookup = $lookup
     return $script:HuduURLReplacementLookup
@@ -252,7 +280,26 @@ function Resolve-HuduURLReplacement {
     }
 
     if ([string]::IsNullOrWhiteSpace($entityType) -or [string]::IsNullOrWhiteSpace($entityId)) {
+        if ($entityType -eq 'domains') {
+            $companyId = Get-MatchGroupValue -Match $Match -Name 'CompanyId'
+            if (-not [string]::IsNullOrWhiteSpace($companyId)) {
+                return $lookup.CompanyDomains["$companyId"]
+            }
+        }
+
         return $null
+    }
+
+    if ($entityType -eq 'domains') {
+        $domainRecord = $lookup.domains["$entityId"]
+        if ($domainRecord) {
+            return $domainRecord
+        }
+
+        $companyId = Get-MatchGroupValue -Match $Match -Name 'CompanyId'
+        if (-not [string]::IsNullOrWhiteSpace($companyId)) {
+            return $lookup.CompanyDomains["$companyId"]
+        }
     }
 
     return $lookup[$entityType]["$entityId"]
@@ -292,6 +339,37 @@ function Resolve-ITGlueImageMatch {
     }
 
     return $false
+}
+
+function Set-HtmlAnchorHref {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AnchorHtml,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Href
+    )
+
+    if ($AnchorHtml -notmatch '^\s*<a\b') {
+        return $null
+    }
+
+    return [regex]::Replace(
+        $AnchorHtml,
+        '(\bhref\s*=\s*)(["'']?)([^"''\s>]*)\2',
+        [System.Text.RegularExpressions.MatchEvaluator]{
+            param([System.Text.RegularExpressions.Match]$hrefMatch)
+
+            $quote = $hrefMatch.Groups[2].Value
+            if ([string]::IsNullOrEmpty($quote)) {
+                $quote = '"'
+            }
+
+            "$($hrefMatch.Groups[1].Value)$quote$Href$quote"
+        },
+        $ITGlueURLReplacementRegexOptions,
+        [timespan]::FromSeconds(1)
+    )
 }
 
 function Update-StringWithCaptureGroups {
@@ -343,6 +421,11 @@ function Update-StringWithCaptureGroups {
 
         $replacementCount++
         if ($type -eq 'rich') {
+            $updatedAnchor = Set-HtmlAnchorHref -AnchorHtml $match.Value -Href $huduUrl
+            if ($updatedAnchor) {
+                return $updatedAnchor
+            }
+
             $huduName = if ([string]::IsNullOrWhiteSpace($replacement.Name)) { $huduUrl } else { [System.Net.WebUtility]::HtmlEncode($replacement.Name) }
             return "<A HREF=`"$huduUrl`">$huduName</A>"
         }
@@ -377,10 +460,12 @@ function Convert-ITGlueLinksToHudu {
         foreach ($pattern in @(
             $RichRegexPatternToMatchSansAssets
             $RichRegexPatternToMatchWithAssets
+            $RichDomainsPatternToMatch
             $RichDocLocatorUrlPatternToMatch
             $RichDocLocatorRelativeURLPatternToMatch
             $TextRegexPatternToMatchSansAssets
             $TextRegexPatternToMatchWithAssets
+            $TextDomainsPatternToMatch
             $TextDocLocatorUrlPatternToMatch
         )) {
             $newContent = Update-StringWithCaptureGroups -inputString $newContent -pattern $pattern -type 'rich'
@@ -389,6 +474,7 @@ function Convert-ITGlueLinksToHudu {
         foreach ($pattern in @(
             $TextRegexPatternToMatchSansAssets
             $TextRegexPatternToMatchWithAssets
+            $TextDomainsPatternToMatch
             $TextDocLocatorUrlPatternToMatch
         )) {
             $newContent = Update-StringWithCaptureGroups -inputString $newContent -pattern $pattern -type 'plain'

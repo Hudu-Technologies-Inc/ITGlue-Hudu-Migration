@@ -2423,6 +2423,7 @@ $UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object { Test-ITGlueURLRe
 $UpdateCompanyNotes = $MatchedCompanies | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.HuduCompanyObject.notes) }
 
 
+
 Write-Host "Article content link replacement will run after attachments are uploaded so IT Glue URLs, hard-coded images, attachment links, and hosted image anchors can be applied in one article update." -ForegroundColor Cyan
 
 # Assets
@@ -2434,9 +2435,6 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
     $customFields = @()
 
     foreach ($field in $assetFound.fields) {
-        # Convert the caption to snake_case to match API expectations for 2.37.1
-        $label = ($field.caption -replace '[^\w\s]', '') -replace '\s+', '_' | ForEach-Object { $_.ToLower() }
-
         if (Test-ITGlueURLReplacementCandidate -Content ([string]$field.value)) {
             $NewContent = Convert-ITGlueLinksToHudu -Content $field.value -Type "rich"
             if ($NewContent -eq $field.value) {
@@ -2444,31 +2442,29 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
             }
 
             if ($NewContent -and $NewContent -ne $field.value) {
-                Write-Host "Replacing Asset $($assetFound.name) field $($field.caption) with updated content" -ForegroundColor 'Red'
+                $label = $field.label
+                if ([string]::IsNullOrWhiteSpace($label)) {
+                    Write-Warning "Skipping a changed asset field on $($assetFound.name) because Hudu did not return a usable field name/label/caption."
+                    continue
+                }
+
+                $displayLabel = $field.label ?? $field.caption ?? $field.name ?? $label
+                Write-Host "Replacing Asset $($assetFound.name) field $displayLabel with updated content" -ForegroundColor darkcyan
                 $customFields += @{ $label = $NewContent }
                 $replacedStatus = 'replaced'
-            } else {
-                $customFields += @{ $label = $field.value }
             }
-        } else {
-            # For other fields, preserve existing value (optional)
-            $customFields += @{ $label = $field.value }
         }
     }
 
-    if ($replacedStatus -eq 'replaced') {
-        Write-Host "Updating Asset $($assetFound.name) with new custom_fields array" -ForegroundColor 'Green'
-        $AssetPost = Invoke-HuduRequest -Method PUT -Resource "/api/v1/companies/$($assetFound.company_id)/assets/$($assetFound.id)" -Body @{
-            name              = $assetFound.name
-            asset_layout_id   = $assetFound.asset_layout_id
-            custom_fields     = $customFields
-        }
+    if ($customFields.Count -gt 0) {
+        Write-Host "Updating Asset $($assetFound.name) with changed custom field(s)" -ForegroundColor 'Green'
+        $AssetPost = Set-HuduAsset -Id $assetFound.id -CompanyId $assetFound.company_id  -Fields $customFields
     }
 
     $assetsUpdated += @{
         status         = $replacedStatus
         original_asset = $originalAsset
-        updated_asset  = $AssetPost.asset
+        updated_asset  = $AssetPost.asset ?? $AssetPost
     }
 }
 
