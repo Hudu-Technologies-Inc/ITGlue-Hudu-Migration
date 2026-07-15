@@ -26,7 +26,7 @@ if ([string]::IsNullOrWhiteSpace($EscapedITGURL)) {
 }
 
 $ITGlueUrlPrefixPattern = "(?:$EscapedITGURL)?"
-$ITGlueURLReplacementCandidatePattern = "$EscapedITGURL|/[0-9]{1,20}/(?:docs|passwords|configurations|assets|domains)(?:/|(?=$|[?#""'']))|/?DOC-[0-9]{0,20}-[0-9]{0,20}"
+$ITGlueURLReplacementCandidatePattern = "$EscapedITGURL|/[0-9]{1,20}/(?:docs|passwords|configurations|assets|domains|contacts)(?:/|(?=$|[?#""'']))|/?DOC-[0-9]{0,20}-[0-9]{0,20}"
 $ITGlueURLReplacementRegexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
     [System.Text.RegularExpressions.RegexOptions]::Singleline -bor
     [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
@@ -34,17 +34,21 @@ $ITGlueURLReplacementCandidateRegex = [regex]::new($ITGlueURLReplacementCandidat
 
 # We want to grab all assets, passwords, websites, and companies, filter to fields and notes that have ITGlue URLs in them and prime for replacement.
 # Named captures are used by Update-StringWithCaptureGroups, while the resolver still supports the older positional captures.
-$RichRegexPatternToMatchSansAssets = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>docs|passwords|configurations|assets)/(?<EntityId>[0-9]{1,20})[^>]*>.*?</a>'
+$RichRegexPatternToMatchSansAssets = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>docs|passwords|configurations|assets|contacts)/(?<EntityId>[0-9]{1,20})(?!(?:/[^"''<>]*)?/(?:images|files|attachments)(?=/|$))[^>]*>.*?</a>'
 $RichRegexPatternToMatchWithAssets = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>assets)/.*?/(?<EntityId>[0-9]{1,20})[^>]*>.*?</a>'
 $RichDomainsPatternToMatch = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>domains)(?:/(?<EntityId>[0-9]{1,20}))?(?:[^"''\s<>]*)?[^>]*>.*?</a>'
 $ImgRegexPatternToMatch = $EscapedITGURL + '/(?<ImageRelativePath>(?<CompanyId>[0-9]{1,20})/docs/(?<ArticleId>[0-9]{1,20})/(?<EntityType>images)/(?<ImageId>[0-9]{1,20}).*?)(?=")'
 $RichDocLocatorUrlPatternToMatch = '<a\b[^>]*?href\s*=\s*["'']?' + $ITGlueUrlPrefixPattern + '/(?<DocLocator>DOC-[0-9]{0,20}-[0-9]{0,20})(?:[^"''\s<>]*)?[^>]*>.*?</a>'
 $RichDocLocatorRelativeURLPatternToMatch = '<a\b[^>]*?href\s*=\s*["'']?/(?<DocLocator>DOC-[0-9]{0,20}-[0-9]{0,20})(?:[^"''\s<>]*)?[^>]*>.*?</a>'
 
-$TextRegexPatternToMatchSansAssets = $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>docs|passwords|configurations)/(?<EntityId>[0-9]{1,20})'
+$TextRegexPatternToMatchSansAssets = $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>docs|passwords|configurations|contacts)/(?<EntityId>[0-9]{1,20})(?!(?:/[^"''<>]*)?/(?:images|files|attachments)(?=/|$))'
 $TextRegexPatternToMatchWithAssets = $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>assets)/.*?/(?<EntityId>[0-9]{1,20})'
 $TextDomainsPatternToMatch = $ITGlueUrlPrefixPattern + '/(?<CompanyId>[0-9]{1,20})/(?<EntityType>domains)(?:/(?<EntityId>[0-9]{1,20}))?(?:[^\s<>"'']*)?'
 $TextDocLocatorUrlPatternToMatch = $ITGlueUrlPrefixPattern + '/(?<DocLocator>DOC-[0-9]{0,20}-[0-9]{0,20})(?:[^\s<>"'']*)?'
+$RichBareRegexPatternToMatchSansAssets = '(?<!["''=])' + $TextRegexPatternToMatchSansAssets
+$RichBareRegexPatternToMatchWithAssets = '(?<!["''=])' + $TextRegexPatternToMatchWithAssets
+$RichBareDomainsPatternToMatch = '(?<!["''=])' + $TextDomainsPatternToMatch
+$RichBareDocLocatorUrlPatternToMatch = '(?<!["''=])' + $TextDocLocatorUrlPatternToMatch
 
 $script:HuduURLReplacementLookup = $null
 $script:HuduURLRegexCache = @{}
@@ -111,9 +115,7 @@ function Get-HuduURLReplacementRecord {
     if ([string]::IsNullOrWhiteSpace([string]$url)) {
         if ($EntityType -eq 'domains' -and -not [string]::IsNullOrWhiteSpace([string]$huduObject.id)) {
             $url = "/websites/$($huduObject.id)"
-        } elseif (-not [string]::IsNullOrWhiteSpace([string]$Source.HuduID)) {
-            $url = "/companies/$($Source.HuduID)"
-        } elseif (-not [string]::IsNullOrWhiteSpace([string]$huduObject.id)) {
+        } elseif ($Source.PSObject.Properties['HuduCompanyObject'] -and -not [string]::IsNullOrWhiteSpace([string]$huduObject.id)) {
             $url = "/companies/$($huduObject.id)"
         }
     }
@@ -175,6 +177,7 @@ function Initialize-HuduURLReplacementLookup {
         passwords      = @{}
         configurations = @{}
         assets         = @{}
+        contacts       = @{}
         domains        = @{}
         CompanyDomains = @{}
         DocLocators    = @{}
@@ -184,6 +187,7 @@ function Initialize-HuduURLReplacementLookup {
     Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'passwords' -Item $MatchedPasswords
     Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'configurations' -Item $MatchedConfigurations
     Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'assets' -Item $MatchedAssets
+    Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'contacts' -Item $MatchedContacts
     Add-HuduURLReplacementRecord -Lookup $lookup -EntityType 'domains' -Item $MatchedWebsites
 
     foreach ($company in @($MatchedCompanies)) {
@@ -463,10 +467,10 @@ function Convert-ITGlueLinksToHudu {
             $RichDomainsPatternToMatch
             $RichDocLocatorUrlPatternToMatch
             $RichDocLocatorRelativeURLPatternToMatch
-            $TextRegexPatternToMatchSansAssets
-            $TextRegexPatternToMatchWithAssets
-            $TextDomainsPatternToMatch
-            $TextDocLocatorUrlPatternToMatch
+            $RichBareRegexPatternToMatchSansAssets
+            $RichBareRegexPatternToMatchWithAssets
+            $RichBareDomainsPatternToMatch
+            $RichBareDocLocatorUrlPatternToMatch
         )) {
             $newContent = Update-StringWithCaptureGroups -inputString $newContent -pattern $pattern -type 'rich'
         }
@@ -510,7 +514,7 @@ function Get-HardcodedImageMapByLeaf {
 }
 
 function Get-HardcodedITGlueImagePattern {
-    $imagePathPattern = '(?:documents/[^"''\s<>]*/images|[0-9]{1,20}/docs/[0-9]{1,20}/images)'
+    $imagePathPattern = '(?:documents/[^"''\s<>]*/images|[0-9]{1,20}/docs/[0-9]{1,20}(?:/[^"''<>]*?)?/images)'
     return '(?:' + $ITGlueUrlPrefixPattern + '/)?' + $imagePathPattern + '/(?<leaf>[^"''\s<>]+)'
 }
 

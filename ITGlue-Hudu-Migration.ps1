@@ -95,11 +95,7 @@ Write-Host $LiabilityWarning -ForegroundColor Red
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
 
-$CurrentVersion =  Set-ExternalModulesInitialized `
-        -RequiredHuduVersion ([version]"2.42.0") `
-        -DisallowedVersions @([version]"2.37.0") `
-        -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) `
-        -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
+$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion ([version]"2.42.0") -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
@@ -2611,6 +2607,77 @@ $imageAnchorReplacementResults = @(
     }
 )
 $imageAnchorReplacementResults | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedImageAnchors.json"
+
+Write-Host "Assets - replacing rich text image and attachment links now that upload maps are available"
+$assetRichTextLinkResults = foreach ($assetFound in $MatchedAssets.HuduObject) {
+    $customFields = @()
+    $replacementSets = @()
+
+    foreach ($field in @($assetFound.fields)) {
+        $fieldContent = [string]$field.value
+        if (-not (Test-HuduContentLinkReplacementCandidate `
+                    -Content $fieldContent `
+                    -Type 'rich' `
+                    -ImageMap $ImageMap `
+                    -AttachmentUrlMap $AttachmentUrlMapForReplacement `
+                    -IncludeHardcodedImages `
+                    -IncludeAttachments `
+                    -IncludeHostedImageAnchors `
+                    -IncludeUploads)) {
+            continue
+        }
+
+        $updatedField = Update-HuduContentLinks `
+            -Content $fieldContent `
+            -Type 'rich' `
+            -ImageMap $ImageMap `
+            -AttachmentUrlMap $AttachmentUrlMapForReplacement `
+            -IncludeHardcodedImages `
+            -IncludeAttachments `
+            -IncludeHostedImageAnchors `
+            -IncludeUploads
+
+        if (-not $updatedField.Changed) {
+            continue
+        }
+
+        $label = $field.label
+        if ([string]::IsNullOrWhiteSpace([string]$label)) {
+            Write-Warning "Skipping changed rich text field on asset $($assetFound.name) because Hudu did not return a field label."
+            continue
+        }
+
+        $customFields += @{ $label = $updatedField.Content }
+        $replacementSets += [pscustomobject]@{
+            Field           = $label
+            ReplacementSets = $updatedField.ReplacementSets
+        }
+    }
+
+    if ($customFields.Count -lt 1) {
+        continue
+    }
+
+    Write-Host "Updating Asset $($assetFound.name) with rich text image/attachment link replacement(s)" -ForegroundColor Green
+    try {
+        $AssetPost = Set-HuduAsset -Id $assetFound.id -CompanyId $assetFound.company_id -Fields $customFields
+        [pscustomobject]@{
+            status           = 'replaced'
+            original_asset   = $assetFound
+            updated_asset    = $AssetPost.asset ?? $AssetPost
+            replacement_sets = $replacementSets
+        }
+    } catch {
+        [pscustomobject]@{
+            status            = 'failed'
+            original_asset    = $assetFound
+            attempted_fields  = $customFields
+            replacement_sets  = $replacementSets
+            error             = $_.Exception.Message
+        }
+    }
+}
+$assetRichTextLinkResults | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedAssetRichTextLinks.json"
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
 if ($true -eq $ImportConfigInterfaces){
