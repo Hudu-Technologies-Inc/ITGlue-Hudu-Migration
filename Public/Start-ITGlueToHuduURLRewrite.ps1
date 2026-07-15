@@ -58,7 +58,7 @@ foreach ($assetFound in $UpdateAssets.HuduObject) {
 
     if ($replacedStatus -eq 'replaced') {
         Write-Host "Updating Asset $($assetFound.name) with new custom_fields array" -ForegroundColor 'Green'
-        $AssetPost = Invoke-HuduRequest -Method PUT -Resource "api/v1/companies/$($assetFound.company_id)/assets/$($assetFound.id)" -Body @{
+        $AssetPost = Invoke-HuduRequest -Method PUT -Resource "/api/v1/companies/$($assetFound.company_id)/assets/$($assetFound.id)" -Body @{
             name              = $assetFound.name
             asset_layout_id   = $assetFound.asset_layout_id
             custom_fields     = $customFields
