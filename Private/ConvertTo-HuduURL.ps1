@@ -398,6 +398,242 @@ function Convert-ITGlueLinksToHudu {
     return $newContent
 }
 
+function Get-HardcodedImageMapByLeaf {
+    param(
+        [AllowNull()]
+        $ImageMap
+    )
+
+    $imageMapByLeaf = @{}
+    if (-not $ImageMap) {
+        return $imageMapByLeaf
+    }
+
+    foreach ($kvp in $ImageMap.GetEnumerator()) {
+        $leaf = Split-Path $kvp.Key -Leaf
+        if ([string]::IsNullOrWhiteSpace($leaf)) {
+            continue
+        }
+
+        if (-not $imageMapByLeaf.ContainsKey($leaf)) {
+            $imageMapByLeaf[$leaf] = ConvertTo-HuduRelativeURL -Url $kvp.Value
+        }
+    }
+
+    return $imageMapByLeaf
+}
+
+function Get-HardcodedITGlueImagePattern {
+    $imagePathPattern = '(?:documents/[^"''\s<>]*/images|[0-9]{1,20}/docs/[0-9]{1,20}/images)'
+    return '(?:' + $ITGlueUrlPrefixPattern + '/)?' + $imagePathPattern + '/(?<leaf>[^"''\s<>]+)'
+}
+
+function Convert-HardcodedITGlueImagesToHudu {
+    param(
+        [AllowNull()]
+        [string]$Content,
+
+        [AllowNull()]
+        $ImageMap
+    )
+
+    $imageMapByLeaf = Get-HardcodedImageMapByLeaf -ImageMap $ImageMap
+    if ($imageMapByLeaf.Count -lt 1 -or [string]::IsNullOrWhiteSpace($Content)) {
+        return [pscustomobject]@{
+            Content      = $Content
+            Changed      = $false
+            Replacements = @()
+        }
+    }
+
+    $pattern = Get-HardcodedITGlueImagePattern
+    $replacements = [System.Collections.ArrayList]@()
+
+    $updatedContent = [regex]::Replace(
+        $Content,
+        $pattern,
+        [System.Text.RegularExpressions.MatchEvaluator]{
+            param([System.Text.RegularExpressions.Match]$match)
+
+            $leaf = $match.Groups['leaf'].Value
+            if (-not $imageMapByLeaf.ContainsKey($leaf)) {
+                return $match.Value
+            }
+
+            $replacementUrl = $imageMapByLeaf[$leaf]
+            $null = $replacements.Add([pscustomobject]@{
+                OriginalUrl    = $match.Value
+                ReplacementUrl = $replacementUrl
+                Leaf           = $leaf
+            })
+            return $replacementUrl
+        },
+        $ITGlueURLReplacementRegexOptions
+    )
+
+    return [pscustomobject]@{
+        Content      = $updatedContent
+        Changed      = ($updatedContent -ne $Content)
+        Replacements = @($replacements)
+    }
+}
+
+function ConvertTo-RelativeUrlMap {
+    param(
+        [AllowNull()]
+        [hashtable]$UrlMap
+    )
+
+    $relativeMap = @{}
+    if (-not $UrlMap) {
+        return $relativeMap
+    }
+
+    foreach ($key in $UrlMap.Keys) {
+        if ([string]::IsNullOrWhiteSpace([string]$key) -or [string]::IsNullOrWhiteSpace([string]$UrlMap[$key])) {
+            continue
+        }
+
+        $relativeMap[[string]$key] = ConvertTo-HuduRelativeURL -Url $UrlMap[$key]
+    }
+
+    return $relativeMap
+}
+
+function Test-HuduHostedImageAnchorCandidate {
+    param(
+        [AllowNull()]
+        [string]$Content,
+
+        [bool]$IncludeUploads = $false
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Content)) {
+        return $false
+    }
+
+    $uploadPattern = if ($IncludeUploads) { '|uploads' } else { '' }
+    return $Content -imatch '<img\b[^>]*\bsrc\s*=\s*["''](?:https?://[^"''\s<>]+)?/(?:public_photo[s]?' + $uploadPattern + ')/'
+}
+
+function Test-HuduContentLinkReplacementCandidate {
+    param(
+        [AllowNull()]
+        [string]$Content,
+
+        [ValidateSet('rich', 'plain')]
+        [string]$Type = 'rich',
+
+        [AllowNull()]
+        $ImageMap,
+
+        [AllowNull()]
+        [hashtable]$AttachmentUrlMap,
+
+        [switch]$IncludeHardcodedImages,
+        [switch]$IncludeAttachments,
+        [switch]$IncludeHostedImageAnchors,
+        [switch]$IncludeUploads
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Content)) {
+        return $false
+    }
+
+    if (Test-ITGlueURLReplacementCandidate -Content $Content) {
+        return $true
+    }
+
+    if ($IncludeHardcodedImages -and $ImageMap -and $Content -imatch (Get-HardcodedITGlueImagePattern)) {
+        return $true
+    }
+
+    if ($IncludeAttachments -and $AttachmentUrlMap -and $AttachmentUrlMap.Count -gt 0 -and $Content -imatch '/(?:files|attachments)/\d{1,20}') {
+        return $true
+    }
+
+    if ($IncludeHostedImageAnchors -and (Test-HuduHostedImageAnchorCandidate -Content $Content -IncludeUploads:$IncludeUploads)) {
+        return $true
+    }
+
+    return $false
+}
+
+function Update-HuduContentLinks {
+    param(
+        [AllowNull()]
+        [string]$Content,
+
+        [ValidateSet('rich', 'plain')]
+        [string]$Type = 'rich',
+
+        [AllowNull()]
+        $ImageMap,
+
+        [AllowNull()]
+        [hashtable]$AttachmentUrlMap,
+
+        [switch]$IncludeHardcodedImages,
+        [switch]$IncludeAttachments,
+        [switch]$IncludeHostedImageAnchors,
+        [switch]$IncludeUploads
+    )
+
+    $newContent = $Content
+    $replacementSets = [System.Collections.ArrayList]@()
+
+    $itgContent = Convert-ITGlueLinksToHudu -Content $newContent -Type $Type
+    if ($itgContent -ne $newContent) {
+        $null = $replacementSets.Add([pscustomobject]@{
+            Type    = 'ITGlueLinks'
+            Changed = $true
+        })
+        $newContent = $itgContent
+    }
+
+    if ($Type -eq 'rich' -and $IncludeHardcodedImages) {
+        $hardcodedImages = Convert-HardcodedITGlueImagesToHudu -Content $newContent -ImageMap $ImageMap
+        if ($hardcodedImages.Changed) {
+            $null = $replacementSets.Add([pscustomobject]@{
+                Type         = 'HardcodedImages'
+                Changed      = $true
+                Replacements = $hardcodedImages.Replacements
+            })
+            $newContent = $hardcodedImages.Content
+        }
+    }
+
+    if ($IncludeAttachments -and $AttachmentUrlMap -and $AttachmentUrlMap.Count -gt 0 -and (Get-Command -Name Update-ContentWithAttachmentUrlMap -ErrorAction SilentlyContinue)) {
+        $relativeAttachmentUrlMap = ConvertTo-RelativeUrlMap -UrlMap $AttachmentUrlMap
+        $attachments = Update-ContentWithAttachmentUrlMap -Content $newContent -UrlMap $relativeAttachmentUrlMap
+        if ($attachments.Changed) {
+            $null = $replacementSets.Add([pscustomobject]@{
+                Type         = 'AttachmentLinks'
+                Changed      = $true
+                Replacements = $attachments.Replacements
+            })
+            $newContent = $attachments.Content
+        }
+    }
+
+    if ($Type -eq 'rich' -and $IncludeHostedImageAnchors -and (Get-Command -Name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)) {
+        $anchoredContent = Set-HuduImageAnchorsReplaced -Html $newContent -IncludeUploads:$IncludeUploads
+        if ($anchoredContent -ne $newContent) {
+            $null = $replacementSets.Add([pscustomobject]@{
+                Type    = 'HostedImageAnchors'
+                Changed = $true
+            })
+            $newContent = $anchoredContent
+        }
+    }
+
+    return [pscustomobject]@{
+        Content         = $newContent
+        Changed         = ($newContent -ne $Content)
+        ReplacementSets = @($replacementSets)
+    }
+}
+
 function ConvertTo-HuduURL {
     param(
         $Content

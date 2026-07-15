@@ -2415,7 +2415,6 @@ $null = Start-MigrationJob -Name "LinkReplacement"
 Reset-HuduURLReplacementLookup
 $null = Initialize-HuduURLReplacementLookup -Force
 
-$UpdateArticles = (Get-HuduArticles | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.content) })
 $UpdateAssets = $MatchedAssets | Where-Object {
     @($_.HuduObject.fields | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.value) }).Count -gt 0
 }
@@ -2424,26 +2423,7 @@ $UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object { Test-ITGlueURLRe
 $UpdateCompanyNotes = $MatchedCompanies | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.HuduCompanyObject.notes) }
 
 
-# Articles
-$articlesUpdated = @()
-foreach ($articleFound in $UpdateArticles) {
-    $NewContent = Convert-ITGlueLinksToHudu -Content $articleFound.content -Type "rich"
-
-    if ($NewContent -and $NewContent -ne $articleFound.content) {
-        Write-Host "Updating Article $($articleFound.name) with replaced Content" -ForegroundColor 'Green'
-	try {
-        $ArticlePost = Set-HuduArticle -Name $articleFound.name -id $articleFound.id -Content $NewContent -ErrorAction Stop
-        $articlesUpdated = $articlesUpdated + @{"status" = "replaced"; "original_article" = $articleFound; "updated_article" = $ArticlePost}
-	} catch { $articlesUpdated = $articlesUpdated + @{"status" = "failed"; "original_article" = $articleFound; "attempted_changes" = $newContent} }
-        }
-    else {
-        Write-Warning "Article $articleFound.id found ITGlue URL but didn't match"
-        $articlesUpdated = $articlesUpdated + @{"status" = "clean"; "original_article" = $articleFound}
-    }
-}
-
-$articlesUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedArticlesURL.json"
-Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Article URLs Replaced. Continue?"  -DefaultResponse "continue to Assets, please."
+Write-Host "Article content link replacement will run after attachments are uploaded so IT Glue URLs, hard-coded images, attachment links, and hosted image anchors can be applied in one article update." -ForegroundColor Cyan
 
 # Assets
 $assetsUpdated = @()
@@ -2534,10 +2514,6 @@ foreach ($companyFound in $UpdateCompanyNotes.HuduCompanyObject) {
 $companyNotesUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedCompaniesURL.json"
 Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Company Notes URLs Replaced. Continue?"  -DefaultResponse "continue to Manual Actions, please."
 
-Write-Host "Replacing hard-coded IT Glue image links in Hudu Articles"
-if (-not $(get-command -name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)){. $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1}
-. $PSScriptRoot\Public\Replace-HardCodedImages.ps1
-
 ############################### Wrap-Up ###############################
 
 write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Layouts";
@@ -2546,10 +2522,98 @@ if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitor
 
 write-host "wrapup 2/10... adding attachments and replacing any found attachment links (this can take a while)" ; $null = Start-MigrationJob -Name "Wrap-Up - Attachments";
 . .\Add-HuduAttachmentsViaAPI.ps1
-Write-Host "Attachments - enumerating and replacing attachment links in articles"; $null = Start-MigrationJob -Name "Wrap-Up - Attachment Links";
-$replacedAttachmentURLs = Start-HuduAttachmentLinkReplacement
-Write-Host "Replacing hosted image-only anchors in Hudu Articles"
-$imageAnchorReplacementResults = Get-AllHuduHostedImageAnchorsReplaced -allhuduArticles $(Get-HuduArticles) -includeUploads $true
+
+Write-Host "Articles - replacing IT Glue links, hard-coded images, attachment links, and hosted image anchors in one pass"; $null = Start-MigrationJob -Name "Wrap-Up - Article Link Replacement";
+if (-not $(Get-Command -Name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Set-HuduImageAnchorsReplaced.ps1 }
+
+$AttachmentUrlMapForReplacement = try {
+    Get-AttachmentUrlMap
+} catch {
+    Write-Warning "Attachment URL map unavailable during article link replacement: $($_.Exception.Message)"
+    @{}
+}
+
+$ArticleLinkReplacementCandidates = @(
+    Get-HuduArticles | Where-Object {
+        Test-HuduContentLinkReplacementCandidate `
+            -Content ([string]$_.content) `
+            -Type 'rich' `
+            -ImageMap $ImageMap `
+            -AttachmentUrlMap $AttachmentUrlMapForReplacement `
+            -IncludeHardcodedImages `
+            -IncludeAttachments `
+            -IncludeHostedImageAnchors `
+            -IncludeUploads
+    }
+)
+
+$articlesUpdated = foreach ($articleFound in $ArticleLinkReplacementCandidates) {
+    $UpdatedContent = Update-HuduContentLinks `
+        -Content $articleFound.content `
+        -Type 'rich' `
+        -ImageMap $ImageMap `
+        -AttachmentUrlMap $AttachmentUrlMapForReplacement `
+        -IncludeHardcodedImages `
+        -IncludeAttachments `
+        -IncludeHostedImageAnchors `
+        -IncludeUploads
+
+    if (-not $UpdatedContent.Changed) {
+        [pscustomobject]@{
+            status          = 'clean'
+            original_article = $articleFound
+            replacement_sets = @()
+        }
+        continue
+    }
+
+    Write-Host "Updating Article $($articleFound.name) with replaced content" -ForegroundColor 'Green'
+    try {
+        $ArticleSplat = @{
+            Id      = $articleFound.id
+            Content = $UpdatedContent.Content
+        }
+        if ($articleFound.name) { $ArticleSplat.Name = $articleFound.name }
+        if ($articleFound.company_id) { $ArticleSplat.CompanyId = $articleFound.company_id }
+
+        [pscustomobject]@{
+            status          = 'replaced'
+            original_article = $articleFound
+            updated_article  = Set-HuduArticle @ArticleSplat -ErrorAction Stop
+            replacement_sets = $UpdatedContent.ReplacementSets
+        }
+    } catch {
+        [pscustomobject]@{
+            status            = 'failed'
+            original_article  = $articleFound
+            attempted_changes = $UpdatedContent.Content
+            replacement_sets  = $UpdatedContent.ReplacementSets
+            error             = $_.Exception.Message
+        }
+    }
+}
+
+$articlesUpdated | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedArticlesURL.json"
+$replacedAttachmentURLs = @(
+    $articlesUpdated | Where-Object { $_.replacement_sets.Type -contains 'AttachmentLinks' } | ForEach-Object {
+        [pscustomobject]@{
+            Status       = $_.status
+            ArticleId    = $_.original_article.id
+            ArticleName  = $_.original_article.name
+            Replacements = @($_.replacement_sets | Where-Object { $_.Type -eq 'AttachmentLinks' } | ForEach-Object { $_.Replacements })
+        }
+    }
+)
+$replacedAttachmentURLs | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedAttachmentLinks.json"
+$imageAnchorReplacementResults = @(
+    $articlesUpdated | Where-Object { $_.replacement_sets.Type -contains 'HostedImageAnchors' } | ForEach-Object {
+        [pscustomobject]@{
+            Status      = $_.status
+            ArticleId   = $_.original_article.id
+            ArticleName = $_.original_article.name
+        }
+    }
+)
 $imageAnchorReplacementResults | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedImageAnchors.json"
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
