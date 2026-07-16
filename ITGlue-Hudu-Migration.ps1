@@ -2568,27 +2568,126 @@ $imageAnchorReplacementResults = @(
 )
 $imageAnchorReplacementResults | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedImageAnchors.json"
 
+function Get-HuduAssetFieldLabel {
+    param(
+        [AllowNull()]
+        $Field
+    )
+
+    foreach ($candidate in @($Field.label, $Field.field_name, $Field.fieldName, $Field.name, $Field.caption)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) {
+            return [string]$candidate
+        }
+    }
+
+    return $null
+}
+
+function Get-NormalizedHuduFieldLabel {
+    param(
+        [AllowNull()]
+        [string]$Label
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Label)) {
+        return $null
+    }
+
+    return ($Label.Trim() -replace '[^\w\s]', '' -replace '\s+', '_').ToLower()
+}
+
+function New-HuduRichTextFieldLookup {
+    param(
+        [AllowNull()]
+        $LayoutFields
+    )
+
+    $lookup = @{}
+    foreach ($field in @($LayoutFields)) {
+        $huduField = $field.HuduLayoutField
+        $fieldType = $huduField.field_type ?? $field.FieldType
+        if ($fieldType -ne 'RichText') {
+            continue
+        }
+
+        $layoutId = [string]($field.HuduLayoutID ?? $huduField.asset_layout_id)
+        if ([string]::IsNullOrWhiteSpace($layoutId)) {
+            continue
+        }
+
+        if (-not $lookup.ContainsKey($layoutId)) {
+            $lookup[$layoutId] = @{}
+        }
+
+        foreach ($label in @($huduField.label, $field.FieldName, $field.HuduParsedName)) {
+            $normalized = Get-NormalizedHuduFieldLabel -Label ([string]$label)
+            if ($normalized) {
+                $lookup[$layoutId][$normalized] = $true
+            }
+        }
+    }
+
+    return $lookup
+}
+
+function Test-HuduAssetFieldIsRichText {
+    param(
+        [AllowNull()]
+        $Field,
+
+        [AllowNull()]
+        [hashtable]$RichTextFieldLookup,
+
+        [AllowNull()]
+        $AssetLayoutId
+    )
+
+    if (($Field.field_type ?? $Field.fieldType ?? $Field.type) -eq 'RichText') {
+        return $true
+    }
+
+    $layoutId = [string]$AssetLayoutId
+    if ([string]::IsNullOrWhiteSpace($layoutId) -or -not $RichTextFieldLookup.ContainsKey($layoutId)) {
+        return $false
+    }
+
+    $fieldLabel = Get-HuduAssetFieldLabel -Field $Field
+    $normalizedLabel = Get-NormalizedHuduFieldLabel -Label $fieldLabel
+    return ($normalizedLabel -and $RichTextFieldLookup[$layoutId].ContainsKey($normalizedLabel))
+}
+
 Write-Host "Assets - replacing rich text image and attachment links now that upload maps are available"
+$RichTextFieldsByLayout = New-HuduRichTextFieldLookup -LayoutFields $AllFields
 $AssetRichTextLinkCandidates = @(
-    $MatchedAssets.HuduObject | Where-Object {
+    $MatchedAssets.HuduObject | Where-Object { $RichTextFieldsByLayout.ContainsKey([string]$_.asset_layout_id) } | Where-Object {
+        $assetLayoutId = $_.asset_layout_id
         @($_.fields | Where-Object {
-            Test-HuduContentLinkReplacementCandidate `
-                -Content ([string]$_.value) `
-                -Type 'rich' `
-                -ImageMap $ImageMap `
-                -AttachmentUrlMap $AttachmentUrlMapForReplacement `
-                -IncludeHardcodedImages `
-                -IncludeAttachments `
-                -IncludeHostedImageAnchors `
-                -IncludeUploads
+            if (Test-HuduAssetFieldIsRichText -Field $_ -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetLayoutId) {
+                Test-HuduContentLinkReplacementCandidate `
+                    -Content ([string]$_.value) `
+                    -Type 'rich' `
+                    -ImageMap $ImageMap `
+                    -AttachmentUrlMap $AttachmentUrlMapForReplacement `
+                    -IncludeHardcodedImages `
+                    -IncludeAttachments `
+                    -IncludeHostedImageAnchors `
+                    -IncludeUploads
+            } else {
+                $false
+            }
         }).Count -gt 0
     }
 )
+Write-Host "Asset rich text link candidates: $($AssetRichTextLinkCandidates.Count) asset(s) across $($RichTextFieldsByLayout.Count) layout(s) with RichText fields." -ForegroundColor Cyan
 $assetRichTextLinkResults = foreach ($assetFound in $AssetRichTextLinkCandidates) {
     $customFields = @()
     $replacementSets = @()
 
     foreach ($field in @($assetFound.fields)) {
+        if (-not (Test-HuduAssetFieldIsRichText -Field $field -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetFound.asset_layout_id)) {
+            continue
+        }
+
         $fieldContent = [string]$field.value
         if (-not (Test-HuduContentLinkReplacementCandidate `
                     -Content $fieldContent `
@@ -2617,7 +2716,7 @@ $assetRichTextLinkResults = foreach ($assetFound in $AssetRichTextLinkCandidates
             continue
         }
 
-        $label = $field.label
+        $label = Get-HuduAssetFieldLabel -Field $field
         if ([string]::IsNullOrWhiteSpace([string]$label)) {
             Write-Warning "Skipping changed rich text field on asset $($assetFound.name) because Hudu did not return a field label."
             continue
