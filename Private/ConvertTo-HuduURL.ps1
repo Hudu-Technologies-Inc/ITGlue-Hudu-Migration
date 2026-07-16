@@ -620,6 +620,9 @@ function Test-HuduContentLinkReplacementCandidate {
         [AllowNull()]
         [hashtable]$AttachmentUrlMap,
 
+        [AllowNull()]
+        [hashtable]$AttachmentUrlLookup,
+
         [switch]$IncludeHardcodedImages,
         [switch]$IncludeAttachments,
         [switch]$IncludeHostedImageAnchors,
@@ -693,9 +696,22 @@ function Update-HuduContentLinks {
         }
     }
 
-    if ($IncludeAttachments -and $AttachmentUrlMap -and $AttachmentUrlMap.Count -gt 0 -and (Get-Command -Name Update-ContentWithAttachmentUrlMap -ErrorAction SilentlyContinue)) {
-        $relativeAttachmentUrlMap = ConvertTo-RelativeUrlMap -UrlMap $AttachmentUrlMap
-        $attachments = Update-ContentWithAttachmentUrlMap -Content $newContent -UrlMap $relativeAttachmentUrlMap
+    if ($IncludeAttachments -and (Get-Command -Name Update-ContentWithAttachmentUrlLookup -ErrorAction SilentlyContinue)) {
+        if (-not $AttachmentUrlLookup -and $AttachmentUrlMap -and $AttachmentUrlMap.Count -gt 0 -and (Get-Command -Name New-AttachmentUrlReplacementLookup -ErrorAction SilentlyContinue)) {
+            $relativeAttachmentUrlMap = ConvertTo-RelativeUrlMap -UrlMap $AttachmentUrlMap
+            $AttachmentUrlLookup = New-AttachmentUrlReplacementLookup -UrlMap $relativeAttachmentUrlMap
+        }
+
+        $attachments = if ($AttachmentUrlLookup -and $AttachmentUrlLookup.Count -gt 0) {
+            Update-ContentWithAttachmentUrlLookup -Content $newContent -Lookup $AttachmentUrlLookup
+        } else {
+            [pscustomobject]@{
+                Content      = $newContent
+                Changed      = $false
+                Replacements = @()
+            }
+        }
+
         if ($attachments.Changed) {
             $null = $replacementSets.Add([pscustomobject]@{
                 Type         = 'AttachmentLinks'
