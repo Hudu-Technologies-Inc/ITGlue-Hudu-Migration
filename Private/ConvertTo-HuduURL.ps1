@@ -18,11 +18,12 @@ $ITGlueURLCandidates = @(
         Select-Object -Unique
 )
 
-$EscapedITGURL = ($ITGlueURLCandidates | ForEach-Object { [regex]::Escape($_) }) -join "|"
-if ([string]::IsNullOrWhiteSpace($EscapedITGURL)) {
-    $EscapedITGURL = '(?!)'
+$ConfiguredEscapedITGURL = ($ITGlueURLCandidates | ForEach-Object { [regex]::Escape($_) }) -join "|"
+$AnyITGlueTenantURLPattern = 'https?://[^/"''\s<>]+\.itglue\.com'
+if ([string]::IsNullOrWhiteSpace($ConfiguredEscapedITGURL)) {
+    $EscapedITGURL = "(?:$AnyITGlueTenantURLPattern)"
 } else {
-    $EscapedITGURL = "(?:$EscapedITGURL)"
+    $EscapedITGURL = "(?:$ConfiguredEscapedITGURL|$AnyITGlueTenantURLPattern)"
 }
 
 $ITGlueUrlPrefixPattern = "(?:$EscapedITGURL)?"
@@ -508,6 +509,11 @@ function Get-HardcodedImageMapByLeaf {
         if (-not $imageMapByLeaf.ContainsKey($leaf)) {
             $imageMapByLeaf[$leaf] = ConvertTo-HuduRelativeURL -Url $kvp.Value
         }
+
+        $leafWithoutExtension = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
+        if (-not [string]::IsNullOrWhiteSpace($leafWithoutExtension) -and -not $imageMapByLeaf.ContainsKey($leafWithoutExtension)) {
+            $imageMapByLeaf[$leafWithoutExtension] = ConvertTo-HuduRelativeURL -Url $kvp.Value
+        }
     }
 
     return $imageMapByLeaf
@@ -665,6 +671,9 @@ function Update-HuduContentLinks {
 
         [AllowNull()]
         [hashtable]$AttachmentUrlMap,
+
+        [AllowNull()]
+        [hashtable]$AttachmentUrlLookup,
 
         [switch]$IncludeHardcodedImages,
         [switch]$IncludeAttachments,
