@@ -983,7 +983,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
             Write-Host "Processing $ConfigType"
 
-            $ParsedITGConfigs = $ITGConfigurations | Where-Object { $_.attributes."configuration-type-name" -eq $ConfigType }
+            $ParsedITGConfigs = @($ITGConfigurations | Where-Object { $_.attributes."configuration-type-name" -eq $ConfigType })
+            if ($ParsedITGConfigs.Count -eq 0) {
+                Write-Host "Skipping configuration layout '$($ConfigurationPrefix)$($ConfigType)' because it has no configurations in scope." -ForegroundColor Yellow
+                continue
+            }
 
             $ConfigMigrationName = "$($ConfigurationPrefix)$($ConfigType)"
             $ConfigImportAssetLayoutName = "$($ConfigurationPrefix)$($ConfigType)"
