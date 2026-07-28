@@ -97,12 +97,106 @@ param(
 )
     if ([string]::IsNullOrWhiteSpace($Content)) { return @() }
 
-    $AttachmentPattern = '(?:https?://[^"''\s<>]+)?/attachments/\d{1,20}(?:\?preview=(?:1|true))?'
+    $AttachmentPattern = '(?:https?://[^"''\s<>]+)?/(?:attachments/\d{1,20}(?:\?preview=(?:1|true))?|[0-9]{1,20}/(?:docs|passwords|configurations|assets)/[^"''<>]*/files/[^"''<>]+)'
     @(
         [regex]::Matches($Content, $AttachmentPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase) |
             ForEach-Object { $_.Value } |
             Select-Object -Unique
     )
+}
+
+function New-AttachmentUrlReplacementLookup {
+param(
+    [hashtable]$UrlMap
+)
+    $Lookup = @{}
+
+    foreach ($OriginalUrl in @($UrlMap.Keys)) {
+        if ([string]::IsNullOrWhiteSpace([string]$OriginalUrl) -or [string]::IsNullOrWhiteSpace([string]$UrlMap[$OriginalUrl])) { continue }
+
+        foreach ($Candidate in @(Get-AttachmentUrlReplacementCandidates -OriginalUrl $OriginalUrl)) {
+            if ([string]::IsNullOrWhiteSpace([string]$Candidate.Url)) { continue }
+
+            $Lookup[[string]$Candidate.Url] = [pscustomobject]@{
+                OriginalUrl    = [string]$OriginalUrl
+                ReplacementUrl = [string]$UrlMap[$OriginalUrl]
+                IsHtmlEncoded  = [bool]$Candidate.IsHtmlEncoded
+            }
+        }
+    }
+
+    return $Lookup
+}
+
+function Get-ContentAttachmentUrlCandidates {
+param(
+    [AllowEmptyString()]
+    [string]$Content
+)
+    if ([string]::IsNullOrWhiteSpace($Content)) { return @() }
+
+    $Candidates = [System.Collections.ArrayList]@()
+    $AttributePattern = '\b(?:href|src)\s*=\s*["''](?<Url>[^"'']*(?:/attachments/|/files/)[^"'']*)["'']'
+    foreach ($Match in [regex]::Matches($Content, $AttributePattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        $null = $Candidates.Add($Match.Groups['Url'].Value)
+    }
+
+    foreach ($Url in @(Get-ITGlueAttachmentUrls -Content $Content)) {
+        $null = $Candidates.Add($Url)
+    }
+
+    @($Candidates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique | Sort-Object Length -Descending)
+}
+
+function Update-ContentWithAttachmentUrlLookup {
+param(
+    [AllowEmptyString()]
+    [string]$Content,
+    [hashtable]$Lookup
+)
+    $NewContent = $Content
+    $Replacements = @()
+
+    foreach ($MatchedUrl in @(Get-ContentAttachmentUrlCandidates -Content $Content)) {
+        $LookupRecord = $Lookup[$MatchedUrl]
+
+        if (-not $LookupRecord) {
+            $DecodedUrl = [System.Net.WebUtility]::HtmlDecode($MatchedUrl)
+            if ($DecodedUrl -and $DecodedUrl -ne $MatchedUrl) {
+                $LookupRecord = $Lookup[$DecodedUrl]
+            }
+        }
+
+        if (-not $LookupRecord) { continue }
+
+        $ReplacementUrl = if ($MatchedUrl -eq [System.Net.WebUtility]::HtmlEncode($MatchedUrl)) {
+            $LookupRecord.ReplacementUrl
+        } else {
+            [System.Net.WebUtility]::HtmlEncode($LookupRecord.ReplacementUrl)
+        }
+
+        $CandidatePattern = [regex]::Escape($MatchedUrl)
+        $Count = [regex]::Matches($NewContent, $CandidatePattern).Count
+        if ($Count -lt 1) { continue }
+
+        $NewContent = [regex]::Replace(
+            $NewContent,
+            $CandidatePattern,
+            [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $ReplacementUrl }
+        )
+        $Replacements += [pscustomobject]@{
+            OriginalUrl    = $LookupRecord.OriginalUrl
+            MatchedUrl     = $MatchedUrl
+            ReplacementUrl = $ReplacementUrl
+            Count          = $Count
+        }
+    }
+
+    [pscustomobject]@{
+        Content      = $NewContent
+        Changed      = ($NewContent -ne $Content)
+        Replacements = $Replacements
+    }
 }
 
 function Update-ContentWithAttachmentUrlMap {
@@ -174,6 +268,8 @@ param(
         return @()
     }
 
+    $UrlLookup = New-AttachmentUrlReplacementLookup -UrlMap $UrlMap
+
     if (-not $Articles) {
         $Articles = @(Get-HuduArticles)
     }
@@ -190,7 +286,7 @@ param(
             continue
         }
 
-        $Updated = Update-ContentWithAttachmentUrlMap -Content $Article.content -UrlMap $UrlMap
+        $Updated = Update-ContentWithAttachmentUrlLookup -Content $Article.content -Lookup $UrlLookup
         if (-not $Updated.Changed) {
             $UnresolvedAttachmentUrls = Get-ITGlueAttachmentUrls -Content $Article.content
             if ($UnresolvedAttachmentUrls.Count -gt 0) {

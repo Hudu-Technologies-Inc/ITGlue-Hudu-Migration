@@ -1,7 +1,11 @@
 
 function Set-HuduImageAnchorsReplaced {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Html,[bool]$IncludeUploads = $false)
+    param(
+        [Parameter(Mandatory)][string]$Html,
+        [bool]$IncludeUploads = $false,
+        [bool]$UseRelativeLinks = $true
+    )
 
     $base = (Get-HuduBaseURL).TrimEnd('/')
     $e    = [regex]::Escape($base)
@@ -35,6 +39,16 @@ function Set-HuduImageAnchorsReplaced {
 
     $getFullImageUrl = {
         param([string]$src)
+
+        if ($UseRelativeLinks) {
+            if ($src -match "^$e(?<Path>/.*)$") {
+                return $Matches.Path
+            }
+
+            if ($src.StartsWith('/')) {
+                return $src
+            }
+        }
 
         if ($src -match '^https?://') {
             return $src
@@ -91,6 +105,17 @@ function Set-HuduImageAnchorsReplaced {
             }
 
             $full = & $getFullImageUrl $src
+            if ($UseRelativeLinks -and $full -ne $src) {
+                $imgTag = [regex]::Replace(
+                    $imgTag,
+                    '(\bsrc\s*=\s*["''])([^"'']+)(["''])',
+                    [System.Text.RegularExpressions.MatchEvaluator]{
+                        param($srcMatch)
+                        "$($srcMatch.Groups[1].Value)$full$($srcMatch.Groups[3].Value)"
+                    },
+                    [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+                )
+            }
 
             "<a href=""$full"">$imgTag</a>"
         },
