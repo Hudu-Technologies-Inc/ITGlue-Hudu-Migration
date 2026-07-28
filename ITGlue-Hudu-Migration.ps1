@@ -4,6 +4,15 @@ if ($MyInvocation.InvocationName -eq '.') {
     Write-Host "Script was executed without dot-sourcing, this is the recommended method of running the script to ensure settings are retained in the session" -ForegroundColor Yellow; write-warning "exiting to prevent issues later on, please dot-source the script by running `. .\ITGlue-Hudu-Migration.ps1` from powershell 7 or using the provided ITGlue-Hudu-Migration.exe frontend.";
     exit 1
 }
+[version]$MinimumPSVersion = '7.5.1'
+[version]$MaximumPSVersion = '8.0'
+if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10240' -and [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -in 'X86', 'X64' -and $PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion -ge $MinimumPSVersion -and $PSVersionTable.PSVersion -lt $MaximumPSVersion)) {
+    Write-Error "Unsupported environment. Requires Windows 10+, x86/x64, and PowerShell 7.5.1–7.x."
+    exit 1
+} else {
+    write-host "CPU arch $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) is good. Using windows $($iswindows). OS version is good $([Environment]::OSVersion.Version). PS edition is $($PSVersionTable.PSEdition) and $MinimumPSVersion <= $($PSVersionTable.PSVersion) < $MaximumPSVersion." -foregroundColor Green
+}
+try {Set-StrictMode -Off} catch {}
 
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
 $ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
@@ -13,13 +22,6 @@ $ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path
 
 # Use this to set the context of the script runs
 $FirstTimeLoad = 1
-
-if ((get-host).version.major -ne 7) {
-    Write-Host "Powershell 7 Required" -foregroundcolor Red
-    exit 1
-}
-
-try {Set-StrictMode -Off} catch {}
 
 ############################### Functions ###############################
 # Import ImageMagick for Invoke-ImageTest Function (Disabled)
