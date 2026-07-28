@@ -5,12 +5,10 @@ if ($MyInvocation.InvocationName -eq '.') {
     exit 1
 }
 [version]$MinimumPSVersion = '7.5.1'
-[version]$MaximumPSVersion = '8.0'
-if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10240' -and [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -in 'X86', 'X64' -and $PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion -ge $MinimumPSVersion -and $PSVersionTable.PSVersion -lt $MaximumPSVersion)) {
-    Write-Error "Unsupported environment. Requires Windows 10+, x86/x64, and PowerShell 7.5.1–7.x."
-    exit 1
+if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10240' -and [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -in 'X86', 'X64' -and $PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion -ge $MinimumPSVersion)) {
+    Write-Error "Unsupported environment. Requires Windows 10+, x86/x64, and PowerShell 7.5.1–7.x."; exit 1;
 } else {
-    write-host "CPU arch $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) is good. Using windows $($iswindows). OS version is good $([Environment]::OSVersion.Version). PS edition is $($PSVersionTable.PSEdition) and $MinimumPSVersion <= $($PSVersionTable.PSVersion) < $MaximumPSVersion." -foregroundColor Green
+    write-host "CPU arch $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) is good. Using windows $($iswindows). OS version is good $([Environment]::OSVersion.Version). PS edition is $($PSVersionTable.PSEdition) (greater than required minimum of $MinimumPSVersion." -foregroundColor Green
 }
 try {Set-StrictMode -Off} catch {}
 
