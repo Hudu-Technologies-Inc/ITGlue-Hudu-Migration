@@ -277,6 +277,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     $MatchedCompanies = foreach ($itgcompany in $ITGCompanies) {
         $originalName = $itgcompany.attributes.name
 
+
         # Create a unique name if it's already been seen
         if ($nameTracker.ContainsKey($originalName)) {
             $nameTracker[$originalName]++
@@ -325,7 +326,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
     $PrimaryCompany = $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.InternalCompany -eq $true } | Select-Object CompanyName
 
     if (($PrimaryCompany | measure-object).count -ne 1 -and -not ($PlaceInternalDocsInInternalCompany ?? $false)) {
-        Write-Host "A single Internal Company was not found please run the script again and check the company name entered exactly matches what is in ITGlue" -foregroundcolor red
+        Write-InternalCompanyValidationError -Matches $PrimaryCompany -InternalCompany $InternalCompany
         exit 1
     }
 

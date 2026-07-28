@@ -605,6 +605,46 @@ return $($choices | ForEach-Object {
 
 }
 
+function Write-InternalCompanyValidationError {
+    param (
+        [AllowNull()]
+        [object[]]$Matches,
+
+        [Parameter(Mandatory)]
+        [string]$InternalCompany
+    )
+
+    $matchCount = @($Matches).Count
+
+    Write-Host "`nInternal company validation failed." -ForegroundColor Red
+    Write-Host "Expected exactly 1 organization named '$InternalCompany', but found $matchCount." -ForegroundColor Red
+
+    if ($matchCount -gt 1) {
+        $renameCount = $matchCount - 1
+
+        Write-Host @"
+
+IT Glue contains multiple organizations named '$InternalCompany'.
+
+You can resolve this by doing one of the following:
+
+1. Rename $renameCount of the matching organizations so that only your internal company has this name, then create a new IT Glue export and rerun the script.
+2. Set `$PlaceInternalDocsInInternalCompany to `$true to skip the internal-company matching requirement. [Note, organizations with the same name will have an appended number attached to them since Hudu does not allow duplicate company names ($InternalCompany-1, $InternalCompany-2, etc.)]
+"@ -ForegroundColor Red
+    }
+    else {
+        Write-Host @"
+
+The internal company '$InternalCompany' was not found in IT Glue.
+
+You can resolve this by doing one of the following:
+
+1. Confirm that the organization exists in IT Glue and that `$InternalCompany exactly matches its name.
+2. Set `$PlaceInternalDocsInInternalCompany to `$true to skip the internal-company matching requirement.
+"@ -ForegroundColor Red
+    }
+}
+
 function Get-SafeCount {
     param(
         [AllowNull()]
