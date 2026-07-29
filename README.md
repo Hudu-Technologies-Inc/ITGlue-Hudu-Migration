@@ -1,13 +1,18 @@
-> [!CAUTION]
-> **Please Read this entire document before you begin**
 
-# Getting Started
-You'll want to make sure your Hudu instance is prepared for migration and that the machine you use to run this migration (executable or PowerShell) is also properly prepared.
+# [ITGlue Hudu Migration (*Hudu Technologies Official Fork*)](https://github.com/Hudu-Technologies-Inc/ITGlue-Hudu-Migration)
+
+**Hudu-Technologies-Inc/ITGlue-Hudu-Migration**
 
 > [!NOTE]
 > This is the Hudu Technologies Fork of an amazing open-source project.
 >
 >The original project was started by Luke Whitelock and often being maintained by Mendy Green and community contributors. This fork is tested for and intended to be used with the very newest Hudu versions. It includes some features that may not (yet) be present in the main repo, [here](https://github.com/lwhitelock/ITGlue-Hudu-Migration). It also includes a more rigid minimum Hudu version requirement.
+
+> [!CAUTION]
+> **Please Read this entire document before you begin**
+
+# Getting Started
+You'll want to make sure your Hudu instance is prepared for migration and that the machine you use to run this migration (executable or PowerShell) is also properly prepared.
 
 > [!CAUTION]
 > Depending on the size of your ITGlue instance, the migration script can take several hours to run (we've seen it take as long as 24 hours). As such, it's highly recommended to run the migration script on a Windows Server or a machine that has ***Windows Update and Sleep [temporarily] disabled***
