@@ -5,87 +5,15 @@ if ($MyInvocation.InvocationName -eq '.') {
     exit 1
 }
 
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-$ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
-
 # Main settings load
+$FirstTimeLoad = 1
 . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
 
 # Use this to set the context of the script runs
-$FirstTimeLoad = 1
 
-if ((get-host).version.major -ne 7) {
-    Write-Host "Powershell 7 Required" -foregroundcolor Red
-    exit 1
-}
-
-try {Set-StrictMode -Off} catch {}
-
-############################### Functions ###############################
-# Import ImageMagick for Invoke-ImageTest Function (Disabled)
- . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
-
-# Used to determine if a file is an image and what type of image
-. $PSScriptRoot\Private\Invoke-ImageTest.ps1
-
-# Confirm Object Import
-. $PSScriptRoot\Private\Confirm-Import.ps1
-
-# Matches items from IT Glue to Hudu and creates new items in Hudu
-. $PSScriptRoot\Private\Import-Items.ps1
-
-# Select Item Import Mode
-. $PSScriptRoot\Private\Get-ImportMode.ps1
-
-# Get Flexible Asset Layout Option
-. $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1
-
-# Fetch Items from ITGlue
-. $PSScriptRoot\Private\Import-ITGlueItems.ps1
-
-# Find migrated items
-. $PSScriptRoot\Private\Find-MigratedItem.ps1
-
-# Lookup table to upgrade from Font Awesome 4 to 5
-. $PSScriptRoot\Private\Get-FontAwesomeMap.ps1
-$FontAwesomeUpgrade = Get-FontAwesomeMap
-
-# Add Replace URL functions
-. $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
-
-# Add Hudu Relations Function
-. $PSScriptRoot\Public\Add-HuduRelation.ps1
-
-# Add Timed (Noninteractive) Messages Helper
-. $PSScriptRoot\Public\Write-TimedMessage.ps1
-
-# Add numeral casting, password folder fetching, and article stub starting helpers
-. $PSScriptRoot\Public\Get-CastIfNumeric.ps1
-. $PSScriptRoot\Public\Start-ArticleStubs.ps1
-. $PSScriptRoot\Public\Get-PasswordFolders.ps1
-
-# Add migration scope helper
-. $PSScriptRoot\Public\Set-MigrationScope.ps1
-
-# Other JWT-Auth / Advanced Post-Run Imports
-. $PSScriptRoot\Public\Get-Checklists.ps1
-
-# Add String/Filename Normalization Helper, image Normalization helper
-. $PSScriptRoot\Public\Normalize-String.ps1
-. $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1
-# initialization helper and field requirement helper, logging, selection helper
-. $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
-. $PSScriptRoot\Public\JWT-Auth.ps1
-. $PSScriptRoot\Public\NetworkInformation.ps1
-. $PSScriptRoot\Public\PreFlightTests.ps1
-. $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
+$ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
-. $PSScriptRoot\Public\Timed-Job.ps1
-
-
-############################### End of Functions ###############################
-if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
 ###################### Initial Setup and Confirmations ###############################
 Write-Host $InvocationWelcomeText -ForegroundColor Green
@@ -94,11 +22,6 @@ Write-Host $LiabilityWarning -ForegroundColor Red
 
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
-
-$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion ([version]"2.42.0") -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
-$ScriptStartTime = $(Get-Date)
-$JobStartTime = $JobStartTime ?? @{}
-$MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 
 write-host "Checking your API keys to make sure they are scoped for password access" -ForegroundColor DarkCyan
 $itglueScopeOk = Test-ITGlueAPIKeyPasswordScope
@@ -163,7 +86,7 @@ $ManualActions = [System.Collections.ArrayList]@()
 $MergedOrganizationSettings = @{Types        = @(); TargetCompany = $null;}; $ITGLocationsHashTable = @{};
 $MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders = $preloadedPassFolders ?? @{}; $ITGlueSSLCerts = @(); $objectFlagMap = $objectFlagMap ?? @{};
 $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@(); 
-$ErroredItemsFolder = if ($ErroredItemsFolder) {$ErroredItemsFolder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
+$errorsfolder = if ($errorsfolder) {$errorsfolder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
 
 function Get-HuduLocationAssetTagValue {
     param(
@@ -983,7 +906,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
             Write-Host "Processing $ConfigType"
 
-            $ParsedITGConfigs = $ITGConfigurations | Where-Object { $_.attributes."configuration-type-name" -eq $ConfigType }
+            $ParsedITGConfigs = @($ITGConfigurations | Where-Object { $_.attributes."configuration-type-name" -eq $ConfigType })
+            if ($ParsedITGConfigs.Count -eq 0) {
+                Write-Host "Skipping configuration layout '$($ConfigurationPrefix)$($ConfigType)' because it has no configurations in scope." -ForegroundColor Yellow
+                continue
+            }
 
             $ConfigMigrationName = "$($ConfigurationPrefix)$($ConfigType)"
             $ConfigImportAssetLayoutName = "$($ConfigurationPrefix)$($ConfigType)"
@@ -2769,7 +2696,7 @@ if ($true -eq $allowSettingFlagsAndTypes){
 
 write-host "wrapup 5/10... Setting Standalone articles with attachments to filename..."; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
 foreach ($a in $(Get-HuduArticles | where-object {$_.content -eq "Empty Document in IT Glue Export - Please Check IT Glue" -and $_.name -ilike "*.*"})){Set-HuduArticle -id $a.id -content "Please see attached file, $($a.name)"}
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $false} catch {}}
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 write-host "wrapup 6/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
 if ($true -eq $importPasswordFolders){
@@ -2784,7 +2711,7 @@ if ($true -eq $importChecklists){
 
 write-host "wrapup 8/10... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Relations";
 # set retry to off/false in HuduAPI module, this will save time during adding potentially existent relations.
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $true} catch {}}
 . .\Get-MissingRelations.ps1
 
 write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Archiving Items";

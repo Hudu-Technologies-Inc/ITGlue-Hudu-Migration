@@ -25,34 +25,33 @@ param(
     [ValidateSet("Full", "Lite")]
     [string] $InitType
 )
-if ((get-host).version.major -ne 7) {
-    Write-Host "Powershell 7 Required" -foregroundcolor Red
-    exit 1
-}
 if ($MyInvocation.InvocationName -eq '.') {
     Write-Host "Script was dot-sourced" -ForegroundColor Green
 } else {
     Write-Host "Script was executed without dot-sourcing, this is the recommended method of running the script to ensure settings are retained in the session" -ForegroundColor Yellow; write-warning "exiting to prevent issues later on, please dot-source the script by running `. .\ITGlue-Hudu-Migration.ps1` from powershell 7 or using the provided ITGlue-Hudu-Migration.exe frontend.";
     exit 1
 }
-############################### Settings ###############################
-# Define the path to the settings.json file in the user's AppData folder
-
-# Determine top part of settings path
-if($IsWindows){
-    $settingsTop = $env:APPDATA
+[version]$MinimumPSVersion = '7.5.1'
+if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10240' -and [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -in 'X86', 'X64' -and $PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion -ge $MinimumPSVersion)) {
+    Write-Error "Unsupported environment. Requires Windows 10+, x86/x64, and PowerShell 7.5.1–7.x."; exit 1;
 } else {
-    $settingsTop = Join-Path "$home" ".config"
+    write-host "CPU arch $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) is good. Using windows $($iswindows). OS version is good $([Environment]::OSVersion.Version). PS edition is $($PSVersionTable.PSEdition) (greater than required minimum of $MinimumPSVersion." -foregroundColor Green
 }
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-$debugfolder = $debugFolder ?? $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
+try {Set-StrictMode -Off} catch {}
 
+$project_workdir=$project_workdir ?? "$PSScriptRoot"
+$debugFolder = if ([string]::IsNullOrWhiteSpace($debugFolder)) {Join-Path $project_workdir "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-ffff')"} else {$debugFolder}
+$errorsfolder = if ([string]::IsNullOrWhiteSpace($errorsfolder)) {Join-Path $debugFolder 'errors'} else {$errorsfolder}
+if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
+foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folder, $script:ITG_ERRORS_DIRECTORY)) {$null = Get-EnsuredPath -Path $folder}
+
+
+############################### Settings ###############################
 # Define the path to the settings.json file in the detected platform's folder:
-# Running on Windows will save to the user's AppData
-# Running on Linux/macOS will save to `.config` in the user's HOME directory
-  # Something awesome will be here soon.
+$settingsTop = $env:APPDATA
 $settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json")
 $defaultSettingsPath = $defaultSettingsPath ?? "$settingsTop\HuduMigration\settings.json"
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 # Function to read back securely stored keys used in the settings.json file
 function ConvertSecureStringToPlainText {
@@ -337,9 +336,9 @@ if ($InitType -eq 'Full') {
     $ImportLocations = $ImportLocations ?? $(Select-ObjectFromList -message "Import Locations?" -objects @($true, $false) -allowNull $false)
 
     # The asset layout names and icons
-    $ConImportIcon = "fas fa-users"
-    $LocImportIcon = "fas fa-building"
-    $ConfigImportIcon = "fas fa-sitemap"    
+    $ConImportIcon = $ConImportIcon ?? "fas fa-users"
+    $LocImportIcon = $LocImportIcon ?? "fas fa-building"
+    $ConfigImportIcon = $ConfigImportIcon ?? "fas fa-sitemap"
     $ConfigMigrationName = $ConfigMigrationName ?? "Configurations" # name for configs layout
     $ConImportAssetLayoutName = $ConImportAssetLayoutName ?? "People" # name for people layout
     $LocImportAssetLayoutName = $LocImportAssetLayoutName ?? "Locations" # name for location layout
@@ -493,3 +492,66 @@ if ($passwordsCSVFound -and $overrideNoPassCSV -ine 'migrate-anyway') {
     $vaultCSVsPresent = if ($userVaultedPasswordsDirPresent) { @(Get-ChildItem -LiteralPath $vaultedCSVPath -Filter "*.csv" -File -ErrorAction SilentlyContinue) } else { @() }
     $shouldRunVaultJob = [bool](($possiblyVaultedPasswords -eq $true) -and ($vaultCSVsPresent.Count -gt 0))
 }
+
+############################### Functions ###############################
+# Import ImageMagick for Invoke-ImageTest Function (Disabled)
+ . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
+
+# Used to determine if a file is an image and what type of image
+. $PSScriptRoot\Private\Invoke-ImageTest.ps1
+
+# Confirm Object Import
+. $PSScriptRoot\Private\Confirm-Import.ps1
+
+# Matches items from IT Glue to Hudu and creates new items in Hudu
+. $PSScriptRoot\Private\Import-Items.ps1
+
+# Select Item Import Mode
+. $PSScriptRoot\Private\Get-ImportMode.ps1
+
+# Get Flexible Asset Layout Option
+. $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1
+
+# Fetch Items from ITGlue
+. $PSScriptRoot\Private\Import-ITGlueItems.ps1
+
+# Find migrated items
+. $PSScriptRoot\Private\Find-MigratedItem.ps1
+
+# Lookup table to upgrade from Font Awesome 4 to 5
+. $PSScriptRoot\Private\Get-FontAwesomeMap.ps1
+$FontAwesomeUpgrade = Get-FontAwesomeMap
+
+# Add Replace URL functions
+. $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
+
+# Add Hudu Relations Function
+. $PSScriptRoot\Public\Add-HuduRelation.ps1
+
+# Add Timed (Noninteractive) Messages Helper
+. $PSScriptRoot\Public\Write-TimedMessage.ps1
+
+# Add numeral casting, password folder fetching, and article stub starting helpers
+. $PSScriptRoot\Public\Get-CastIfNumeric.ps1
+. $PSScriptRoot\Public\Start-ArticleStubs.ps1
+. $PSScriptRoot\Public\Get-PasswordFolders.ps1
+
+# Add migration scope helper
+. $PSScriptRoot\Public\Set-MigrationScope.ps1
+
+# Other JWT-Auth / Advanced Post-Run Imports
+. $PSScriptRoot\Public\Get-Checklists.ps1
+
+# Add String/Filename Normalization Helper, image Normalization helper
+. $PSScriptRoot\Public\Normalize-String.ps1
+. $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1
+# initialization helper and field requirement helper, logging, selection helper
+. $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
+. $PSScriptRoot\Public\JWT-Auth.ps1
+. $PSScriptRoot\Public\NetworkInformation.ps1
+. $PSScriptRoot\Public\PreFlightTests.ps1
+. $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
+. $PSScriptRoot\Public\Timed-Job.ps1
+if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
+
+$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion ([version]"2.42.0") -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
