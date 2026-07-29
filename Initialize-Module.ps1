@@ -51,6 +51,7 @@ foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folde
 $settingsTop = $env:APPDATA
 $settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json")
 $defaultSettingsPath = $defaultSettingsPath ?? "$settingsTop\HuduMigration\settings.json"
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 # Function to read back securely stored keys used in the settings.json file
 function ConvertSecureStringToPlainText {
