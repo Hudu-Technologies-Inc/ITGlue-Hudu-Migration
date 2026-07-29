@@ -83,7 +83,7 @@ function Add-UnresolvedITGlueRelationSample {
         $RelationObject
     )
 
-    if (-not $settings -or -not $settings.MigrationLogs) {
+    if (-not $MigrationLogs -and (-not $settings -or -not $settings.MigrationLogs)) {
         return
     }
 
@@ -107,7 +107,7 @@ function Add-UnresolvedITGlueRelationSample {
 
     $script:UnresolvedITGlueRelationSamples |
         ConvertTo-Json -Depth 20 |
-        Out-File (Join-Path $settings.MigrationLogs 'unresolved-relation-samples.json')
+        Out-File (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) 'unresolved-relation-samples.json')
 }
 function Convert-ITGlueTypeToRelationAssetType {
     param(
@@ -232,7 +232,7 @@ function Resolve-ITGlueRelationReference {
         $ResourceId = $ITGlueRelationObject.id
         $ResourceName = $ITGlueRelationObject.attributes.'name'
     } else {
-        $ITGlueRelationObject | convertto-json -Depth 10 | out-file (Join-Path $settings.MigrationLogs "unresolved-relation-$($ITGlueRelationObject.GetHashCode()).json")
+        $ITGlueRelationObject | convertto-json -Depth 10 | out-file (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) "unresolved-relation-$($ITGlueRelationObject.GetHashCode()).json")
     }
 
     if (-not $AssetType -or -not $ResourceId) {
@@ -719,7 +719,7 @@ $script:UnknownITGlueRelationTypeCounts = @{}
 $script:UnresolvedITGlueRelationSamples = [System.Collections.ArrayList]@()
 $script:UnresolvedITGlueRelationSampleCounts = @{}
 foreach ($DiagnosticFileName in @('unknown-relation-types.json', 'unresolved-relation-samples.json')) {
-    $DiagnosticFilePath = Join-Path $settings.MigrationLogs $DiagnosticFileName
+    $DiagnosticFilePath = Join-Path $($MigrationLogs ?? $settings.MigrationLogs) $DiagnosticFileName
     if (Test-Path -LiteralPath $DiagnosticFilePath) {
         Remove-Item -LiteralPath $DiagnosticFilePath -Force
     }
@@ -764,7 +764,7 @@ $FreshDocuments = $FreshDocuments ?? ($MatchedArticles | ForEach-Object {
     if ($__arIdx % 100 -eq 0 -or $__arIdx -eq $__arTotal) { Write-Host "  ...refreshed $__arIdx of $__arTotal articles" }
     $ArticleLookup = Get-ArticleLookupInfo -Article $_
     if ($ArticleLookup) {
-        Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI $settings.ITGAPIEndpoint
+        Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint)
     }
 })
 $RelatedDocuments = $RelatedDocuments ?? ($FreshDocuments | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
@@ -871,8 +871,8 @@ $NewRelationsCreated = @(
     }
 )
 
-$AllRelationsToCreate | ConvertTo-Json -Depth 75 | Out-File (Join-Path $settings.MigrationLogs 'relations-to-create.json')
-$NewRelationsCreated | ConvertTo-Json -Depth 75 | Out-File (Join-Path $settings.MigrationLogs 'relations-created.json')
+$AllRelationsToCreate | ConvertTo-Json -Depth 75 | Out-File (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) 'relations-to-create.json')
+$NewRelationsCreated | ConvertTo-Json -Depth 75 | Out-File (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) 'relations-created.json')
 
 if ($script:UnknownITGlueRelationTypeCounts -and $script:UnknownITGlueRelationTypeCounts.Count -gt 0) {
     $UnknownRelationTypes = $script:UnknownITGlueRelationTypeCounts.GetEnumerator() |
@@ -884,6 +884,6 @@ if ($script:UnknownITGlueRelationTypeCounts -and $script:UnknownITGlueRelationTy
             }
         }
 
-    $UnknownRelationTypes | ConvertTo-Json -Depth 10 | Out-File (Join-Path $settings.MigrationLogs 'unknown-relation-types.json')
+    $UnknownRelationTypes | ConvertTo-Json -Depth 10 | Out-File (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) 'unknown-relation-types.json')
     Write-Warning "Encountered $($UnknownRelationTypes.Count) unsupported ITGlue relation type(s). Details saved to unknown-relation-types.json"
 }
