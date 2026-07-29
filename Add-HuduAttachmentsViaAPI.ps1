@@ -512,7 +512,7 @@ if ($FoundWebsitesToAttach -and $FoundWebsitesToAttach.count -gt 0) {Add-HuduAtt
 
 $UploadFieldsArePresent = $UploadFieldsArePresent ?? $true
 if ($true -eq $UploadFieldsArePresent){
-    Write-Host "One or more Upload fields were present on the assets or we couldnt determine their presence. These will be uploaded now." -ForegroundColor Yellow
+    Write-Host "One or more Upload fields were present on assets. These will be uploaded now." -ForegroundColor Yellow
     . "$($(get-childitem -path "." -Recurse -file "Add-UploadFieldAttachments.ps1" | Select-Object -first 1).fullname)"
 
     if ($MatchedUploadFields) {
