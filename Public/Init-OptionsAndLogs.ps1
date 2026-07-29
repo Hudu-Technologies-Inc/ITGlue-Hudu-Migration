@@ -152,13 +152,13 @@ $stringOutput
 $propertyDump
 "@
 
-    if ($ErroredItemsFolder -and (Test-Path $ErroredItemsFolder)) {
+    if ($errors_folder -and (Test-Path $errors_folder)) {
         $SafeName = ($Name -replace '[\\/:*?"<>|]', '_') -replace '\s+', ''
         if ($SafeName.Length -gt 60) {
             $SafeName = $SafeName.Substring(0, 60)
         }
         $filename = "${SafeName}_error_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-        $fullPath = Join-Path $ErroredItemsFolder $filename
+        $fullPath = Join-Path $errors_folder $filename
         Set-Content -Path $fullPath -Value $logContent -Encoding UTF8
         if ($Color) {
             Write-Host "Error written to $fullPath" -ForegroundColor $Color
