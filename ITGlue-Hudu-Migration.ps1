@@ -86,7 +86,7 @@ $ManualActions = [System.Collections.ArrayList]@()
 $MergedOrganizationSettings = @{Types        = @(); TargetCompany = $null;}; $ITGLocationsHashTable = @{};
 $MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders = $preloadedPassFolders ?? @{}; $ITGlueSSLCerts = @(); $objectFlagMap = $objectFlagMap ?? @{};
 $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@(); 
-$errors_folder = if ($errors_folder) {$errors_folder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
+$errorsfolder = if ($errorsfolder) {$errorsfolder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
 
 function Get-HuduLocationAssetTagValue {
     param(

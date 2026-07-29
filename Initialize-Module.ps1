@@ -38,26 +38,17 @@ if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10
     write-host "CPU arch $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) is good. Using windows $($iswindows). OS version is good $([Environment]::OSVersion.Version). PS edition is $($PSVersionTable.PSEdition) (greater than required minimum of $MinimumPSVersion." -foregroundColor Green
 }
 try {Set-StrictMode -Off} catch {}
-$project_workdir=$project_workdir ?? "$PSScriptRoot"; $debugFolder=$debugFolder ?? $(join-path "$project_workdir" "debug-$(Get-Date -Format o | ForEach-Object { $_ -replace ":", "." })"); $errors_folder=$errors_folder ?? $(join-path $debugFolder "errors");
+
+$project_workdir=$project_workdir ?? "$PSScriptRoot"
+$debugFolder = if ([string]::IsNullOrWhiteSpace($debugFolder)) {Join-Path $project_workdir "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-ffff')"} else {$debugFolder}
+$errorsfolder = if ([string]::IsNullOrWhiteSpace($errorsfolder)) {Join-Path $debugFolder 'errors'} else {$errorsfolder}
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-foreach ($folder in @($debugFolder, $errors_folder)) {Get-EnsuredPath -Path $_}
+foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folder, $script:ITG_ERRORS_DIRECTORY)) {$null = Get-EnsuredPath -Path $folder}
+
 
 ############################### Settings ###############################
-# Define the path to the settings.json file in the user's AppData folder
-
-# Determine top part of settings path
-if($IsWindows){
-    $settingsTop = $env:APPDATA
-} else {
-    $settingsTop = Join-Path "$home" ".config"
-}
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-$debugfolder = $debugFolder ?? $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
-
 # Define the path to the settings.json file in the detected platform's folder:
-# Running on Windows will save to the user's AppData
-# Running on Linux/macOS will save to `.config` in the user's HOME directory
-  # Something awesome will be here soon.
+$settingsTop = $env:APPDATA
 $settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json")
 $defaultSettingsPath = $defaultSettingsPath ?? "$settingsTop\HuduMigration\settings.json"
 
