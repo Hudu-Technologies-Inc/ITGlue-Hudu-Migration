@@ -490,20 +490,22 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     #Import Locations
     $MatchedLocations = Import-Items @LocImportSplat
 
+    # Save the results to resume from if needed
+    $($MatchedLocations ?? @()) | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
+
+
     # add labels for primary locations
     $primaryLocations = $matchedlocations | where-object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
     if ($primaryLocations -and $primaryLocations.count -gt 0){
         $primaryLocationLabeltype = $primaryLocationLabeltype ?? $(get-hudulabeltypes | where-object {$_.name -eq "Primary $LocImportAssetLayoutName" } | select-object -first 1)
-        if ($null -eq $contactLabelType) {
-            $contactLabelType = $(New-HuduLabelType -name "Primary $LocImportAssetLayoutName" -color "Red" -ApplicableRecordTypes @("asset"))
+        if ($null -eq $primaryLocationLabeltype) {
+            $primaryLocationLabeltype = $(New-HuduLabelType -name "Primary $LocImportAssetLayoutName" -color "$(Get-RandomHexColor)" -ApplicableRecordTypes @("asset"))
         }
         $primaryLocations | ForEach-Object {
             New-HuduLabel -LabelTypeId $primaryLocationLabeltype.id -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
         }
     } else {$primaryLocationLabeltype = $null; $primaryLocations = @()}
 
-    # Save the results to resume from if needed
-    $($MatchedLocations ?? @()) | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
 }
@@ -962,7 +964,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         $configLabelType = $null; $configLabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "$configurationstatus" } | select-object -first 1);
 
         if ($null -eq $configLabelType) {
-            $configLabelType = $(New-HuduLabelType -name "$configurationstatus" -color $(if ($configurationstatus -ilike "*active*") {'green'} else {'red'}) -ApplicableRecordTypes @("Assets"))
+            $configLabelType = $(New-HuduLabelType -name "$configurationstatus" -color $(if ($configurationstatus -ilike "*active*") {'green'} else {"$(Get-RandomHexColor)"}) -ApplicableRecordTypes @("Assets"))
         }
         if ($null -eq $configLabelType) {
             Write-Warning "Unable to create or find label type for $configLabelType, skipping label assignment"
@@ -1140,7 +1142,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     # Save the results to resume from if needed
     $Contactlabeltype = $Contactlabeltype ?? $(get-hudulabeltypes | where-object {$_.name -ieq "Important $ConImportAssetLayoutName"} | select-object -first 1)
     if ($null -eq $contactLabelType) {
-        $contactLabelType = $(New-HuduLabelType -name "Important $ConImportAssetLayoutName" -color "Red" -ApplicableRecordTypes @("asset"))
+        $contactLabelType = $(New-HuduLabelType -name "Important $ConImportAssetLayoutName" -color "$(Get-RandomHexColor)" -ApplicableRecordTypes @("asset"))
     }
     $MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id } | ForEach-Object {
         New-HuduLabel -LabelTypeId $contactLabelType.id -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
@@ -2368,7 +2370,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
         $PasswordlabelType = $null; $PasswordlabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "AssetPassword" } | select-object -first 1);
 
         if ($null -eq $PasswordlabelType) {
-            $PasswordlabelType = $(New-HuduLabelType -name "$passwordType" -color "Red" -ApplicableRecordTypes @("AssetPassword"))
+            $PasswordlabelType = $(New-HuduLabelType -name "$passwordType" -color "$(Get-RandomHexColor)" -ApplicableRecordTypes @("AssetPassword"))
         }
         if ($null -eq $PasswordlabelType) {
             Write-Warning "Unable to create or find label type for $passwordType, skipping label assignment"

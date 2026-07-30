@@ -25,7 +25,9 @@ function Normalize-String {
     }
     return "$ascii$extension"
 }
-
+function Get-RandomHexColor {
+    '#{0:X6}' -f [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(0x1000000)
+}
 function Set-ReleaseArtifact {
     Remove-Item -Path "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\*.txt" -Force -ErrorAction SilentlyContinue
     Get-GitCheckoutInfo | Out-File "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\$($(Get-Date -Format o | ForEach-Object { $_ -replace ":", "." })).txt" -Encoding utf8
