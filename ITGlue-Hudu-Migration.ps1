@@ -142,6 +142,173 @@ function Add-HuduLocationAssetTagLayoutField {
     return $true
 }
 
+function Get-HuduMigrationCanonicalLabelRecordType {
+    param(
+        [AllowNull()]
+        [string]$RecordType
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RecordType)) { return $null }
+
+    switch (($RecordType.Trim().ToLowerInvariant() -replace '[\s_-]+', '')) {
+        { $_ -in @('asset', 'assets') } { return 'Asset' }
+        { $_ -in @('assetpassword', 'assetpasswords', 'password', 'passwords') } { return 'AssetPassword' }
+        { $_ -in @('article', 'articles') } { return 'Article' }
+        { $_ -in @('website', 'websites') } { return 'Website' }
+        default { return $RecordType.Trim() }
+    }
+}
+
+function Test-HuduMigrationLabelTypeApplies {
+    param(
+        [Parameter(Mandatory)]
+        $LabelType,
+
+        [Parameter(Mandatory)]
+        [string]$RecordType
+    )
+
+    $canonicalRecordType = Get-HuduMigrationCanonicalLabelRecordType -RecordType $RecordType
+    $recordTypes = foreach ($labelRecordType in @($LabelType.applicable_record_types)) {
+        Get-HuduMigrationCanonicalLabelRecordType -RecordType ([string]$labelRecordType)
+    }
+    $recordTypes = @($recordTypes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    return ($recordTypes.Count -eq 0 -or $recordTypes -icontains $canonicalRecordType)
+}
+
+function Get-HuduMigrationLabelType {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name,
+
+        [Parameter(Mandatory)]
+        [string]$RecordType,
+
+        [string]$Color = "$(Get-RandomHexColor)",
+
+        [hashtable]$Cache
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $null }
+    $canonicalRecordType = Get-HuduMigrationCanonicalLabelRecordType -RecordType $RecordType
+    if ([string]::IsNullOrWhiteSpace($canonicalRecordType)) { return $null }
+
+    if (-not (Get-Command -Name Get-HuduLabelTypes -ErrorAction SilentlyContinue) -or -not (Get-Command -Name New-HuduLabelType -ErrorAction SilentlyContinue)) {
+        Write-Warning "Hudu label type commands are unavailable. Skipping label type '$Name'."
+        return $null
+    }
+
+    $cacheKey = "$($canonicalRecordType.ToLowerInvariant())|$($Name.ToLowerInvariant())"
+    if ($Cache -and $Cache.ContainsKey($cacheKey)) {
+        return $Cache[$cacheKey]
+    }
+
+    $labelType = $null
+    try {
+        $labelType = @(Get-HuduLabelTypes -Name $Name -ErrorAction Stop | Where-Object { $_.name -ieq $Name }) | Select-Object -First 1
+    } catch {
+        Write-Warning "Unable to look up label type '$Name': $($_.Exception.Message)"
+    }
+
+    if ($null -ne $labelType -and -not (Test-HuduMigrationLabelTypeApplies -LabelType $labelType -RecordType $canonicalRecordType)) {
+        if (Get-Command -Name Set-HuduLabelType -ErrorAction SilentlyContinue) {
+            try {
+                $currentTypes = foreach ($labelRecordType in @($labelType.applicable_record_types)) {
+                    Get-HuduMigrationCanonicalLabelRecordType -RecordType ([string]$labelRecordType)
+                }
+                $updatedTypes = @($currentTypes + $canonicalRecordType) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+                $labelType = Set-HuduLabelType -Id $labelType.id -ApplicableRecordTypes $updatedTypes -ErrorAction Stop
+            } catch {
+                Write-Warning "Unable to add '$canonicalRecordType' to existing label type '$Name'. Labels using this type may fail: $($_.Exception.Message)"
+            }
+        } else {
+            Write-Warning "Label type '$Name' exists but is not applicable to '$canonicalRecordType', and Set-HuduLabelType is unavailable."
+        }
+    }
+
+    if ($null -eq $labelType) {
+        try {
+            $labelType = New-HuduLabelType -Name $Name -Color $Color -ApplicableRecordTypes @($canonicalRecordType) -ErrorAction Stop
+        } catch {
+            Write-Warning "Unable to create label type '$Name' for '$canonicalRecordType': $($_.Exception.Message)"
+            return $null
+        }
+    }
+
+    if ($Cache) { $Cache[$cacheKey] = $labelType }
+    return $labelType
+}
+
+function Add-HuduMigrationLabel {
+    param(
+        [Parameter(Mandatory)]
+        [string]$LabelName,
+
+        [Parameter(Mandatory)]
+        [string]$RecordType,
+
+        [Parameter(Mandatory)]
+        [int]$RecordId,
+
+        [string]$RecordName,
+
+        [hashtable]$LabelTypeCache,
+
+        [string]$Color = "$(Get-RandomHexColor)"
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LabelName) -or $RecordId -lt 1) { return $null }
+    $canonicalRecordType = Get-HuduMigrationCanonicalLabelRecordType -RecordType $RecordType
+    if ([string]::IsNullOrWhiteSpace($canonicalRecordType)) { return $null }
+
+    if (-not (Get-Command -Name New-HuduLabel -ErrorAction SilentlyContinue)) {
+        Write-Warning "Hudu label command is unavailable. Skipping label '$LabelName' on '$RecordName'."
+        return $null
+    }
+
+    $labelType = Get-HuduMigrationLabelType -Name $LabelName -RecordType $canonicalRecordType -Color $Color -Cache $LabelTypeCache
+    if ($null -eq $labelType -or $null -eq $labelType.id) { return $null }
+
+    try {
+        if (Get-Command -Name Get-HuduLabels -ErrorAction SilentlyContinue) {
+            $existingLabel = @(Get-HuduLabels -LabelTypeId $labelType.id -Labelable_Type $canonicalRecordType -Labelable_Id $RecordId -ErrorAction Stop) | Select-Object -First 1
+            if ($existingLabel) {
+                return [pscustomobject]@{
+                    LabelName  = $LabelName
+                    LabelTypeId = $labelType.id
+                    RecordType  = $canonicalRecordType
+                    RecordId    = $RecordId
+                    RecordName  = $RecordName
+                    Status      = "AlreadyExists"
+                }
+            }
+        }
+
+        $newLabel = New-HuduLabel -LabelTypeId $labelType.id -Labelable_Type $canonicalRecordType -Labelable_Id $RecordId -ErrorAction Stop
+        return [pscustomobject]@{
+            LabelName  = $LabelName
+            LabelTypeId = $labelType.id
+            RecordType  = $canonicalRecordType
+            RecordId    = $RecordId
+            RecordName  = $RecordName
+            Status      = "Created"
+            HuduLabel   = $newLabel
+        }
+    } catch {
+        Write-Warning "Failed to add label '$LabelName' to $canonicalRecordType '$RecordName' ($RecordId): $($_.Exception.Message)"
+        return [pscustomobject]@{
+            LabelName  = $LabelName
+            LabelTypeId = $labelType.id
+            RecordType  = $canonicalRecordType
+            RecordId    = $RecordId
+            RecordName  = $RecordName
+            Status      = "Failed"
+            Error       = $_.Exception.Message
+        }
+    }
+}
+
 ############################### Companies ###############################
 
 #Grab existing companies in Hudu
@@ -493,21 +660,26 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     # Save the results to resume from if needed
     $($MatchedLocations ?? @()) | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
 
-
-    # add labels for primary locations
-    $primaryLocations = $matchedlocations | where-object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
-    if ($primaryLocations -and $primaryLocations.count -gt 0){
-        $primaryLocationLabeltype = $primaryLocationLabeltype ?? $(get-hudulabeltypes | where-object {$_.name -eq "Primary $LocImportAssetLayoutName" } | select-object -first 1)
-        if ($null -eq $primaryLocationLabeltype) {
-            $primaryLocationLabeltype = $(New-HuduLabelType -name "Primary $LocImportAssetLayoutName" -color "$(Get-RandomHexColor)" -ApplicableRecordTypes @("asset"))
-        }
-        $primaryLocations | ForEach-Object {
-            New-HuduLabel -LabelTypeId $primaryLocationLabeltype.id -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
-        }
-    } else {$primaryLocationLabeltype = $null; $primaryLocations = @()}
-
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
+}
+
+# add labels for primary locations
+$primaryLocations = $matchedlocations | Where-Object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
+if ($primaryLocations -and $primaryLocations.count -gt 0) {
+    $LocationLabelTypeCache = @{}
+    $LocationLabelResults = foreach ($primaryLocation in $primaryLocations) {
+        Add-HuduMigrationLabel `
+            -LabelName "Primary $LocImportAssetLayoutName" `
+            -RecordType "Asset" `
+            -RecordId $primaryLocation.HuduObject.id `
+            -RecordName $primaryLocation.Name `
+            -LabelTypeCache $LocationLabelTypeCache
+    }
+    $LocationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\LocationLabels.json"
+} else {
+    $primaryLocations = @()
+    $LocationLabelResults = @()
 }
 
 $ITGLocationsHashTable = @{}
@@ -960,24 +1132,25 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     $MatchedConfigurations | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Configurations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Configurations Migrated Continue?"  -DefaultResponse "continue to Contacts, please."
 
-    foreach ($configurationstatus in  $( $($MatchedConfigurations | Where-Object {$null -ne $_.huduObject -and $_.null -ne $_.HuduObject.id}).itgobject.attributes.'configuration-status-name' | select-object -Unique)){
-        $configLabelType = $null; $configLabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "$configurationstatus" } | select-object -first 1);
-
-        if ($null -eq $configLabelType) {
-            $configLabelType = $(New-HuduLabelType -name "$configurationstatus" -color $(if ($configurationstatus -ilike "*active*") {'green'} else {"$(Get-RandomHexColor)"}) -ApplicableRecordTypes @("Assets"))
-        }
-        if ($null -eq $configLabelType) {
-            Write-Warning "Unable to create or find label type for $configLabelType, skipping label assignment"
-            continue
-        }
-        foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-            New-HuduLabel -LabelTypeId $configLabelType.id -Labelable_Type "Asset" -Labelable_Id $ConfigLabel.HuduObject.id | out-null
-        }
-    }
-
-
-
 }
+
+$ConfigLabelTypeCache = @{}
+$ConfigurationLabelResults = @()
+foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
+    if ([string]::IsNullOrWhiteSpace([string]$configurationstatus)) { continue }
+
+    $configurationStatusColor = if ($configurationstatus -ilike "*active*") { 'green' } else { "$(Get-RandomHexColor)" }
+    foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+        $ConfigurationLabelResults += Add-HuduMigrationLabel `
+            -LabelName $configurationstatus `
+            -RecordType "Asset" `
+            -RecordId $ConfigLabel.HuduObject.id `
+            -RecordName $ConfigLabel.Name `
+            -LabelTypeCache $ConfigLabelTypeCache `
+            -Color $configurationStatusColor
+    }
+}
+$ConfigurationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ConfigurationLabels.json"
 
 
 ############################### Contacts ###############################
@@ -1139,19 +1312,21 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
 
     Write-Host "Contacts Complete"
 
-    # Save the results to resume from if needed
-    $Contactlabeltype = $Contactlabeltype ?? $(get-hudulabeltypes | where-object {$_.name -ieq "Important $ConImportAssetLayoutName"} | select-object -first 1)
-    if ($null -eq $contactLabelType) {
-        $contactLabelType = $(New-HuduLabelType -name "Important $ConImportAssetLayoutName" -color "$(Get-RandomHexColor)" -ApplicableRecordTypes @("asset"))
-    }
-    $MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id } | ForEach-Object {
-        New-HuduLabel -LabelTypeId $contactLabelType.id -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
-    }
-
     $MatchedContacts | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Contacts.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
 }
+
+$ContactLabelTypeCache = @{}
+$ContactLabelResults = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+    Add-HuduMigrationLabel `
+        -LabelName "Important $ConImportAssetLayoutName" `
+        -RecordType "Asset" `
+        -RecordId $importantContact.HuduObject.id `
+        -RecordName $importantContact.Name `
+        -LabelTypeCache $ContactLabelTypeCache
+}
+$ContactLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ContactLabels.json"
 
 	
 ############################### Flexible Asset Layouts and Assets ###############################
@@ -2366,24 +2541,25 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     # Save the results to resume from if needed
     $MatchedPasswords | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Passwords.json"
     
-    foreach ($passwordType in $( $($MatchedPasswords | Where-Object {$null -ne $_.huduObject}).itgobject.attributes.'password-category-name' | select-object -Unique)){
-        $PasswordlabelType = $null; $PasswordlabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "AssetPassword" } | select-object -first 1);
-
-        if ($null -eq $PasswordlabelType) {
-            $PasswordlabelType = $(New-HuduLabelType -name "$passwordType" -color "$(Get-RandomHexColor)" -ApplicableRecordTypes @("AssetPassword"))
-        }
-        if ($null -eq $PasswordlabelType) {
-            Write-Warning "Unable to create or find label type for $passwordType, skipping label assignment"
-            continue
-        }
-        foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-            New-HuduLabel -LabelTypeId $PasswordlabelType.id -Labelable_Type "AssetPassword" -Labelable_Id $labelablePassword.HuduObject.id | out-null
-        }
-    }
-
     $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Passwords Finished. Continue?"  -DefaultResponse "continue to Document/Article Updates, please."
 }
+
+$PasswordLabelTypeCache = @{}
+$PasswordLabelResults = @()
+foreach ($passwordType in $( $($MatchedPasswords | Where-Object { $null -ne $_.huduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'password-category-name' | Select-Object -Unique)) {
+    if ([string]::IsNullOrWhiteSpace([string]$passwordType)) { continue }
+
+    foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+        $PasswordLabelResults += Add-HuduMigrationLabel `
+            -LabelName $passwordType `
+            -RecordType "AssetPassword" `
+            -RecordId $labelablePassword.HuduObject.id `
+            -RecordName $labelablePassword.Name `
+            -LabelTypeCache $PasswordLabelTypeCache
+    }
+}
+$PasswordLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\PasswordLabels.json"
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
 
