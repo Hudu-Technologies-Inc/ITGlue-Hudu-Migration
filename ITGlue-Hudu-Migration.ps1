@@ -490,6 +490,18 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     #Import Locations
     $MatchedLocations = Import-Items @LocImportSplat
 
+    # add labels for primary locations
+    $primaryLocations = $matchedlocations | where-object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
+    if ($primaryLocations -and $primaryLocations.count -gt 0){
+        $primaryLocationLabeltype = $primaryLocationLabeltype ?? $(get-hudulabeltypes | where-object {$_.name -eq "Primary $LocImportAssetLayoutName" } | select-object -first 1)
+        if ($null -eq $contactLabelType) {
+            $contactLabelType = $(New-HuduLabelType -name "Primary $LocImportAssetLayoutName" -color "Red" -ApplicableRecordTypes @("asset"))
+        }
+        $primaryLocations | ForEach-Object {
+            New-HuduLabel -LabelTypeId $primaryLocationLabeltype.id -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
+        }
+    } else {$primaryLocationLabeltype = $null; $primaryLocations = @()}
+
     # Save the results to resume from if needed
     $($MatchedLocations ?? @()) | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
@@ -1006,12 +1018,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             show_in_list = 'true'
             position     = 4
         },
-        @{
-            label        = 'Important'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 6
-        },
+        # @{
+        #     label        = 'Important'
+        #     field_type   = 'Text'
+        #     show_in_list = 'false'
+        #     position     = 6
+        # },
         @{
             label        = 'Notes'
             field_type   = 'RichText'
@@ -1056,7 +1068,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            'important'    = $unmatchedImport."ITGObject".attributes."important"
+            # 'important'    = $unmatchedImport."ITGObject".attributes."important"
             'notes'        = $unmatchedImport."ITGObject".attributes."notes"
             'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
             'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones" | convertto-html -fragment | out-string
@@ -1077,7 +1089,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            'important'    = $unmatchedImport."ITGObject".attributes."important"
+            # 'important'    = $unmatchedImport."ITGObject".attributes."important"
             'notes'        = $unmatchedImport."ITGObject".attributes."notes"
             'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
             'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones"	| convertto-html -fragment | out-string
@@ -1111,6 +1123,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     Write-Host "Contacts Complete"
 
     # Save the results to resume from if needed
+    $Contactlabeltype = $Contactlabeltype ?? $(get-hudulabeltypes | where-object {$_.name -eq "Important $ConImportAssetLayoutName"} | select-object -first 1)
+    if ($null -eq $contactLabelType) {
+        $contactLabelType = $(New-HuduLabelType -name "Important $ConImportAssetLayoutName" -color "Red" -ApplicableRecordTypes @("asset"))
+    }
+    $MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject } | ForEach-Object {
+        New-HuduLabel -LabelTypeId 2 -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
+    }
+
     $MatchedContacts | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Contacts.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
@@ -2328,6 +2348,22 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
     # Save the results to resume from if needed
     $MatchedPasswords | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Passwords.json"
+    
+    foreach ($passwordType in $( $($MatchedPasswords | Where-Object {$null -ne $_.huduObject}).itgobject.attributes.'password-category-name' | select-object -Unique)){
+        $PasswordlabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "AssetPassword" } | select-object -first 1)
+
+        if ($null -eq $PasswordlabelType) {
+            $PasswordlabelType = $(New-HuduLabelType -name "$passwordType" -color "Red" -ApplicableRecordTypes @("AssetPassword"))
+        }
+        if ($null -eq $PasswordlabelType) {
+            Write-Warning "Unable to create or find label type for $passwordType, skipping label assignment"
+            continue
+        }
+        foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+            New-HuduLabel -LabelTypeId $PasswordlabelType.id -Labelable_Type "AssetPassword" -Labelable_Id $labelablePassword.HuduObject.id | out-null
+        }
+    }
+
     $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Passwords Finished. Continue?"  -DefaultResponse "continue to Document/Article Updates, please."
 }
