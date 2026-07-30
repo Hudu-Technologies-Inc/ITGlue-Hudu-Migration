@@ -222,7 +222,14 @@ foreach ($UploadAsset in $MatchedAssets | Where-Object { $_.HuduID -and $_.HuduI
             }
             continue
         }
-        $newUpload = $null; $newUpload = New-HuduUpload -uploadable_id $UploadAsset.HuduID -filePath $matchedFile.FullName -uploadable_type "Asset"; $newUpload = $newUpload.upload ?? $newUpload;
+        $uploadStatus = "Uploaded Successfully"
+        if (Get-Command -Name Add-HuduUploadOnce -ErrorAction SilentlyContinue) {
+            $uploadResult = Add-HuduUploadOnce -uploadable_id $UploadAsset.HuduID -filePath $matchedFile.FullName -uploadable_type "Asset"
+            $newUpload = $uploadResult.Upload
+            $uploadStatus = $uploadResult.Status
+        } else {
+            $newUpload = New-HuduUpload -uploadable_id $UploadAsset.HuduID -filePath $matchedFile.FullName -uploadable_type "Asset"; $newUpload = $newUpload.upload ?? $newUpload
+        }
         if ($null -eq $newUpload) {
             Write-Warning "Failed to create upload for '$filename' at '$($matchedFile.FullName)' for asset ID $($UploadAsset.HuduID)"
             $UnresolvedUploadFields["$($UploadAsset.HuduID):$name"] = @{
@@ -244,6 +251,7 @@ foreach ($UploadAsset in $MatchedAssets | Where-Object { $_.HuduID -and $_.HuduI
                 ITGFileUrl  = $value.url
                 ITGFileName = $filename
                 MatchScore  = $match.Score
+                UploadStatus = $uploadStatus
                 Upload      = $newUpload
             }
         }
