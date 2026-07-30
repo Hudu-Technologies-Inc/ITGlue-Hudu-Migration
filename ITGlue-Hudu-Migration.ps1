@@ -759,12 +759,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             show_in_list = 'false'
             position     = 16
         },
-        @{
-            label        = 'Configuration Status Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 17
-        },
+        # @{
+        #     label        = 'Configuration Status Name'
+        #     field_type   = 'Text'
+        #     show_in_list = 'false'
+        #     position     = 17
+        # },
         @{
             label        = 'Manufacturer Name'
             field_type   = 'Text'
@@ -837,7 +837,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'configuration type name'   = $unmatchedImport."ITGObject".attributes."configuration-type-name"
             'configuration type kind'   = $unmatchedImport."ITGObject".attributes."configuration-type-kind"
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
-            'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
+            # 'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
@@ -871,7 +871,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'configuration type name'   = $unmatchedImport."ITGObject".attributes."configuration-type-name"
             'configuration type kind'   = $unmatchedImport."ITGObject".attributes."configuration-type-kind"
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
-            'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
+            # 'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
@@ -954,11 +954,26 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         exit 1
     }
 
-
-
     # Save the results to resume from if needed
     $MatchedConfigurations | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Configurations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Configurations Migrated Continue?"  -DefaultResponse "continue to Contacts, please."
+
+    foreach ($configurationstatus in  $( $($MatchedConfigurations | Where-Object {$null -ne $_.huduObject -and $_.null -ne $_.HuduObject.id}).itgobject.attributes.'configuration-status-name' | select-object -Unique)){
+        $configLabelType = $null; $configLabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "$configurationstatus" } | select-object -first 1);
+
+        if ($null -eq $configLabelType) {
+            $configLabelType = $(New-HuduLabelType -name "$configurationstatus" -color $(if ($configurationstatus -ilike "*active*") {'green'} else {'red'}) -ApplicableRecordTypes @("Assets"))
+        }
+        if ($null -eq $configLabelType) {
+            Write-Warning "Unable to create or find label type for $configLabelType, skipping label assignment"
+            continue
+        }
+        foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+            New-HuduLabel -LabelTypeId $configLabelType.id -Labelable_Type "Asset" -Labelable_Id $ConfigLabel.HuduObject.id | out-null
+        }
+    }
+
+
 
 }
 
@@ -1123,12 +1138,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     Write-Host "Contacts Complete"
 
     # Save the results to resume from if needed
-    $Contactlabeltype = $Contactlabeltype ?? $(get-hudulabeltypes | where-object {$_.name -eq "Important $ConImportAssetLayoutName"} | select-object -first 1)
+    $Contactlabeltype = $Contactlabeltype ?? $(get-hudulabeltypes | where-object {$_.name -ieq "Important $ConImportAssetLayoutName"} | select-object -first 1)
     if ($null -eq $contactLabelType) {
         $contactLabelType = $(New-HuduLabelType -name "Important $ConImportAssetLayoutName" -color "Red" -ApplicableRecordTypes @("asset"))
     }
-    $MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject } | ForEach-Object {
-        New-HuduLabel -LabelTypeId 2 -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
+    $MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id } | ForEach-Object {
+        New-HuduLabel -LabelTypeId $contactLabelType.id -Labelable_Type asset -Labelable_Id $_.HuduObject.id | out-null
     }
 
     $MatchedContacts | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Contacts.json"
@@ -2350,7 +2365,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     $MatchedPasswords | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Passwords.json"
     
     foreach ($passwordType in $( $($MatchedPasswords | Where-Object {$null -ne $_.huduObject}).itgobject.attributes.'password-category-name' | select-object -Unique)){
-        $PasswordlabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "AssetPassword" } | select-object -first 1)
+        $PasswordlabelType = $null; $PasswordlabelType = $(get-hudulabeltypes | where-object {$_.name -eq "$passwordType" -and $_.applicable_record_types -ieq "AssetPassword" } | select-object -first 1);
 
         if ($null -eq $PasswordlabelType) {
             $PasswordlabelType = $(New-HuduLabelType -name "$passwordType" -color "Red" -ApplicableRecordTypes @("AssetPassword"))
