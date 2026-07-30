@@ -51,7 +51,6 @@ foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folde
 $settingsTop = $env:APPDATA
 $settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json")
 $defaultSettingsPath = $defaultSettingsPath ?? "$settingsTop\HuduMigration\settings.json"
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 # Function to read back securely stored keys used in the settings.json file
 function ConvertSecureStringToPlainText {
@@ -555,3 +554,4 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion ([version]"2.42.0") -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
