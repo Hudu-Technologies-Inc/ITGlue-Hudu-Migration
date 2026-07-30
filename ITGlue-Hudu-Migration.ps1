@@ -2696,7 +2696,6 @@ if ($true -eq $allowSettingFlagsAndTypes){
 
 write-host "wrapup 5/10... Setting Standalone articles with attachments to filename..."; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
 foreach ($a in $(Get-HuduArticles | where-object {$_.content -eq "Empty Document in IT Glue Export - Please Check IT Glue" -and $_.name -ilike "*.*"})){Set-HuduArticle -id $a.id -content "Please see attached file, $($a.name)"}
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 write-host "wrapup 6/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
 if ($true -eq $importPasswordFolders){
@@ -2711,7 +2710,7 @@ if ($true -eq $importChecklists){
 
 write-host "wrapup 8/10... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Relations";
 # set retry to off/false in HuduAPI module, this will save time during adding potentially existent relations.
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $true} catch {}}
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
 . .\Get-MissingRelations.ps1
 
 write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Archiving Items";
