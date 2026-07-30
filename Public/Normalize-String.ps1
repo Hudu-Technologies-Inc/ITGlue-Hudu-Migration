@@ -126,9 +126,25 @@ function remove-hudupasswordfromfolder {
         [Parameter(Mandatory = $true)]
         [Int]$Id
     )
-    $AssetPassword = [ordered]@{asset_password = $(Get-HuduPasswords -Id $Id) }
-    $AssetPassword.asset_password | Add-Member -MemberType NoteProperty -Name password_folder_id -Force -Value $null
-    Invoke-HuduRequest -Method put -Resource "/api/v1/asset_passwords/$Id" -Body $($AssetPassword | ConvertTo-Json -Depth 10)
+    if ($Id -lt 1) {
+        throw "Refusing to update Hudu password without a valid id. Resolved id was '$Id'."
+    }
+
+    $passwordResponse = Get-HuduPasswords -Id $Id
+    $assetPassword = if ($null -ne $passwordResponse.PSObject.Properties['asset_password']) {
+        $passwordResponse.asset_password
+    } elseif ($null -ne $passwordResponse.PSObject.Properties['asset_passwords']) {
+        @($passwordResponse.asset_passwords) | Where-Object { [int]$_.id -eq $Id } | Select-Object -First 1
+    } else {
+        $passwordResponse
+    }
+
+    if ($null -eq $assetPassword -or @($assetPassword).Count -ne 1) {
+        throw "Expected one Hudu password for id $Id, received $(@($assetPassword).Count)."
+    }
+
+    $assetPassword | Add-Member -MemberType NoteProperty -Name password_folder_id -Force -Value $null
+    Invoke-HuduRequest -Method put -Resource "/api/v1/asset_passwords/$Id" -Body $(@{asset_password = $assetPassword} | ConvertTo-Json -Depth 10)
 }
 
 function New-HuduGlobalPasswordFolder {

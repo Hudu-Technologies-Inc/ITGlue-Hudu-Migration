@@ -28,6 +28,8 @@ if (-not ($FirstTimeLoad -eq 1)) {
 $AttachmentsPath = (Join-Path -Path $ITGlueExportPath -ChildPath "attachments")
 $AttachmentUrlMap = $AttachmentUrlMap ?? @{}
 $ITGlueAttachmentCache = @{}
+$HuduUploadLookup = $HuduUploadLookup ?? @{}
+$HuduUploadLookupLoaded = $HuduUploadLookupLoaded ?? $false
 $MaxHuduUploadBytes = 100MB
 
 if (-not (Get-Variable -Name ManualActions -Scope Global -ErrorAction SilentlyContinue) -and -not (Get-Variable -Name ManualActions -Scope Script -ErrorAction SilentlyContinue)) {
@@ -74,6 +76,130 @@ param(
     if ([string]::IsNullOrWhiteSpace($HuduBaseDomain)) { return [string]$UploadUrl }
 
     return "$($HuduBaseDomain.TrimEnd('/'))/$($UploadUrl.TrimStart('/'))"
+}
+
+function Get-HuduUploadObject {
+param(
+    $Upload
+)
+    if ($null -eq $Upload) { return $null }
+    if ($null -ne $Upload.PSObject.Properties['upload']) { return $Upload.upload }
+    return $Upload
+}
+
+function Get-HuduUploadList {
+param(
+    $Uploads
+)
+    if ($null -eq $Uploads) { return @() }
+    if ($null -ne $Uploads.PSObject.Properties['uploads']) { return @($Uploads.uploads) }
+    if ($null -ne $Uploads.PSObject.Properties['upload']) { return @($Uploads.upload) }
+    return @($Uploads)
+}
+
+function Normalize-HuduUploadName {
+param(
+    [string]$Name
+)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
+    return [IO.Path]::GetFileName($Name).Trim().ToLowerInvariant()
+}
+
+function Get-HuduUploadLookupKey {
+param(
+    [string]$UploadableType,
+    [int]$UploadableId,
+    [string]$Name
+)
+    if ($UploadableId -lt 1 -or [string]::IsNullOrWhiteSpace($UploadableType) -or [string]::IsNullOrWhiteSpace($Name)) {
+        return $null
+    }
+
+    return "$($UploadableType.Trim().ToLowerInvariant())|$UploadableId|$(Normalize-HuduUploadName -Name $Name)"
+}
+
+function Add-HuduUploadToLookup {
+param(
+    $Upload
+)
+    $UploadObject = Get-HuduUploadObject -Upload $Upload
+    if ($null -eq $UploadObject) { return }
+    if (-not [string]::IsNullOrWhiteSpace([string]$UploadObject.archived_at)) { return }
+
+    $Key = Get-HuduUploadLookupKey -UploadableType $UploadObject.uploadable_type -UploadableId $UploadObject.uploadable_id -Name $UploadObject.name
+    if ([string]::IsNullOrWhiteSpace($Key)) { return }
+    if (-not $script:HuduUploadLookup.ContainsKey($Key)) {
+        $script:HuduUploadLookup[$Key] = $UploadObject
+    }
+}
+
+function Initialize-HuduUploadLookup {
+    if ($script:HuduUploadLookupLoaded) { return }
+
+    $script:HuduUploadLookup = @{}
+    try {
+        Write-Host "Loading existing Hudu uploads for idempotency checks..." -ForegroundColor Cyan
+        foreach ($Upload in @(Get-HuduUploadList -Uploads (Get-HuduUploads))) {
+            Add-HuduUploadToLookup -Upload $Upload
+        }
+        Write-Host "Loaded $($script:HuduUploadLookup.Count) existing Hudu upload keys." -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "Unable to load existing Hudu uploads. Attachment upload idempotency will only apply within this run. $($_.Exception.Message)"
+    }
+    finally {
+        $script:HuduUploadLookupLoaded = $true
+    }
+}
+
+function Find-HuduExistingUpload {
+param(
+    [string]$FileName,
+    [int]$UploadableId,
+    [string]$UploadableType
+)
+    Initialize-HuduUploadLookup
+    $Key = Get-HuduUploadLookupKey -UploadableType $UploadableType -UploadableId $UploadableId -Name $FileName
+    if (-not [string]::IsNullOrWhiteSpace($Key) -and $script:HuduUploadLookup.ContainsKey($Key)) {
+        return $script:HuduUploadLookup[$Key]
+    }
+
+    return $null
+}
+
+function Add-HuduUploadOnce {
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$FilePath,
+
+    [Parameter(Mandatory = $true)]
+    [Alias('uploadable_id')]
+    [int]$UploadableId,
+
+    [Parameter(Mandatory = $true)]
+    [Alias('uploadable_type')]
+    [string]$UploadableType
+)
+    $File = Get-Item -LiteralPath $FilePath -ErrorAction Stop
+    $ExistingUpload = Find-HuduExistingUpload -FileName $File.Name -UploadableId $UploadableId -UploadableType $UploadableType
+    if ($ExistingUpload) {
+        Write-Host "Skipping $($File.Name); already uploaded to Hudu $UploadableType $UploadableId as upload $($ExistingUpload.id)." -ForegroundColor Yellow
+        return [pscustomobject]@{
+            Upload  = $ExistingUpload
+            Skipped = $true
+            Status  = "SKIPPED: Already uploaded"
+        }
+    }
+
+    $HuduUpload = New-HuduUpload -FilePath $File.FullName -uploadable_id $UploadableId -uploadable_type $UploadableType
+    $UploadObject = Get-HuduUploadObject -Upload $HuduUpload
+    Add-HuduUploadToLookup -Upload $UploadObject
+
+    return [pscustomobject]@{
+        Upload  = $UploadObject
+        Skipped = $false
+        Status  = "Uploaded Successfully"
+    }
 }
 
 function Add-AttachmentUrlMapEntry {
@@ -375,7 +501,8 @@ param(
                 }
                 Write-Host "Pushing $($FoundFile.name) to Hudu $($UploadType) $($FoundAsset.name) - $($FoundAsset.HuduID)" -ForegroundColor Blue
                 try {
-                    $HuduUpload = New-HuduUpload -FilePath $FoundFile.fullname -uploadable_id $FoundAsset.HuduID -uploadable_type $UploadType
+                    $HuduUploadResult = Add-HuduUploadOnce -FilePath $FoundFile.fullname -uploadable_id $FoundAsset.HuduID -uploadable_type $UploadType
+                    $HuduUpload = $HuduUploadResult.Upload
                     $FullHuduUploadUrl = Resolve-HuduUploadUrl -Upload $HuduUpload
                     $OriginalAttachmentUrl = Get-OriginalAttachmentUrl -FoundFile $FoundFile -FoundAsset $FoundAsset
                     $ITGlueAttachment = Find-ITGlueAttachmentForFile -FoundFile $FoundFile -FoundAsset $FoundAsset -UploadType $UploadType
@@ -390,7 +517,7 @@ param(
                         Uploadable_ID = $FoundAsset.HuduID
                         Uploadable_Type = $UploadType
                         FilePath  = $FoundFile.fullname
-                        status  = "Uploaded Successfully"
+                        status  = $HuduUploadResult.Status
                     }
                 }
                 catch {
@@ -462,6 +589,7 @@ If ([version]$HuduAppInfo.version -lt [version]$RequiredHuduVersion) {
     Write-Host "This script requires at least version $RequiredHuduVersion. Please update your version of Hudu and run the script again. Your version is $($HuduAppInfo.version)"
     exit 1
 }
+Initialize-HuduUploadLookup
 
 # Check if we have a logs folder. Logs are required to match attachments to entity
 if (Test-Path -Path "$MigrationLogs") {
@@ -560,7 +688,8 @@ if ($CSVMapping) {
                         continue
                     }
                     Write-Host "Uploading $($FileToUpload.fullname) to Hudu Asset $($HuduAssetName) - $($HuduAssetID)" -ForegroundColor Blue
-                    $HuduUpload = New-HuduUpload -FilePath $FileToUpload.fullname -uploadable_id $HuduAssetID -uploadable_type 'Asset'
+                    $HuduUploadResult = Add-HuduUploadOnce -FilePath $FileToUpload.fullname -uploadable_id $HuduAssetID -uploadable_type 'Asset'
+                    $HuduUpload = $HuduUploadResult.Upload
                     if ($fr -match '^https?://') {
                         Add-AttachmentUrlMapEntry -OriginalUrl $fr -HuduUrl (Resolve-HuduUploadUrl -Upload $HuduUpload)
                     }
