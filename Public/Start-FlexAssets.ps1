@@ -176,7 +176,7 @@ param($UpdateAsset)
                         }
 
                         default {
-                            if ($CurrentVersion -ge [version]'2.43.1') {
+                            if ($CurrentVersion -ge [version]'2.44.0') {
                                 $coerced = Get-CastIfNumeric ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
                                 $null = $AssetFields.Add($field.HuduParsedName, $coerced)
                             } else {
@@ -374,7 +374,7 @@ param($UpdateAsset)
                         }
 
                         default {
-                            if ($CurrentVersion -ge [version]'2.43.1') {
+                            if ($CurrentVersion -ge [version]'2.44.0') {
                                 $coerced = Get-CastIfNumeric ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
                                 $null = $AssetFields.Add($field.HuduParsedName, $coerced)
                             } else {

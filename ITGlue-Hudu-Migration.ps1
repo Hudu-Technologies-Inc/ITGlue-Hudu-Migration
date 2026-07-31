@@ -492,8 +492,23 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 
     # Save the results to resume from if needed
     $($MatchedLocations ?? @()) | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
+
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
+}
+
+# add labels for primary locations
+$primaryLocations = $matchedlocations | Where-Object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
+if ($primaryLocations -and $primaryLocations.count -gt 0) {
+    $LocationLabelTypeCache = @{}
+    $LocationLabelResults = foreach ($primaryLocation in $primaryLocations) {
+        write-host "Adding label for primary location $($primaryLocation.Name) for $($primaryLocation.CompanyName) in Hudu" -ForegroundColor DarkCyan
+        Add-HuduMigrationLabel -LabelName "Primary $LocImportAssetLayoutName" -RecordType "Asset" -RecordId $primaryLocation.HuduObject.id -RecordName $primaryLocation.Name -LabelTypeCache $LocationLabelTypeCache
+    }
+    $LocationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\LocationLabels.json"
+} else {
+    $primaryLocations = @()
+    $LocationLabelResults = @()
 }
 
 $ITGLocationsHashTable = @{}
@@ -747,12 +762,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             show_in_list = 'false'
             position     = 16
         },
-        @{
-            label        = 'Configuration Status Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 17
-        },
+        # @{
+        #     label        = 'Configuration Status Name'
+        #     field_type   = 'Text'
+        #     show_in_list = 'false'
+        #     position     = 17
+        # },
         @{
             label        = 'Manufacturer Name'
             field_type   = 'Text'
@@ -825,7 +840,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'configuration type name'   = $unmatchedImport."ITGObject".attributes."configuration-type-name"
             'configuration type kind'   = $unmatchedImport."ITGObject".attributes."configuration-type-kind"
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
-            'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
+            # 'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
@@ -859,7 +874,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             'configuration type name'   = $unmatchedImport."ITGObject".attributes."configuration-type-name"
             'configuration type kind'   = $unmatchedImport."ITGObject".attributes."configuration-type-kind"
             'manufacturer name'  		= $unmatchedImport."ITGObject".attributes."manufacturer-name"			
-            'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
+            # 'configuration status_name' = $unmatchedImport."ITGObject".attributes."configuration-status-name"
             'operating system name'     = $unmatchedImport."ITGObject".attributes."operating-system-name"
             'model name'                = $unmatchedImport."ITGObject".attributes."model-name"
             'contact name'              = $unmatchedImport."ITGObject".attributes."contact-name"
@@ -942,13 +957,22 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         exit 1
     }
 
-
-
     # Save the results to resume from if needed
     $MatchedConfigurations | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Configurations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Configurations Migrated Continue?"  -DefaultResponse "continue to Contacts, please."
 
 }
+
+$ConfigLabelTypeCache = @{}
+$ConfigurationLabelResults = @()
+foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
+    $configurationStatusColor = if ($configurationstatus -ilike "active*") { 'green' } elseif ($configurationstatus -ilike "inactive*") { 'red' } else { "$(Get-RandomHexColor)" }
+    foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+        write-host "Adding label for configuration status $($configurationstatus) for $($ConfigLabel.Name) in Hudu" -ForegroundColor DarkCyan
+        $ConfigurationLabelResults += Add-HuduMigrationLabel -LabelName $configurationstatus -RecordType "Asset" -RecordId $ConfigLabel.HuduObject.id -RecordName $ConfigLabel.Name -LabelTypeCache $ConfigLabelTypeCache -Color $configurationStatusColor
+    }
+}
+$ConfigurationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ConfigurationLabels.json"
 
 
 ############################### Contacts ###############################
@@ -1006,12 +1030,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             show_in_list = 'true'
             position     = 4
         },
-        @{
-            label        = 'Important'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 6
-        },
+        # @{
+        #     label        = 'Important'
+        #     field_type   = 'Text'
+        #     show_in_list = 'false'
+        #     position     = 6
+        # },
         @{
             label        = 'Notes'
             field_type   = 'RichText'
@@ -1056,7 +1080,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            'important'    = $unmatchedImport."ITGObject".attributes."important"
+            # 'important'    = $unmatchedImport."ITGObject".attributes."important"
             'notes'        = $unmatchedImport."ITGObject".attributes."notes"
             'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
             'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones" | convertto-html -fragment | out-string
@@ -1077,7 +1101,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            'important'    = $unmatchedImport."ITGObject".attributes."important"
+            # 'important'    = $unmatchedImport."ITGObject".attributes."important"
             'notes'        = $unmatchedImport."ITGObject".attributes."notes"
             'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
             'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones"	| convertto-html -fragment | out-string
@@ -1110,11 +1134,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
 
     Write-Host "Contacts Complete"
 
-    # Save the results to resume from if needed
     $MatchedContacts | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Contacts.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
 }
+
+$ContactLabelTypeCache = @{}
+$ContactLabelResults = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+    write-host "Adding label for Primary Contact $($importantContact.Name) for $($importantContact.CompanyName) in Hudu" -ForegroundColor DarkCyan
+    Add-HuduMigrationLabel -LabelName "Important $ConImportAssetLayoutName" -RecordType "Asset" -RecordId $importantContact.HuduObject.id -RecordName $importantContact.Name -LabelTypeCache $ContactLabelTypeCache
+}
+$ContactLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ContactLabels.json"
 
 	
 ############################### Flexible Asset Layouts and Assets ###############################
@@ -2328,9 +2358,22 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
     # Save the results to resume from if needed
     $MatchedPasswords | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Passwords.json"
+    
     $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Passwords Finished. Continue?"  -DefaultResponse "continue to Document/Article Updates, please."
 }
+
+$PasswordLabelTypeCache = @{}
+$PasswordLabelResults = @()
+foreach ($passwordType in $( $($MatchedPasswords | Where-Object { $null -ne $_.huduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'password-category-name' | Select-Object -Unique)) {
+    if ([string]::IsNullOrWhiteSpace([string]$passwordType)) { continue }
+
+    foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+        write-host "Adding label for Password $($labelablePassword.Name) as $($passwordType) in Hudu" -ForegroundColor DarkCyan
+        $PasswordLabelResults += Add-HuduMigrationLabel -LabelName $passwordType -RecordType "AssetPassword" -RecordId $labelablePassword.HuduObject.id -RecordName $labelablePassword.Name -LabelTypeCache $PasswordLabelTypeCache
+    }
+}
+$PasswordLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\PasswordLabels.json"
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
 
@@ -2590,7 +2633,10 @@ $AssetRichTextLinkCandidates = @(
     $MatchedAssets.HuduObject | Where-Object { $RichTextFieldsByLayout.ContainsKey([string]$_.asset_layout_id) } | Where-Object {
         $assetLayoutId = $_.asset_layout_id
         @($_.fields | Where-Object {
-            if (Test-HuduAssetFieldIsRichText -Field $_ -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetLayoutId) {
+            if (
+                (Test-HuduAssetFieldIsRichText -Field $_ -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetLayoutId) -and
+                -not (Test-HuduAssetFieldIsITGlueMetadata -Field $_)
+            ) {
                 Test-HuduContentLinkReplacementCandidate `
                     -Content ([string]$_.value) `
                     -Type 'rich' `
@@ -2613,6 +2659,10 @@ $assetRichTextLinkResults = foreach ($assetFound in $AssetRichTextLinkCandidates
 
     foreach ($field in @($assetFound.fields)) {
         if (-not (Test-HuduAssetFieldIsRichText -Field $field -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetFound.asset_layout_id)) {
+            continue
+        }
+
+        if (Test-HuduAssetFieldIsITGlueMetadata -Field $field) {
             continue
         }
 

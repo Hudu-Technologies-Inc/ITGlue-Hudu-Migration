@@ -25,7 +25,7 @@ $settings = @{
     ITGURL                  = "https://changeme.itglue.com"    # Note- Keep this URL Format. No trailing slashes, please
     ITGAPIEndpoint          = "https://api.itglue.com"         # Note- Keep this URL Format. No trailing slashes, please
     customBrandedDomain     = "n"
-    ITGCustomDomains        = ""
+    ITGCustomDomains        = ""            # Note- Keep this URL Format. No trailing slashes, please
     InternalCompany         = "changeme inc."
 
     # If $true, internal-company documents stay under that company instead of Hudu Global KB
