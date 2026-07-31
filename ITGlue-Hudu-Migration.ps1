@@ -142,7 +142,6 @@ function Add-HuduLocationAssetTagLayoutField {
     return $true
 }
 
-
 ############################### Companies ###############################
 
 #Grab existing companies in Hudu
@@ -966,10 +965,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
 $ConfigLabelTypeCache = @{}
 $ConfigurationLabelResults = @()
-foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
-    if ([string]::IsNullOrWhiteSpace([string]$configurationstatus)) { continue }
-
-    $configurationStatusColor = if ($configurationstatus -ilike "active") { 'green' } elseif ($configurationstatus -ilike "inactive") { 'red' } else { "$(Get-RandomHexColor)" }
+foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
+    $configurationStatusColor = if ($configurationstatus -ilike "active*") { 'green' } elseif ($configurationstatus -ilike "inactive*") { 'red' } else { "$(Get-RandomHexColor)" }
     foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
         write-host "Adding label for configuration status $($configurationstatus) for $($ConfigLabel.Name) in Hudu" -ForegroundColor DarkCyan
         $ConfigurationLabelResults += Add-HuduMigrationLabel -LabelName $configurationstatus -RecordType "Asset" -RecordId $ConfigLabel.HuduObject.id -RecordName $ConfigLabel.Name -LabelTypeCache $ConfigLabelTypeCache -Color $configurationStatusColor

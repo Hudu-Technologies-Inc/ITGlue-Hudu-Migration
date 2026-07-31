@@ -41,9 +41,7 @@ function Get-HuduMigrationLabelType {
         [Parameter(Mandatory)]
         [string]$RecordType,
 
-        [string]$Color = "$(Get-RandomHexColor)",
-
-        [hashtable]$Cache
+        [string]$Color = "$(Get-RandomHexColor)"
     )
 
     if ([string]::IsNullOrWhiteSpace($Name)) { return $null }
@@ -55,14 +53,13 @@ function Get-HuduMigrationLabelType {
         return $null
     }
 
-    $cacheKey = "$($canonicalRecordType.ToLowerInvariant())|$($Name.ToLowerInvariant())"
-    if ($Cache -and $Cache.ContainsKey($cacheKey)) {
-        return $Cache[$cacheKey]
-    }
-
     $labelType = $null
     try {
-        $labelType = @(Get-HuduLabelTypes -Name $Name -ErrorAction Stop | Where-Object { $_.name -ieq $Name }) | Select-Object -First 1
+        $matchingTypes = @(Get-HuduLabelTypes -Name $Name -ErrorAction Stop | Where-Object { $_.name -ieq $Name })
+        $labelType = $matchingTypes | Where-Object { Test-HuduMigrationLabelTypeApplies -LabelType $_ -RecordType $canonicalRecordType } | Select-Object -First 1
+        if ($null -eq $labelType) {
+            $labelType = $matchingTypes | Select-Object -First 1
+        }
     } catch {
         Write-Warning "Unable to look up label type '$Name': $($_.Exception.Message)"
     }
@@ -77,9 +74,11 @@ function Get-HuduMigrationLabelType {
                 $labelType = Set-HuduLabelType -Id $labelType.id -ApplicableRecordTypes $updatedTypes -ErrorAction Stop
             } catch {
                 Write-Warning "Unable to add '$canonicalRecordType' to existing label type '$Name'. Labels using this type may fail: $($_.Exception.Message)"
+                return $null
             }
         } else {
             Write-Warning "Label type '$Name' exists but is not applicable to '$canonicalRecordType', and Set-HuduLabelType is unavailable."
+            return $null
         }
     }
 
@@ -92,8 +91,35 @@ function Get-HuduMigrationLabelType {
         }
     }
 
-    if ($Cache) { $Cache[$cacheKey] = $labelType }
     return $labelType
+}
+
+function New-HuduMigrationLabelCacheEntry {
+    param(
+        [Parameter(Mandatory)]
+        $LabelType,
+
+        [Parameter(Mandatory)]
+        [string]$RecordType
+    )
+
+    $existingLabelableIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    if (Get-Command -Name Get-HuduLabels -ErrorAction SilentlyContinue) {
+        try {
+            foreach ($existingLabel in @(Get-HuduLabels -LabelTypeId $LabelType.id -Labelable_Type $RecordType -ErrorAction Stop)) {
+                if ($null -ne $existingLabel.labelable_id) {
+                    [void]$existingLabelableIds.Add([string]$existingLabel.labelable_id)
+                }
+            }
+        } catch {
+            Write-Warning "Unable to load existing labels for label type '$($LabelType.name)' ($($LabelType.id)): $($_.Exception.Message)"
+        }
+    }
+
+    return [pscustomobject]@{
+        LabelType            = $LabelType
+        ExistingLabelableIds = $existingLabelableIds
+    }
 }
 
 function Add-HuduMigrationLabel {
@@ -123,28 +149,33 @@ function Add-HuduMigrationLabel {
         return $null
     }
 
-    $labelType = Get-HuduMigrationLabelType -Name $LabelName -RecordType $canonicalRecordType -Color $Color -Cache $LabelTypeCache
-    if ($null -eq $labelType -or $null -eq $labelType.id) { return $null }
+    $cacheKey = "$($canonicalRecordType.ToLowerInvariant())|$($LabelName.ToLowerInvariant())"
+    if ($LabelTypeCache -and $LabelTypeCache.ContainsKey($cacheKey)) {
+        $cacheEntry = $LabelTypeCache[$cacheKey]
+    } else {
+        $labelType = Get-HuduMigrationLabelType -Name $LabelName -RecordType $canonicalRecordType -Color $Color
+        if ($null -eq $labelType -or $null -eq $labelType.id) { return $null }
+        $cacheEntry = New-HuduMigrationLabelCacheEntry -LabelType $labelType -RecordType $canonicalRecordType
+        if ($LabelTypeCache) { $LabelTypeCache[$cacheKey] = $cacheEntry }
+    }
 
-    try {
-        if (Get-Command -Name Get-HuduLabels -ErrorAction SilentlyContinue) {
-            $existingLabel = @(Get-HuduLabels -LabelTypeId $labelType.id -Labelable_Type $canonicalRecordType -Labelable_Id $RecordId -ErrorAction Stop) | Select-Object -First 1
-            if ($existingLabel) {
-                return [pscustomobject]@{
-                    LabelName  = $LabelName
-                    LabelTypeId = $labelType.id
-                    RecordType  = $canonicalRecordType
-                    RecordId    = $RecordId
-                    RecordName  = $RecordName
-                    Status      = "AlreadyExists"
-                }
-            }
-        }
-
-        $newLabel = New-HuduLabel -LabelTypeId $labelType.id -Labelable_Type $canonicalRecordType -Labelable_Id $RecordId -ErrorAction Stop
+    if ($cacheEntry.ExistingLabelableIds.Contains([string]$RecordId)) {
         return [pscustomobject]@{
             LabelName  = $LabelName
-            LabelTypeId = $labelType.id
+            LabelTypeId = $cacheEntry.LabelType.id
+            RecordType  = $canonicalRecordType
+            RecordId    = $RecordId
+            RecordName  = $RecordName
+            Status      = "AlreadyExists"
+        }
+    }
+
+    try {
+        $newLabel = New-HuduLabel -LabelTypeId $cacheEntry.LabelType.id -Labelable_Type $canonicalRecordType -Labelable_Id $RecordId -ErrorAction Stop
+        [void]$cacheEntry.ExistingLabelableIds.Add([string]$RecordId)
+        return [pscustomobject]@{
+            LabelName  = $LabelName
+            LabelTypeId = $cacheEntry.LabelType.id
             RecordType  = $canonicalRecordType
             RecordId    = $RecordId
             RecordName  = $RecordName
@@ -155,7 +186,7 @@ function Add-HuduMigrationLabel {
         Write-Warning "Failed to add label '$LabelName' to $canonicalRecordType '$RecordName' ($RecordId): $($_.Exception.Message)"
         return [pscustomobject]@{
             LabelName  = $LabelName
-            LabelTypeId = $labelType.id
+            LabelTypeId = $cacheEntry.LabelType.id
             RecordType  = $canonicalRecordType
             RecordId    = $RecordId
             RecordName  = $RecordName
