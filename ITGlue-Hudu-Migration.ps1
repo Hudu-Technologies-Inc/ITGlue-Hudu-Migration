@@ -2633,10 +2633,7 @@ $AssetRichTextLinkCandidates = @(
     $MatchedAssets.HuduObject | Where-Object { $RichTextFieldsByLayout.ContainsKey([string]$_.asset_layout_id) } | Where-Object {
         $assetLayoutId = $_.asset_layout_id
         @($_.fields | Where-Object {
-            if (
-                (Test-HuduAssetFieldIsRichText -Field $_ -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetLayoutId) -and
-                -not (Test-HuduAssetFieldIsITGlueMetadata -Field $_)
-            ) {
+            if (Test-HuduAssetFieldIsRichText -Field $_ -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetLayoutId) {
                 Test-HuduContentLinkReplacementCandidate `
                     -Content ([string]$_.value) `
                     -Type 'rich' `
@@ -2659,10 +2656,6 @@ $assetRichTextLinkResults = foreach ($assetFound in $AssetRichTextLinkCandidates
 
     foreach ($field in @($assetFound.fields)) {
         if (-not (Test-HuduAssetFieldIsRichText -Field $field -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetFound.asset_layout_id)) {
-            continue
-        }
-
-        if (Test-HuduAssetFieldIsITGlueMetadata -Field $field) {
             continue
         }
 

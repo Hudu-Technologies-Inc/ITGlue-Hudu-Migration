@@ -61,6 +61,9 @@ Items marked with **!** require **JWT** authentication (ITGlue session token fro
 - A Hudu API Key
 - Your Hudu URL
 
+# My ITGlue URL?
+
+Note- since CName-pointed itglue custom domains are discuraged, if you are using a custom domain for your ITglue instance, be sure to use that for your itglue url when asked or filling out environment variables in GUI or file.
 
 # Prerequisites -  ***Hudu Instance***
 
