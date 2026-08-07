@@ -25,7 +25,9 @@ function Normalize-String {
     }
     return "$ascii$extension"
 }
-
+function Get-RandomHexColor {
+    '#{0:X6}' -f [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(0x1000000)
+}
 function Set-ReleaseArtifact {
     Remove-Item -Path "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\*.txt" -Force -ErrorAction SilentlyContinue
     Get-GitCheckoutInfo | Out-File "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\$($(Get-Date -Format o | ForEach-Object { $_ -replace ":", "." })).txt" -Encoding utf8
@@ -127,9 +129,25 @@ function remove-hudupasswordfromfolder {
         [Parameter(Mandatory = $true)]
         [Int]$Id
     )
-    $AssetPassword = [ordered]@{asset_password = $(Get-HuduPasswords -Id $Id) }
-    $AssetPassword.asset_password | Add-Member -MemberType NoteProperty -Name password_folder_id -Force -Value $null
-    Invoke-HuduRequest -Method put -Resource "/api/v1/asset_passwords/$Id" -Body $($AssetPassword | ConvertTo-Json -Depth 10)
+    if ($Id -lt 1) {
+        throw "Refusing to update Hudu password without a valid id. Resolved id was '$Id'."
+    }
+
+    $passwordResponse = Get-HuduPasswords -Id $Id
+    $assetPassword = if ($null -ne $passwordResponse.PSObject.Properties['asset_password']) {
+        $passwordResponse.asset_password
+    } elseif ($null -ne $passwordResponse.PSObject.Properties['asset_passwords']) {
+        @($passwordResponse.asset_passwords) | Where-Object { [int]$_.id -eq $Id } | Select-Object -First 1
+    } else {
+        $passwordResponse
+    }
+
+    if ($null -eq $assetPassword -or @($assetPassword).Count -ne 1) {
+        throw "Expected one Hudu password for id $Id, received $(@($assetPassword).Count)."
+    }
+
+    $assetPassword | Add-Member -MemberType NoteProperty -Name password_folder_id -Force -Value $null
+    Invoke-HuduRequest -Method put -Resource "/api/v1/asset_passwords/$Id" -Body $(@{asset_password = $assetPassword} | ConvertTo-Json -Depth 10)
 }
 
 function New-HuduGlobalPasswordFolder {
@@ -604,6 +622,46 @@ function ChoseBest-ByName {
 return $($choices | ForEach-Object {
 [pscustomobject]@{Choice = $_; Score  = $(Get-SimilaritySafe -a "$Name" -b $(if ([string]::IsNullOrEmpty($prop)){$_} else {$_.$prop}))}} | where-object {$_.Score -ge 0.97} | Sort-Object Score -Descending | select-object -First 1).Choice
 
+}
+
+function Write-InternalCompanyValidationError {
+    param (
+        [AllowNull()]
+        [object[]]$Matches,
+
+        [Parameter(Mandatory)]
+        [string]$InternalCompany
+    )
+
+    $matchCount = @($Matches).Count
+
+    Write-Host "`nInternal company validation failed." -ForegroundColor Red
+    Write-Host "Expected exactly 1 organization named '$InternalCompany', but found $matchCount." -ForegroundColor Red
+
+    if ($matchCount -gt 1) {
+        $renameCount = $matchCount - 1
+
+        Write-Host @"
+
+IT Glue contains multiple organizations named '$InternalCompany'.
+
+You can resolve this by doing one of the following:
+
+1. Rename $renameCount of the matching organizations so that only your internal company has this name, then create a new IT Glue export and rerun the script.
+2. Set `$PlaceInternalDocsInInternalCompany to `$true to skip the internal-company matching requirement. [Note, organizations with the same name will have an appended number attached to them since Hudu does not allow duplicate company names ($InternalCompany-1, $InternalCompany-2, etc.)]
+"@ -ForegroundColor Red
+    }
+    else {
+        Write-Host @"
+
+The internal company '$InternalCompany' was not found in IT Glue.
+
+You can resolve this by doing one of the following:
+
+1. Confirm that the organization exists in IT Glue and that `$InternalCompany exactly matches its name.
+2. Set `$PlaceInternalDocsInInternalCompany to `$true to skip the internal-company matching requirement.
+"@ -ForegroundColor Red
+    }
 }
 
 function Get-SafeCount {

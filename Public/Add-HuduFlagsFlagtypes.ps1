@@ -47,4 +47,4 @@ foreach ($objectType in $TaggingTargets.GetEnumerator()) {
         Write-Host "No optional flags configured for $key, skipping"
     }
 }
-if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $false} catch {}}
+if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {if ([string]::IsNullOrWhiteSpace($errorsfolder)) {Set-HapiErrorsDirectory -skipRetry $false } else { Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false } } catch {}}

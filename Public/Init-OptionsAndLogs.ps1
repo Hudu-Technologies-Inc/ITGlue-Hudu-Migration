@@ -98,14 +98,28 @@ function Select-ObjectFromList($objects, $message, $inspectObjects = $false, $al
     }
 }
 function Get-EnsuredPath {
-    param([string]$path)
-    $outpath = if (-not $path -or [string]::IsNullOrWhiteSpace($path)) { $(join-path $(Resolve-Path .).path "debug") } else {$path}
-    if (-not (Test-Path $outpath)) {
-        Get-ChildItem -Path "$outpath" -File -Recurse -Force | Remove-Item -Force
-        New-Item -ItemType Directory -Path $outpath -Force -ErrorAction Stop | Out-Null
-        write-host "path is now present: $outpath"
-    } else {write-host "path is present: $outpath"}
-    return $outpath
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string]$Path,
+
+        [switch]$Quiet
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Get-EnsuredPath requires a non-blank path."
+    }
+
+    $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Container)) {
+        New-Item -ItemType Directory -Path $resolvedPath -Force -ErrorAction Stop | Out-Null
+        if (-not $Quiet) { Write-Host "path is now present: $resolvedPath" }
+    } else {
+        if (-not $Quiet) { Write-Host "path is present: $resolvedPath" }
+    }
+
+    return $resolvedPath
 }
 
 function Write-ErrorObjectsToFile {
@@ -152,13 +166,13 @@ $stringOutput
 $propertyDump
 "@
 
-    if ($ErroredItemsFolder -and (Test-Path $ErroredItemsFolder)) {
+    if ($errorsfolder -and (Test-Path $errorsfolder)) {
         $SafeName = ($Name -replace '[\\/:*?"<>|]', '_') -replace '\s+', ''
         if ($SafeName.Length -gt 60) {
             $SafeName = $SafeName.Substring(0, 60)
         }
         $filename = "${SafeName}_error_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-        $fullPath = Join-Path $ErroredItemsFolder $filename
+        $fullPath = Join-Path $errorsfolder $filename
         Set-Content -Path $fullPath -Value $logContent -Encoding UTF8
         if ($Color) {
             Write-Host "Error written to $fullPath" -ForegroundColor $Color
@@ -204,7 +218,7 @@ function Set-ExternalModulesInitialized {
             [string]$HAPImodulePath = "C:\Users\$env:USERNAME\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1",
             [bool]$use_hudu_fork = $true,
             [bool]$RefreshHuduApiForkEachRun = $true,
-            [version]$RequiredHuduVersion = [version]"2.43.1",
+            [version]$RequiredHuduVersion = [version]"2.44.0",
             $DisallowedVersions = @([version]"2.37.0"),
             [string]$HuduApiRepositoryUrl = $($env:HUDUAPI_REPOSITORY_URL ?? "https://github.com/Hudu-Technologies-Inc/HuduAPI.git"),
             [string]$HuduApiBranch = $($env:HUDUAPI_REPOSITORY_BRANCH ?? "master"),

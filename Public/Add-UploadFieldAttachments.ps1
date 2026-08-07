@@ -201,7 +201,35 @@ foreach ($UploadAsset in $MatchedAssets | Where-Object { $_.HuduID -and $_.HuduI
         write-host "Matched '$filename' to '$($match.File.FullName)' with score $($match.Score) for asset ID $($UploadAsset.HuduID)"
 
         $matchedFile = $match.File
-        $newUpload = $null; $newUpload = New-HuduUpload -uploadable_id $UploadAsset.HuduID -filePath $matchedFile.FullName -uploadable_type "Asset"; $newUpload = $newUpload.upload ?? $newUpload;
+        if ($matchedFile.Length -gt ($MaxHuduUploadBytes ?? 100MB)) {
+            $fileSize = if (Get-Command -Name Format-FileSize -ErrorAction SilentlyContinue) {
+                Format-FileSize -Bytes $matchedFile.Length
+            } else {
+                "$([Math]::Round($matchedFile.Length / 1MB, 2)) MB"
+            }
+            Write-Warning "Skipping upload field attachment '$filename' because it is larger than 100 MB ($fileSize). Added to manual actions."
+            if (Get-Command -Name Add-OversizedAttachmentManualAction -ErrorAction SilentlyContinue) {
+                Add-OversizedAttachmentManualAction -FoundFile $matchedFile -FoundAsset $UploadAsset -UploadType "Asset" -FieldName $name
+            }
+            $UnresolvedUploadFields["$($UploadAsset.HuduID):$name"] = @{
+                UploadAsset = $UploadAsset
+                FieldName   = $name
+                FilePath    = $matchedFile.FullName
+                ITGFileUrl  = $value.url
+                ITGFileName = $filename
+                MatchScore  = $match.Score
+                Problem     = "Attachment is larger than 100 MB"
+            }
+            continue
+        }
+        $uploadStatus = "Uploaded Successfully"
+        if (Get-Command -Name Add-HuduUploadOnce -ErrorAction SilentlyContinue) {
+            $uploadResult = Add-HuduUploadOnce -uploadable_id $UploadAsset.HuduID -filePath $matchedFile.FullName -uploadable_type "Asset"
+            $newUpload = $uploadResult.Upload
+            $uploadStatus = $uploadResult.Status
+        } else {
+            $newUpload = New-HuduUpload -uploadable_id $UploadAsset.HuduID -filePath $matchedFile.FullName -uploadable_type "Asset"; $newUpload = $newUpload.upload ?? $newUpload
+        }
         if ($null -eq $newUpload) {
             Write-Warning "Failed to create upload for '$filename' at '$($matchedFile.FullName)' for asset ID $($UploadAsset.HuduID)"
             $UnresolvedUploadFields["$($UploadAsset.HuduID):$name"] = @{
@@ -223,6 +251,7 @@ foreach ($UploadAsset in $MatchedAssets | Where-Object { $_.HuduID -and $_.HuduI
                 ITGFileUrl  = $value.url
                 ITGFileName = $filename
                 MatchScore  = $match.Score
+                UploadStatus = $uploadStatus
                 Upload      = $newUpload
             }
         }

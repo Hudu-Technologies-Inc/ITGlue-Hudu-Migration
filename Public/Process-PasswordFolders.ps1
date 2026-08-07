@@ -68,14 +68,150 @@ return $($choices | ForEach-Object {
 [pscustomobject]@{Choice = $_; Score  = $(Get-SimilaritySafe -a "$Name" -b $_.name);}} | where-object {$_.Score -ge 0.98} | Sort-Object Score -Descending | select-object -First 1).Choice
 }
 
+function Get-HuduAssetPasswordFromResponse {
+    param (
+        [object]$InputObject,
+
+        [int]$Id = 0
+    )
+
+    if ($null -eq $InputObject) { return $null }
+
+    if ($null -ne $InputObject.PSObject.Properties['asset_password']) {
+        return $InputObject.asset_password
+    }
+
+    if ($null -ne $InputObject.PSObject.Properties['asset_passwords']) {
+        $passwords = @($InputObject.asset_passwords)
+        if ($Id -gt 0) {
+            return $passwords | Where-Object { [int]$_.id -eq $Id } | Select-Object -First 1
+        }
+        if ($passwords.Count -eq 1) { return $passwords[0] }
+        return $passwords
+    }
+
+    $items = @($InputObject)
+    if ($Id -gt 0 -and $items.Count -gt 1) {
+        return $items | Where-Object { [int]$_.id -eq $Id } | Select-Object -First 1
+    }
+    if ($items.Count -eq 1) { return $items[0] }
+    return $items
+}
+
+function Get-HuduAssetPasswordList {
+    param ([object]$InputObject)
+
+    if ($null -eq $InputObject) { return @() }
+    if ($null -ne $InputObject.PSObject.Properties['asset_passwords']) { return @($InputObject.asset_passwords) }
+    if ($null -ne $InputObject.PSObject.Properties['asset_password']) { return @($InputObject.asset_password) }
+    return @($InputObject)
+}
+
+function Get-HuduPasswordFolderFromResponse {
+    param ([object]$InputObject)
+
+    if ($null -eq $InputObject) { return $null }
+    if ($null -ne $InputObject.PSObject.Properties['password_folder']) { return $InputObject.password_folder }
+    if ($null -ne $InputObject.PSObject.Properties['password_folders']) {
+        $folders = @($InputObject.password_folders)
+        if ($folders.Count -eq 1) { return $folders[0] }
+        return $folders
+    }
+    return $InputObject
+}
+
+function Get-HuduPasswordIdFromMatch {
+    param ([object]$MatchedPassword)
+
+    $candidates = @(
+        $MatchedPassword.HuduID
+        $MatchedPassword.HuduObject.id
+        $MatchedPassword.HuduObject.asset_password.id
+    )
+
+    if ($null -ne $MatchedPassword.HuduObject.PSObject.Properties['asset_passwords']) {
+        $passwords = @($MatchedPassword.HuduObject.asset_passwords)
+        if ($passwords.Count -eq 1) {
+            $candidates += $passwords[0].id
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        foreach ($value in @($candidate)) {
+            $parsed = 0
+            if ([int]::TryParse([string]$value, [ref]$parsed) -and $parsed -gt 0) {
+                return $parsed
+            }
+        }
+    }
+
+    return $null
+}
+
+function Get-HuduPasswordCompanyIdFromMatch {
+    param ([object]$MatchedPassword)
+
+    $candidates = @(
+        $MatchedPassword.HuduObject.company_id
+        $MatchedPassword.HuduObject.asset_password.company_id
+    )
+
+    if ($null -ne $MatchedPassword.HuduObject.PSObject.Properties['asset_passwords']) {
+        $passwords = @($MatchedPassword.HuduObject.asset_passwords)
+        if ($passwords.Count -eq 1) {
+            $candidates += $passwords[0].company_id
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        foreach ($value in @($candidate)) {
+            $parsed = 0
+            if ([int]::TryParse([string]$value, [ref]$parsed) -and $parsed -gt 0) {
+                return $parsed
+            }
+        }
+    }
+
+    return $null
+}
+
+function Set-HuduPasswordFolderAssignment {
+    param (
+        [Parameter(Mandatory = $true)]
+        [int]$Id,
+
+        [Alias('company_id')]
+        [int]$CompanyId,
+
+        [Alias('password_folder_id')]
+        [AllowNull()]
+        [object]$PasswordFolderId
+    )
+
+    if ($Id -lt 1) {
+        throw "Refusing to update Hudu password without a valid id. Resolved id was '$Id'."
+    }
+
+    $assetPassword = Get-HuduAssetPasswordFromResponse -InputObject (Get-HuduPasswords -Id $Id) -Id $Id
+    if ($null -eq $assetPassword -or @($assetPassword).Count -ne 1) {
+        throw "Expected one Hudu password for id $Id, received $(@($assetPassword).Count)."
+    }
+
+    if ($CompanyId -gt 0) {
+        $assetPassword | Add-Member -MemberType NoteProperty -Name company_id -Force -Value $CompanyId
+    }
+    $assetPassword | Add-Member -MemberType NoteProperty -Name password_folder_id -Force -Value $PasswordFolderId
+
+    $body = @{asset_password = $assetPassword} | ConvertTo-Json -Depth 10
+    Invoke-HuduRequest -Method put -Resource "/api/v1/asset_passwords/$Id" -Body $body
+}
+
 function remove-hudupasswordfromfolder {
     Param (
         [Parameter(Mandatory = $true)]
         [Int]$Id
     )
-    $AssetPassword = [ordered]@{asset_password = $(Get-HuduPasswords -Id $Id) }
-    $AssetPassword.asset_password | Add-Member -MemberType NoteProperty -Name password_folder_id -Force -Value $null
-    Invoke-HuduRequest -Method put -Resource "/api/v1/asset_passwords/$Id" -Body $($AssetPassword | ConvertTo-Json -Depth 10)
+    Set-HuduPasswordFolderAssignment -Id $Id -PasswordFolderId $null
 }
 
 function New-HuduGlobalPasswordFolder {
@@ -149,8 +285,12 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
         }
 
     # 5) Derive the Hudu company id from those passwords; ensure they all agree
-        $companyGroups = $passwordsForFolder | where-object {$_.HuduObject.company_id -and $_.HuduObject.company_id -ge 1} | Group-Object { $_.HuduObject.company_id }
-        if ($companyGroups.Count -ne 1) {
+        $companyGroups = $passwordsForFolder | Where-Object {
+            (Get-HuduPasswordCompanyIdFromMatch -MatchedPassword $_) -ge 1
+        } | Group-Object { Get-HuduPasswordCompanyIdFromMatch -MatchedPassword $_ }
+        if ($companyGroups.Count -lt 1) {
+            $HuduCompanyId = $null
+        } elseif ($companyGroups.Count -ne 1) {
             $dominant = $companyGroups | Sort-Object Count -Descending | Select-Object -First 1
             $HuduCompanyId = [int]$dominant.Name
             $passwordsForFolder = $dominant.Group
@@ -176,6 +316,7 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
                     Write-Host "Creating Hudu password folder '$FolderName' for company $HuduCompanyId"
                     $existingFolder = New-HuduPasswordFolder -CompanyId $HuduCompanyId -Name $FolderName
                 }
+                $existingFolder = Get-HuduPasswordFolderFromResponse -InputObject $existingFolder
             } else {
             # globals only - fuzzy-match for naming differences ohn source
                 $existingFolder = ChoseBest-ByName -name "$FolderName" -choices $(get-hudupasswordfolders | where-object {-not $_.company_id -or $_.company_id -lt 1 -or $null -eq $_.company_id})
@@ -184,6 +325,7 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
                     $existingFolder = New-HuduGlobalPasswordFolder -Name $FolderName
                     # $global_password_folders = $(get-hudupasswordfolders | where-object {-not $_.company_id -or $_.company_id -lt 1 -or $null -eq $_.company_id})
                 }
+                $existingFolder = Get-HuduPasswordFolderFromResponse -InputObject $existingFolder
             }
             if (-not $existingFolder) {
                 $folderError = "No folder $FolderName for company $HuduCompanyId"
@@ -200,8 +342,18 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
     # 7) Move/place each password
         foreach ($updatePass in $passwordsForFolder) {
             $modified=$false
+            $passwordError = $null
+            $passChanged = $null
+            $existingpass = $null
+            $passwordId = Get-HuduPasswordIdFromMatch -MatchedPassword $updatePass
             try {
-                $existingpass = get-hudupasswords -id $updatePass.HuduObject.id; $existingpass = $existingpass.asset_password ?? $existingpass
+                if (-not $passwordId -or $passwordId -lt 1) {
+                    $passwordError = "No valid Hudu password id could be resolved for IT Glue password $($updatePass.ITGID). Skipping to avoid PUT /asset_passwords/0."
+                    $MatchedPasswordFolders+=[PSCustomObject]@{FolderError=$FolderError; companyError=$companyError; ITGCompanyID= $itgcompanyID; HuduCompanyID=$($existingpass.company_id ?? $HuduCompanyId); ITGPasswordFolder= $passwordFolder; HuduPasswordFolder=$existingFolder; HuduPasswords=$passwordsForFolder; FolderName=$FolderName; PasswordError=$passwordError; Modified = $passChanged; existingFolderPresent=$existingFolderPresent}
+                    continue
+                }
+
+                $existingpass = Get-HuduAssetPasswordFromResponse -InputObject (Get-HuduPasswords -Id $passwordId) -Id $passwordId
                 if (-not $existingpass) {$passwordError =  "no pass can be retrieved"
                     $passwordError =  "no pass can be retrieved without error $_"
                 }
@@ -214,13 +366,13 @@ foreach ($itgcompanyID in ($matchedpasswords.ITGObject.attributes.'organization-
                     continue
                 }
                 try {
-                    $passChanged=$null; $passChanged=Set-HuduPassword `
-                        -Id $updatePass.HuduObject.id `
+                    $passChanged=$null; $passChanged=Set-HuduPasswordFolderAssignment `
+                        -Id $passwordId `
                         -Company_Id $($existingpass.company_id ?? $HuduCompanyId) `
                         -Password_Folder_Id $existingFolder.id
                     $Modified = [bool]$($passChanged -ne $null)
                 } catch {
-                    $passwordError = "Error placing password id $($updatePass.HuduObject.id) in '$FolderName' (Company $HuduCompanyId): $_"
+                    $passwordError = "Error placing password id $passwordId in '$FolderName' (Company $HuduCompanyId): $_"
                     $Modified = $false
                 }
             } catch {
@@ -236,7 +388,7 @@ $minCompanyPctForGlobalFolder = $minCompanyPctForGlobalFolder ?? 0.125 # default
 
 if ($true -eq $companyPasswordFolderAttributionMove -and $true -eq $GlobalPasswordFolderMode) {
     $allPasswordFolders = Get-HuduPasswordFolders | Where-Object { -not $_.company_id -or $_.company_id -lt 1 }
-    $allPasswords = Get-HuduPasswords
+    $allPasswords = @(Get-HuduAssetPasswordList -InputObject (Get-HuduPasswords))
     $companyIdsWithAnyPasswords = $allPasswords.company_id | Where-Object { $_ -ge 1 } | Sort-Object -Unique
     $denom = [math]::Max(1, $companyIdsWithAnyPasswords.Count)
 
@@ -267,7 +419,7 @@ if ($true -eq $companyPasswordFolderAttributionMove -and $true -eq $GlobalPasswo
 
                 foreach ($pass in $companyPasswords) {
                     try {
-                        Set-HuduPassword -Id $pass.id -Company_Id $companyId -Password_Folder_Id $companyScopedFolder.id
+                        Set-HuduPasswordFolderAssignment -Id $pass.id -Company_Id $companyId -Password_Folder_Id $companyScopedFolder.id
                     } catch {
                         Write-Warning "Failed to move password id $($pass.id) to company-scoped folder '$($companyScopedFolder.name)' for company $companyId $_"
                     }
@@ -281,9 +433,9 @@ if ($true -eq $companyPasswordFolderAttributionMove -and $true -eq $GlobalPasswo
     }
 }
 # quick cleaning pass
-$allPasswords = get-hudupasswords
+$allPasswords = @(Get-HuduAssetPasswordList -InputObject (get-hudupasswords))
  foreach ($p in $(get-hudupasswordfolders)) {
-     $pwf = $p.password_folder ?? $p.password_folders ?? $p
+     $pwf = Get-HuduPasswordFolderFromResponse -InputObject $p
 
      $infolder = $allpasswords | Where-Object {
          $_.password_folder_id -eq $pwf.id
