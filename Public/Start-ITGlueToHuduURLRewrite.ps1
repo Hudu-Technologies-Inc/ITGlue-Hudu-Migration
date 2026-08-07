@@ -1,21 +1,7 @@
 function Start-ITGlueToHuduURLRewrite {
 
-Reset-HuduURLReplacementLookup
-$null = Initialize-HuduURLReplacementLookup -Force
-if (-not $AllFields -and -not [string]::IsNullOrWhiteSpace([string]$MigrationLogs) -and (Test-Path "$MigrationLogs\AssetLayoutsFields.json")) {
-    $AllFields = Get-Content "$MigrationLogs\AssetLayoutsFields.json" -Raw | ConvertFrom-Json -Depth 100
-}
-$RichTextFieldsByLayout = New-HuduRichTextFieldLookup -LayoutFields $AllFields
-
-$UpdateArticles = Get-HuduArticles | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.content) }
-$UpdateAssets = $MatchedAssets | Where-Object {
-    $assetLayoutId = $_.HuduObject.asset_layout_id
-    @($_.HuduObject.fields | Where-Object {
-        (Test-HuduAssetFieldIsRichText -Field $_ -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetLayoutId) -and
-        -not (Test-HuduAssetFieldIsITGlueMetadata -Field $_) -and
-        (Test-ITGlueURLReplacementCandidate -Content ([string]$_.value))
-    }).Count -gt 0
-}
+$UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
+$UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -like "*$ITGURL*"}
 $UpdatePasswords = $MatchedPasswords | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.HuduObject.description) }
 $UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object {
     (Test-ITGlueURLReplacementCandidate -Content ([string]$_.HuduObject.description)) -or
@@ -27,8 +13,10 @@ $UpdateCompanyNotes = $MatchedCompanies | Where-Object { Test-ITGlueURLReplaceme
 # Articles
 $articlesUpdated = @()
 foreach ($articleFound in $UpdateArticles) {
-    $NewContent = Convert-ITGlueLinksToHudu -Content $articleFound.content -Type "rich"
-    if ($NewContent -and $NewContent -ne $articleFound.content) {
+    if ($NewContent = Update-StringWithCaptureGroups -inputString $articleFound.content -pattern $RichRegexPatternToMatchSansAssets -type "rich") {
+        $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
+	$NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorUrlPatternToMatch -type "rich"
+    $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorRelativeURLPatternToMatch -type "rich"
         Write-Host "Updating Article $($articleFound.name) with replaced Content" -ForegroundColor 'Green'
 	try {
         $ArticlePost = Set-HuduArticle -Name $articleFound.name -id $articleFound.id -Content $NewContent -ErrorAction Stop
@@ -47,69 +35,43 @@ Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Article URLs Replaced. C
 # Assets
 $assetsUpdated = @()
 foreach ($assetFound in $UpdateAssets.HuduObject) {
+    $replacedStatus = 'clean'
     $customFields = @()
-    $replacementSets = @()
 
     foreach ($field in $assetFound.fields) {
-        if (-not (Test-HuduAssetFieldIsRichText -Field $field -RichTextFieldLookup $RichTextFieldsByLayout -AssetLayoutId $assetFound.asset_layout_id)) {
-            continue
-        }
+        # Convert the caption to snake_case to match API expectations for 2.37.1
+        $label = ($field.caption -replace '[^\w\s]', '') -replace '\s+', '_' | ForEach-Object { $_.ToLower() }
 
-        if (Test-HuduAssetFieldIsITGlueMetadata -Field $field) {
-            continue
-        }
+        if ($label -in @('itglue_url', 'itglue_id', 'imported_from_itglue') -and $field.value -like "*$ITGURL*") {
+            $NewContent = Update-StringWithCaptureGroups -inputString $field.value -pattern $RichRegexPatternToMatchSansAssets -type "rich"
+            $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
 
-        $fieldContent = [string]$field.value
-        if (-not (Test-ITGlueURLReplacementCandidate -Content $fieldContent)) {
-            continue
-        }
-
-        $NewContent = Convert-ITGlueLinksToHudu -Content $fieldContent -Type "rich"
-        if (-not ($NewContent -and $NewContent -ne $fieldContent)) {
-            continue
-        }
-
-        $label = Get-HuduAssetFieldLabel -Field $field
-        if ([string]::IsNullOrWhiteSpace([string]$label)) {
-            Write-Warning "Skipping changed rich text field on asset $($assetFound.name) because Hudu did not return a field label."
-            continue
-        }
-
-        Write-Host "Replacing Asset $($assetFound.name) field $label with updated content" -ForegroundColor 'Red'
-        $customFields += @{ $label = $NewContent }
-        $replacementSets += [pscustomobject]@{
-            Field = $label
-            Type  = 'ITGlueLinks'
+            if ($NewContent -and $NewContent -ne $field.value) {
+                Write-Host "Replacing Asset $($assetFound.name) field $($field.caption) with updated content" -ForegroundColor 'Red'
+                $customFields += @{ $label = $NewContent }
+                $replacedStatus = 'replaced'
+            } else {
+                $customFields += @{ $label = $field.value }
+            }
+        } else {
+            # For other fields, preserve existing value (optional)
+            $customFields += @{ $label = $field.value }
         }
     }
 
-    if ($customFields.Count -lt 1) {
-        $assetsUpdated += @{
-            status           = 'clean'
-            original_asset   = $assetFound
-            updated_asset    = $null
-            replacement_sets = @()
+    if ($replacedStatus -eq 'replaced') {
+        Write-Host "Updating Asset $($assetFound.name) with new custom_fields array" -ForegroundColor 'Green'
+        $AssetPost = Invoke-HuduRequest -Method PUT -Resource "/api/v1/companies/$($assetFound.company_id)/assets/$($assetFound.id)" -Body @{
+            name              = $assetFound.name
+            asset_layout_id   = $assetFound.asset_layout_id
+            custom_fields     = $customFields
         }
-        continue
     }
 
-    Write-Host "Updating Asset $($assetFound.name) with rich text link replacement(s)" -ForegroundColor 'Green'
-    try {
-        $AssetPost = Set-HuduAsset -Id $assetFound.id -CompanyId $assetFound.company_id -Fields $customFields
-        $assetsUpdated += @{
-            status           = 'replaced'
-            original_asset   = $assetFound
-            updated_asset    = $AssetPost.asset ?? $AssetPost
-            replacement_sets = $replacementSets
-        }
-    } catch {
-        $assetsUpdated += @{
-            status            = 'failed'
-            original_asset    = $assetFound
-            attempted_fields  = $customFields
-            replacement_sets  = $replacementSets
-            error             = $_.Exception.Message
-        }
+    $assetsUpdated += @{
+        status         = $replacedStatus
+        original_asset = $originalAsset
+        updated_asset  = $AssetPost.asset
     }
 }
 $assetsUpdated | ConvertTo-Json -depth 100 |Out-file "$MigrationLogs\ReplacedAssetsURL.json"
