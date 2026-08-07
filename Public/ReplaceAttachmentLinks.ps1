@@ -18,7 +18,6 @@ param(
             $Hashtable[[string]$Property.Name] = [string]$Property.Value
         }
     }
-
     return $Hashtable
 }
 

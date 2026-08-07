@@ -2484,6 +2484,7 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
     @{}
 }
 
+
 $ArticleLinkReplacementCandidates = @(
     Get-HuduArticles | Where-Object {
         Test-HuduContentLinkReplacementCandidate `

@@ -34,6 +34,7 @@ function Start-ArticleStubs {
         return $null
     }
 
+
     if ($documentFiles.Count -gt 1) {
         Write-Warning "Found more than one HTML file for this article. Using the first match only."
     }

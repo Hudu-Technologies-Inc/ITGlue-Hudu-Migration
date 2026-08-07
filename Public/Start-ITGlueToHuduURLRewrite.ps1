@@ -6,7 +6,6 @@ $UpdatePasswords = $MatchedPasswords | Where-Object {$_.HuduObject.description -
 $UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object {$_.ITGObject.attributes.notes -like "*$ITGURL*"}
 $UpdateCompanyNotes = $MatchedCompanies | Where-Object {$_.HuduCompanyObject.notes -like "*$ITGURL*"}
 
-
 # Articles
 $articlesUpdated = @()
 foreach ($articleFound in $UpdateArticles) {

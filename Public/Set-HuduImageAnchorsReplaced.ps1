@@ -1,4 +1,3 @@
-
 function Set-HuduImageAnchorsReplaced {
     [CmdletBinding()]
     param(

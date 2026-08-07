@@ -39,6 +39,7 @@ function Get-ReleaseArtifact {
 }
 
 
+
 function Get-GitCheckoutInfo {
     [CmdletBinding()]
     param(

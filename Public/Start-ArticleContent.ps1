@@ -36,7 +36,6 @@ if (-not ($FirstTimeLoad -eq 1)) {
             $ArticleErrors = foreach ($Article in $UnmatchedArticles) {
 
                 $page_out = ''
-                
             
                 # Check for attachments
                 $attachdir = $Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID }
