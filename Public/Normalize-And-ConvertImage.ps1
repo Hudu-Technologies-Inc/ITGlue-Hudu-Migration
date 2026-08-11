@@ -1,14 +1,51 @@
 [string]$WorkingDirectory = "c:\tmp\images"
 
+function Get-ImageTypeFromSignature {
+    param (
+        [string]$FilePath
+    )
+
+    $signature = [byte[]]::new(12)
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $read = $stream.Read($signature, 0, $signature.Length)
+
+        if ($read -ge 8 -and $signature[0] -eq 0x89 -and $signature[1] -eq 0x50 -and $signature[2] -eq 0x4E -and $signature[3] -eq 0x47) { return 'png' }
+        if ($read -ge 3 -and $signature[0] -eq 0xFF -and $signature[1] -eq 0xD8 -and $signature[2] -eq 0xFF) { return 'jpg' }
+        if ($read -ge 6 -and $signature[0] -eq 0x47 -and $signature[1] -eq 0x49 -and $signature[2] -eq 0x46) { return 'gif' }
+        if ($read -ge 2 -and $signature[0] -eq 0x42 -and $signature[1] -eq 0x4D) { return 'bmp' }
+        if ($read -ge 4 -and (($signature[0] -eq 0x49 -and $signature[1] -eq 0x49 -and $signature[2] -eq 0x2A -and $signature[3] -eq 0x00) -or ($signature[0] -eq 0x4D -and $signature[1] -eq 0x4D -and $signature[2] -eq 0x00 -and $signature[3] -eq 0x2A))) { return 'tiff' }
+        if ($read -ge 12 -and $signature[0] -eq 0x52 -and $signature[1] -eq 0x49 -and $signature[2] -eq 0x46 -and $signature[3] -eq 0x46 -and $signature[8] -eq 0x57 -and $signature[9] -eq 0x45 -and $signature[10] -eq 0x42 -and $signature[11] -eq 0x50) { return 'webp' }
+    }
+    catch {
+        return $null
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+    }
+
+    return $null
+}
+
 function Get-ImageType {
     param (
         [string]$FilePath
     )
+
+    $signatureType = Get-ImageTypeFromSignature -FilePath $FilePath
+    if ($signatureType) {
+        return $signatureType
+    }
+
+    $Magick = $null
     try {
         $Magick = New-Object ImageMagick.MagickImage($FilePath)
         return $Magick.Format.ToString().ToLower()
     } catch {
         return $null
+    } finally {
+        if ($Magick) { $Magick.Dispose() }
     }
 }
 function Get-SafeFilename {
@@ -59,7 +96,10 @@ function Normalize-And-ConvertImage {
     # If no extension, guess and rename
     if (-not $originalExt) {
         write-verbose "NO EXTENTION FOR PRESUMED IMAGE: $InputPath"
-        $guessedExt = (New-Object ImageMagick.MagickImage($safePath)).Format.ToString().ToLower()
+        $guessedExt = Get-ImageType $safePath
+        if (-not $guessedExt) {
+            throw "Unable to determine image type for $InputPath"
+        }
         $safePathWithExt = "$safePath.$guessedExt"
         write-verbose "NO EXTENTION IMAGE MOVED TO: $safePathWithExt"
         Move-Item -Path $safePath -Destination $safePathWithExt -Force
@@ -76,12 +116,18 @@ function Normalize-And-ConvertImage {
     # Convert if needed
     if ($type -and -not $preserveExt) {
         write-verbose "IMAGE TYPE NOT IN ALLOWABLE SET... $safePath => $detectedAs converting to jpg"
+        $Magick = $null
         $Magick = New-Object ImageMagick.MagickImage($safePath)
-        $convertedPath = [System.IO.Path]::ChangeExtension($safePath, 'jpg')
-        $Magick.Format = [ImageMagick.MagickFormat]::Jpeg
-        $Magick.Write($convertedPath)
-        $safePath = $convertedPath
-        $type = 'jpg'
+        try {
+            $convertedPath = [System.IO.Path]::ChangeExtension($safePath, 'jpg')
+            $Magick.Format = [ImageMagick.MagickFormat]::Jpeg
+            $Magick.Write($convertedPath)
+            $safePath = $convertedPath
+            $type = 'jpg'
+        }
+        finally {
+            if ($Magick) { $Magick.Dispose() }
+        }
     }
 
     # Normalize name
