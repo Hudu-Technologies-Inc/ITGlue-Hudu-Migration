@@ -159,6 +159,67 @@ function Get-GitCheckoutInfo {
     }
 }
 
+function Set-MigrationRecord {
+    [CmdletBinding()]
+    param(
+        [string]$HuduBaseUrl = $(Get-HuduBaseURL),
+        [securestring]$HuduApiKey = $(Get-HuduApiKey),
+        [string]$CheckOutinfo = $(Get-GitCheckoutInfo),
+        [bool]$selfService = $([bool]::Parse(($env:selfservicemigration ?? "true"))),
+        [string]$product = "ITG"
+
+    )
+    $response = $null
+    $resolvedBaseUrl = $null
+    $resolvedApiKey = $null
+    $requestUri = $null
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($HuduBaseUrl)) {
+            throw "Hudu base URL is not set."
+        }
+
+        if ($null -eq $HuduApiKey) {
+            throw "Hudu API key is not set."
+        }
+
+        $resolvedBaseUrl = $HuduBaseUrl.TrimEnd('/')
+        $resolvedApiKey = (New-Object PSCredential 'user', $HuduApiKey).GetNetworkCredential().Password
+
+        if ([string]::IsNullOrWhiteSpace($resolvedApiKey)) {
+            throw "Resolved Hudu API key is empty."
+        }
+        $requestBody = @{
+            product = $product
+            self_service = $selfService
+            version = $CheckOutinfo
+        }
+        $requestJson = $requestBody | ConvertTo-Json -Depth 5
+
+        $requestUri = "$resolvedBaseUrl/api/v1/migrations"
+        $response = Invoke-WebRequest `
+            -Method Post `
+            -Body $requestJson `
+            -Uri $requestUri `
+            -Headers @{ 'x-api-key' = $resolvedApiKey; 'Accept' = 'application/json' } `
+            -ContentType 'application/json; charset=utf-8' `
+            -SkipHttpErrorCheck `
+            -ErrorAction Stop
+
+        $statusCode = [int]$response.StatusCode
+        if ($statusCode -lt 200 -or $statusCode -ge 300) {
+            Write-Warning "Migration telemetry endpoint returned HTTP $statusCode at $requestUri. Response: $($response.Content)"
+        }
+
+     
+    } catch {
+       write-warning $_.exception.message
+       return $false
+    }
+
+    return $true
+}
+
 function Limit-FilenameLength {
     param (
         [string]$FullFilename,
