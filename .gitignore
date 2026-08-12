@@ -28,4 +28,5 @@ masonz
 */logs/*
 */settings/*
 release/artifacts/2026*
+!release/artifacts/2026-08-12T12.30.03.5187564-04.00.txt
 .DS_Store
