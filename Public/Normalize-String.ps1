@@ -28,17 +28,6 @@ function Normalize-String {
 function Get-RandomHexColor {
     '#{0:X6}' -f [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(0x1000000)
 }
-function Set-ReleaseArtifact {
-    Remove-Item -Path "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\*.txt" -Force -ErrorAction SilentlyContinue
-    Get-GitCheckoutInfo | Out-File "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\$($(Get-Date -Format o | ForEach-Object { $_ -replace ":", "." })).txt" -Encoding utf8
-}
-function Get-ReleaseArtifact {
-    $artifact = (Get-ChildItem -Path "." -Recurse -Directory "artifacts" | Select-Object -First 1 | Get-ChildItem -Filter "*.txt" | Select-Object -First 1)
-    if (-not $(test-path $artifact.FullName)) {
-        return $null
-    }
-    return "$(Get-Content -Path $artifact.FullName)"
-}
 
 
 function Get-HuduAssetFieldLabel {
@@ -127,6 +116,18 @@ function Test-HuduAssetFieldIsRichText {
     $fieldLabel = Get-HuduAssetFieldLabel -Field $Field
     $normalizedLabel = Get-NormalizedHuduFieldLabel -Label $fieldLabel
     return ($normalizedLabel -and $RichTextFieldLookup[$layoutId].ContainsKey($normalizedLabel))
+}
+
+function Set-ReleaseArtifact {
+    Remove-Item -Path "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\*.txt" -Force -ErrorAction SilentlyContinue
+    Get-GitCheckoutInfo | Out-File "$($(get-childitem -path "." -Recurse -Directory "artifacts" | Select-Object -first 1).fullname)\$($(Get-Date -Format o | ForEach-Object { $_ -replace ":", "." })).txt" -Encoding utf8
+}
+function Get-ReleaseArtifact {
+    $artifact = (Get-ChildItem -Path "." -Recurse -Directory "artifacts" | Select-Object -First 1 | Get-ChildItem -Filter "*.txt" | Select-Object -First 1)
+    if (-not $(test-path $artifact.FullName)) {
+        return $null
+    }
+    return "$(Get-Content -Path $artifact.FullName)"
 }
 
 function Get-GitCheckoutInfo {
