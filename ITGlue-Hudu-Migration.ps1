@@ -13,12 +13,17 @@ $FirstTimeLoad = 1
 
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
+$estimatedJobDuration = Get-ITGlueMigrationETA -ExportPath $ITGlueExportPath
+Write-Host "Your Migration is estimated to finish some time around $($ScriptStartTime + $estimatedJobDuration) or about $($estimatedJobDuration.TotalHours) hours from now"
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 
 ###################### Initial Setup and Confirmations ###############################
 Write-Host $InvocationWelcomeText -ForegroundColor Green
 write-host $BackupSafetyText -ForegroundColor DarkCyan
 Write-Host $LiabilityWarning -ForegroundColor Red
+$DisallowedVersions = @([version]("2.37.0"), [version]("2.44.3"))
+if ($DisallowedVersions -contains [version]($CurrentVersion)) {write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red; exit 1;} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
+
 
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
