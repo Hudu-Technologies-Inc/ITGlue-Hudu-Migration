@@ -13,7 +13,11 @@ $FirstTimeLoad = 1
 
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
-$estimatedJobDuration = Get-ITGlueMigrationETA -ExportPath $ITGlueExportPath
+$estimateParams = @{ ExportPath = $ITGlueExportPath }
+if ($false -eq $importPasswordFolders) {
+    $estimateParams['PasswordFolderCount'] = 0
+}
+$estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
 Write-Host "Your Migration is estimated to finish some time around $($ScriptStartTime + $estimatedJobDuration) or about $($estimatedJobDuration.TotalHours) hours from now"
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 
