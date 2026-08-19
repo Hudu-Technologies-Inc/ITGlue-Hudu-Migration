@@ -219,6 +219,7 @@ function Set-ExternalModulesInitialized {
             [bool]$use_hudu_fork = $true,
             [bool]$RefreshHuduApiForkEachRun = $true,
             [version]$RequiredHuduVersion = [version]"2.44.0",
+            [version[]]$DisallowedVersions = @([version]"2.37.0"),
             [string]$HuduApiRepositoryUrl = $($env:HUDUAPI_REPOSITORY_URL ?? "https://github.com/Hudu-Technologies-Inc/HuduAPI.git"),
             [string]$HuduApiBranch = $($env:HUDUAPI_REPOSITORY_BRANCH ?? "master"),
             [string]$HuduApiZipUrl = $env:HUDUAPI_ZIP_URL,
@@ -527,6 +528,15 @@ function Set-ExternalModulesInitialized {
 
     # Check we have the correct version
     $CurrentVersion = [version]($(Get-HuduAppInfo).version)
+    if ($null -eq $CurrentVersion) {
+        throw "Could not determine the current Hudu version."
+    }
+    if ($CurrentVersion -lt $RequiredHuduVersion) {
+        throw "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion."
+    }
+    if ($DisallowedVersions -contains $CurrentVersion) {
+        throw "Hudu version $CurrentVersion is blocked for this migration. Please upgrade or downgrade before continuing."
+    }
 
     try {
         remove-module ITGlueAPI -ErrorAction SilentlyContinue

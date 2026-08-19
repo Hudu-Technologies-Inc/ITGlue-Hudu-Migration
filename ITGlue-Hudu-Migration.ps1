@@ -30,10 +30,11 @@ $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@
 Write-Host $InvocationWelcomeText -ForegroundColor Green
 write-host $BackupSafetyText -ForegroundColor DarkCyan
 Write-Host $LiabilityWarning -ForegroundColor Red
-# $DisallowedVersions = @([version]("2.37.0"), [version]("2.44.1"), [version]("2.44.2"), [version]("2.44.3"))
-if ($null -ne $CurrentVersion -or $CurrentVersion -lt ([version]"2.44.0")) { write-host "Current Hudu version $CurrentVersion is below the required version 2.45.0" -ForegroundColor Red; exit 1 }
-# if ($DisallowedVersions -contains [version]($CurrentVersion)) {write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red; exit 1;} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
 
+# version checking
+$RequiredHuduVersion = [version]"2.45.0"; $DisallowedVersions = @([version]("2.37.0"), [version]("2.44.1"), [version]("2.44.2"), [version]("2.44.3"));
+if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) { write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red; exit 1 }
+if ($DisallowedVersions -contains [version]($CurrentVersion)) {write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red; exit 1;} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
 
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})

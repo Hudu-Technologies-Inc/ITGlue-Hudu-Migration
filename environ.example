@@ -25,7 +25,7 @@ $settings = @{
     ITGURL                  = "https://changeme.itglue.com"    # Note- Keep this URL Format. No trailing slashes, please
     ITGAPIEndpoint          = "https://api.itglue.com"         # Note- Keep this URL Format. No trailing slashes, please
     InternalCompany         = "changeme inc."
-    ITGlueExportPath        = "c:\tmp\export" # Absolute path to export or desired export location
+    ITGlueExportPath        = "c:\tmp\export" # Absolute path to export, or desired export location for automatic download/extract
 
     # If $true, internal-company documents stay under that company instead of Hudu Global KB
     PlaceInternalDocsInInternalCompany = $false
@@ -38,12 +38,11 @@ $settings = @{
 
     # Flexible asset layout in Hudu Naming Prefix
     FAPromptPrefix          = ""
-    customBrandedDomain     = "n"
-    ITGCustomDomains        = ""            # Note- Keep this URL Format. No trailing slashes, please
+
+    # Legacy URL options [cname DNS]
+    customBrandedDomain     = "n"; ITGCustomDomains        = "" # Note- Keep this URL Format. No trailing slashes, please;
 
 
-    # the migration can request a full-tenant IT Glue export, wait for it, download it, and extract it with 7-Zip before continuing.
-    ITGlueExportGenerateZipPassword = $true # Generate and log a secure ZIP password when ITGlueExportZipPassword is blank
     MigrationLogs           = "$logs_folder"
 
     # include ITGlue ID in Contacts, Websites, Locations
