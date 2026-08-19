@@ -320,6 +320,10 @@ $PlaceInternalDocsInInternalCompany = [bool]$environmentSettings.PlaceInternalDo
 
 $ITGlueExportPath = $environmentSettings.ITGlueExportPath
 
+if (-not (Get-Command -Name Ensure-ITGlueExportAvailable -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Get-ITGlueExport.ps1
+}
+
 
 # Choose if you want to resume previous attempts from the last successful section
 $resumeQuestion = $resumeQuestion ?? $(Select-ObjectFromList -message "Would you like to resume a previous migration?" -objects @($true, $false) -allowNull $false)
@@ -416,6 +420,34 @@ if ($InitType -eq 'Full') {
 
 ############################ Migration Logs Path ##############################
 $MigrationLogs = $environmentSettings.MigrationLogs
+
+$AutoDownloadITGlueExport = $AutoDownloadITGlueExport ?? $environmentSettings.AutoDownloadITGlueExport ?? $true
+if ($true -eq $AutoDownloadITGlueExport) {
+    $autoExportParams = @{
+        ITGKey         = $ITGKey
+        ITGBaseURI     = $ITGAPIEndpoint
+        ExportPath     = $ITGlueExportPath
+        DownloadPath   = $ITGlueExportDownloadPath ?? $environmentSettings.ITGlueExportDownloadPath ?? $null
+        SevenZipPath   = $ITGlueExportSevenZipPath ?? $environmentSettings.ITGlueExportSevenZipPath ?? $null
+        ZipPassword    = $ITGlueExportZipPassword ?? $environmentSettings.ITGlueExportZipPassword ?? $null
+        IncludeLogs    = [bool]($ITGlueExportIncludeLogs ?? $environmentSettings.ITGlueExportIncludeLogs ?? $false)
+        PollSeconds    = [int]($ITGlueExportPollSeconds ?? $environmentSettings.ITGlueExportPollSeconds ?? 60)
+        TimeoutMinutes = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)
+    }
+
+    try {
+        $ITGlueExportBootstrap = Ensure-ITGlueExportAvailable @autoExportParams
+        $ITGlueExportPath = $ITGlueExportBootstrap.ExportPath
+        if ($environmentSettings) {
+            $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
+        }
+    } catch {
+        Write-Host "Automatic IT Glue export download/extract failed: $($_.Exception.Message)" -ForegroundColor Red
+        throw
+    }
+} else {
+    Write-Host "Automatic IT Glue export download/extract is disabled. Using configured export path: $ITGlueExportPath" -ForegroundColor Yellow
+}
 
 # Now that ITGlue export jobs require a user to elect to include passwords via checkbox, we need to check for the presence of the passwords.csv and warn user in relation to their migration strategy.
 $resolvedITGlueExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath

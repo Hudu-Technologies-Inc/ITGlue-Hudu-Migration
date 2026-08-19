@@ -49,7 +49,7 @@ if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
 }
 
 write-host "Checking available disk space for migration artifacts" -ForegroundColor DarkCyan
-$preflightExportPath = $settings.ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $ITGlueExportPath
+$preflightExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath
 $preflightTargetPath = $settings.MigrationLogs ?? $environmentSettings.MigrationLogs ?? $MigrationLogs ?? $preflightExportPath
 $diskSpaceCheck = Test-ITGlueExportDiskSpace -ExportPath $preflightExportPath -TargetPath $preflightTargetPath -BufferPercent 15 -Detailed
 Write-Host $diskSpaceCheck.Message -ForegroundColor $(if ($diskSpaceCheck.Success) { 'Green' } else { 'Red' })
