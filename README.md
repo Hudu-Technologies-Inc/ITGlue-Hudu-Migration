@@ -56,10 +56,10 @@ Items marked with **!** require **JWT** authentication (ITGlue session token fro
 ## What you'll need
 - An ITGlue API Key with password access (API access is generally limited to the Enterprise plan)
 - Your IT Glue API URL
-- A full export of your IT Glue tenant (it's recommended to put a halt on IT Glue data updates once you initiate an export)
 - A Hudu instance (either self-hosted or cloud hosted)
 - A Hudu API Key
 - Your Hudu URL
+- A full export of your IT Glue tenant (it's recommended to put a halt on IT Glue data updates once you initiate an export)
 
 # My ITGlue URL?
 

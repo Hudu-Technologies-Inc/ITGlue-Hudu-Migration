@@ -192,6 +192,24 @@ function Get-ITGlueExport {
 
 Set-Alias -Name List-ITGlueExports -Value Get-ITGlueExport -ErrorAction SilentlyContinue
 
+function Get-ITGlueExportRecords {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $ExportsResponse
+    )
+
+    if ($null -eq $ExportsResponse) {
+        return @()
+    }
+
+    if ($null -ne $ExportsResponse.data) {
+        return @($ExportsResponse.data)
+    }
+
+    return @($ExportsResponse)
+}
+
 function Test-ITGlueExportAlreadyAvailableError {
     [CmdletBinding()]
     param(
@@ -239,6 +257,66 @@ function Get-ITGlueExportById {
 }
 
 Set-Alias -Name Show-ITGlueExport -Value Get-ITGlueExportById -ErrorAction SilentlyContinue
+
+function Remove-ITGlueExport {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ITGKey,
+
+        [Parameter(Mandatory = $true)]
+        [Int64]$ExportID,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ITGBaseURI
+    )
+
+    if (-not $PSCmdlet.ShouldProcess("IT Glue export $ExportID", 'Delete')) {
+        return
+    }
+
+    $headers = @{
+        'x-api-key'    = $ITGKey
+        'Content-Type' = 'application/vnd.api+json'
+        'Accept'       = 'application/vnd.api+json'
+    }
+
+    $null = Invoke-RestMethod -Uri "$($ITGBaseURI.TrimEnd('/'))/exports/$ExportID" -Method DELETE -Headers $headers -ErrorAction Stop
+}
+
+function Clear-ITGlueExports {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ITGKey,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ITGBaseURI
+    )
+
+    $exportsResponse = Get-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI
+    $exports = @(Get-ITGlueExportRecords -ExportsResponse $exportsResponse)
+    if ($exports.Count -eq 0) {
+        Write-Host "No existing IT Glue exports found to clear." -ForegroundColor Green
+        return @()
+    }
+
+    $removed = foreach ($export in $exports) {
+        $exportId = Get-ITGlueExportId -Export $export
+        if ($null -eq $exportId) {
+            Write-Warning "Skipping an existing IT Glue export because it did not include an id."
+            continue
+        }
+
+        if ($PSCmdlet.ShouldProcess("IT Glue export $exportId", 'Delete before queuing a new encrypted export')) {
+            Remove-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ExportID $exportId
+            Write-Host "Deleted existing IT Glue export $exportId." -ForegroundColor Yellow
+            $exportId
+        }
+    }
+
+    return @($removed)
+}
 
 function Start-ITGlueExport {
     [CmdletBinding(SupportsShouldProcess = $true)]
