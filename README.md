@@ -59,11 +59,11 @@ Items marked with **!** require **JWT** authentication (ITGlue session token fro
 - A Hudu instance (either self-hosted or cloud hosted)
 - A Hudu API Key
 - Your Hudu URL
-- A full export of your IT Glue tenant, prepared automatically by the migration or manually as a legacy fallback. It's recommended to put a halt on IT Glue data updates once you initiate an export.
+- A full export of your IT Glue tenant, prepared automatically by the migration or manually if you prefer. It's recommended to put a halt on IT Glue data updates once you initiate an export.
 
 # My ITGlue URL?
 
-Note- since CName-pointed itglue custom domains are discuraged, if you are using a custom domain for your ITglue instance, be sure to use that for your itglue url when asked or filling out environment variables in GUI or file.
+Note- since CName-pointed itglue custom domains are now-discuraged, if you are using a custom domain for your ITglue instance, be sure to use that for your itglue url when asked or filling out environment variables in GUI or file.
 
 # Prerequisites -  ***Hudu Instance***
 
@@ -80,8 +80,6 @@ If you've already elected to run through setup, that is fine, but you will need 
 **1. Make sure you are on a known-compatible Hudu version**
 
 This fork requires **Hudu `2.43.1` or newer**. Version **`2.37.0` is blocked** (incompatible). Upgrade self-hosted instances before running the migration.
-
-**Optional — flags and flag types:** If you choose to migrate flags during setup, that path expects **Hudu `2.40.0` or later** (the script will prompt accordingly).
 
 **2 (optional).** If you're self hosted, It's best to set ratelimit to be high. To do so, you can add this to your .env file and perform a docker compose down/up. If you're Cloud/Hudu hosted, the script will automatically wait if it hits the rate limit and will continue automatically.
 
@@ -114,10 +112,6 @@ Make sure the API Key you're using has password access, and that all passwords h
 ## Data Export
 
 The current migration flow can prepare the IT Glue export for you. If the configured `ITGlueExportPath` does not exist or is empty, the script will request a full-tenant export through the IT Glue API, wait for the download URL, download the ZIP, and extract it with 7-Zip before continuing.
-
-1. Set `ITGlueExportPath` to the folder where the extracted export should live.
-2. Include 7-Zip CLI support by bundling `7zip\7za.exe`, installing 7-Zip, or setting `ITGlueExportSevenZipPath` / `ITG_HUDU_7Z_PATH`.
-3. Run the migration normally. When `ITGlueExportZipPassword` is blank, the script generates a secure ZIP password, writes it to `ITGlueExportZipPassword.txt` in the migration logs folder, uses it for the IT Glue export, then reuses it for extraction and retries. By default, it also clears existing IT Glue export records before queueing a new encrypted export so an older archive is not downloaded with a mismatched password.
 
 Manual export still works as a legacy fallback. See [Addendum - Manual Export Legacy](#addendum---manual-export-legacy).
 
@@ -232,8 +226,7 @@ In Chrome, you'll need the "JWT Inspector:"
 
 Then when you click “copy token to clipboard,” that’s what you’ll need to copy into the script. 
 
-
-. .\Move-AssetsToNewLayout
+## 4. Layout Transfers with HuduAssetLayoutTransfer.exe
 
 You'll be prompted for a source layout to get assets from and a target/destination layout.
 For the standalone script, above, a template, named mapping.ps1 will be generated. You'll also see a 'sourcefields.json' file which is for reference.
@@ -247,7 +240,9 @@ You can also add multiple source field labels to the SMOOSHLABELS array, which w
 For filling out locationdata fields, just be sure to fill those out as if they were their own fields, even though they are themselves a singular field. 
 For more information on this specific tool, please see [Switching layouts guide](./SwitchingLayouts.md)
 
-## 4. Organizations with Vaulted Passwords
+***Layout transfer tool was made with ps2exe, which does make some false positives in AV software until code-signing is worked-in, but it is completely safe.***
+
+## 5. Organizations with Vaulted Passwords
 
 If you have organizations that include vaulted or AES-256-GCM encrypted passwords that require a passphrase to access (not common), you'll need to perform the migration as usual, then run the `Un-Vault-Passwords.ps1` script afterwards in the same session.
 
@@ -301,6 +296,7 @@ By using this tool, you acknowledge that you do so at your own risk. The authors
 
 
 # Release Notes
+
 ## Get-MissingRelations.ps1 updated to include from-document, from locations/contacts asssets, and including both related items specifications from ITglue
 This script is run at the very end but is safe to run twice, with the Matched* variables existing from the migration, it'll loop through matched Configurations and Assets (Configurations and Flexible Assets in ITGlue) and pull the latest relations
 
@@ -343,6 +339,8 @@ Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can
 - Archived Assets will be archived even after migration
 - The initialization will prompt for multiple ITGlue domain names and will ATTEMPT (lightly tested) to rewrite ALL of them to the correct Hudu ones.
 
+### Addendum - Flags / FlagTypes (labels are preferred)
+If you choose to migrate flags during setup, that path expects **Hudu `2.40.0` or later** (the script will prompt accordingly).
 
 ### Addendum - Replace Base64 Images
 Use this script to replace previous migrations that embedded Base64 images into your articles. If your Hudu is crashing or running out of memory trying to retrieve articles, this will generally fix it. If API isn't sufficient for collecting the articles you can switch to direct database access with an older version of this script.

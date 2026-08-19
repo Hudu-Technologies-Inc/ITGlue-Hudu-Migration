@@ -43,26 +43,14 @@ $settings = @{
     # Absolute path to 7zip-extracted export
     ITGlueExportPath        = "c:\tmp\export"
 
-    # Optional automatic export bootstrap. If ITGlueExportPath is missing or empty,
-    # the migration can request a full-tenant IT Glue export, wait for it, download it,
-    # and extract it with 7-Zip before continuing.
-    AutoDownloadITGlueExport   = $true
-    ITGlueExportDownloadPath   = "" # Optional .zip output path; defaults next to ITGlueExportPath
-    ITGlueExportSevenZipPath   = "" # Optional full path to 7z.exe; checks bundled .\7z.exe before installed 7-Zip and also honors ITG_HUDU_7Z_PATH
-    ITGlueExportZipPassword    = "" # Optional export ZIP password, if you want IT Glue to encrypt the export
+    # the migration can request a full-tenant IT Glue export, wait for it, download it, and extract it with 7-Zip before continuing.
     ITGlueExportGenerateZipPassword = $true # Generate and log a secure ZIP password when ITGlueExportZipPassword is blank
-    ITGlueExportClearExistingExports = $true # Delete existing IT Glue export records before queueing a new encrypted export to avoid password mismatch
-    ITGlueExportIncludeLogs    = $false
-    ITGlueExportPollSeconds    = 60
-    ITGlueExportTimeoutMinutes = 240
-
-    # Alternative logs folder?
     MigrationLogs           = "$logs_folder"
 
     # include ITGlue ID in Contacts, Websites, Locations
     IncludeITGlueID         = $true
 
-    # Split configurations into individual asset layouts y/n
+    # Split configurations into individual asset layouts?
     SplitConfigurations     = $false
 }
 
@@ -70,7 +58,7 @@ $settings = @{
 $ITGKey                     = "ITG.key"
 $HuduApiKey                 = "HUDU.key"
 
-$ITGlueJWT = "" # "eyJ..." #only needed for checklists
+# $ITGlueJWT = "" # "eyJ..." #only needed for checklists
 
 
 # settings folder path
