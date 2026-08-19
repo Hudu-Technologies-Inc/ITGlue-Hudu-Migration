@@ -117,7 +117,7 @@ The current migration flow can prepare the IT Glue export for you. If the config
 
 1. Set `ITGlueExportPath` to the folder where the extracted export should live.
 2. Include 7-Zip CLI support by bundling `7zip\7za.exe`, installing 7-Zip, or setting `ITGlueExportSevenZipPath` / `ITG_HUDU_7Z_PATH`.
-3. Run the migration normally. When `ITGlueExportZipPassword` is blank, the script generates a secure ZIP password, writes it to `ITGlueExportZipPassword.txt` in the migration logs folder, uses it for the IT Glue export, then reuses it for extraction and retries.
+3. Run the migration normally. When `ITGlueExportZipPassword` is blank, the script generates a secure ZIP password, writes it to `ITGlueExportZipPassword.txt` in the migration logs folder, uses it for the IT Glue export, then reuses it for extraction and retries. By default, it also clears existing IT Glue export records before queueing a new encrypted export so an older archive is not downloaded with a mismatched password.
 
 Manual export still works as a legacy fallback. See [Addendum - Manual Export Legacy](#addendum---manual-export-legacy).
 

@@ -432,6 +432,7 @@ if ($true -eq $AutoDownloadITGlueExport) {
         ZipPassword    = $ITGlueExportZipPassword ?? $environmentSettings.ITGlueExportZipPassword ?? $null
         LogsPath       = $MigrationLogs
         GenerateZipPassword = [bool]($ITGlueExportGenerateZipPassword ?? $environmentSettings.ITGlueExportGenerateZipPassword ?? $true)
+        ClearExistingExports = [bool]($ITGlueExportClearExistingExports ?? $environmentSettings.ITGlueExportClearExistingExports ?? $true)
         IncludeLogs    = [bool]($ITGlueExportIncludeLogs ?? $environmentSettings.ITGlueExportIncludeLogs ?? $false)
         PollSeconds    = [int]($ITGlueExportPollSeconds ?? $environmentSettings.ITGlueExportPollSeconds ?? 60)
         TimeoutMinutes = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)

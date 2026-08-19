@@ -526,6 +526,8 @@ function Ensure-ITGlueExportAvailable {
 
         [bool]$GenerateZipPassword = $true,
 
+        [bool]$ClearExistingExports = $true,
+
         [bool]$IncludeLogs = $false,
 
         [ValidateRange(5, 3600)]
@@ -576,22 +578,44 @@ function Ensure-ITGlueExportAvailable {
     $startedExport = $null
     $exportId = $null
     $usedExistingExport = $false
+    $clearedExportIds = @()
 
-    try {
-        $startedExport = Start-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ZipPassword $ZipPassword -IncludeLogs $IncludeLogs
-        $exportId = Get-ITGlueExportId -Export $startedExport
-        if ($null -eq $exportId) {
-            Write-Warning "IT Glue did not return an export id. Falling back to export list polling."
-        } else {
-            Write-Host "IT Glue export queued with id $exportId." -ForegroundColor Green
-        }
-    } catch {
-        if (-not (Test-ITGlueExportAlreadyAvailableError -ErrorRecord $_)) {
-            throw
-        }
+    if ($true -eq $ClearExistingExports) {
+        Write-Host "Clearing existing IT Glue exports before queueing a new encrypted export." -ForegroundColor Yellow
+        $clearedExportIds = @(Clear-ITGlueExports -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI)
+    } else {
+        Write-Host "Existing IT Glue exports will not be cleared before queueing. A duplicate export response may reuse an existing download." -ForegroundColor Yellow
+    }
 
-        $usedExistingExport = $true
-        Write-Host "IT Glue reports a matching export is already available. Reusing the existing export download." -ForegroundColor Yellow
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $startedExport = Start-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ZipPassword $ZipPassword -IncludeLogs $IncludeLogs
+            $exportId = Get-ITGlueExportId -Export $startedExport
+            if ($null -eq $exportId) {
+                Write-Warning "IT Glue did not return an export id. Falling back to export list polling."
+            } else {
+                Write-Host "IT Glue export queued with id $exportId." -ForegroundColor Green
+            }
+            break
+        } catch {
+            if (-not (Test-ITGlueExportAlreadyAvailableError -ErrorRecord $_)) {
+                throw
+            }
+
+            if ($true -ne $ClearExistingExports) {
+                $usedExistingExport = $true
+                Write-Host "IT Glue reports a matching export is already available. Reusing the existing export download." -ForegroundColor Yellow
+                break
+            }
+
+            if ($attempt -ge 3) {
+                throw "IT Glue still reports a matching export is already available after clearing existing exports. Wait a few minutes and retry, or set ITGlueExportClearExistingExports to `$false only if you know the existing export password matches this run."
+            }
+
+            Write-Warning "IT Glue still reports a matching export after cleanup. Waiting 15 seconds, clearing again, and retrying export queue attempt $($attempt + 1) of 3."
+            Start-Sleep -Seconds 15
+            $clearedExportIds += @(Clear-ITGlueExports -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI)
+        }
     }
 
     $readyExport = Wait-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ExportID $exportId -PollSeconds $PollSeconds -TimeoutMinutes $TimeoutMinutes
@@ -609,5 +633,6 @@ function Ensure-ITGlueExportAvailable {
         Reused       = $usedExistingExport
         Extracted    = $true
         PasswordLog  = $generatedPasswordInfo.Path
+        ClearedExports = $clearedExportIds
     }
 }
