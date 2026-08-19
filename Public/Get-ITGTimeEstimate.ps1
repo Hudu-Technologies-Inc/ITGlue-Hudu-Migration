@@ -8,6 +8,8 @@ function Get-ITGlueMigrationETA {
         [Nullable[int]] $RelationCount = $null,
         [Nullable[int]] $RelationSourceCount = $null,
         [string] $MigrationLogsPath,
+        [Alias('ITGAPIEndpoint')]
+        [string] $ITGBaseURI,
 
         [double] $Buffer = 1.0,
         [switch] $Detailed
@@ -32,6 +34,8 @@ function Get-ITGlueMigrationETA {
         IPAM                 = 0.85
         LinkReplacementItem  = 0.026
         ArchiveItem          = 0.65
+        LabelType            = 1.50
+        Label                = 0.18
         RelationSourceObject = 0.50
         RelationCreate       = 0.82
     }
@@ -108,6 +112,90 @@ function Get-ITGlueMigrationETA {
         if ([string]::IsNullOrWhiteSpace($text)) { return $false }
 
         return $text.ToLowerInvariant() -notin @('no', 'false', '0')
+    }
+
+    function Test-TruthyExportValue {
+        param($Value)
+
+        if ($null -eq $Value) { return $false }
+
+        $text = ([string]$Value).Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+
+        return $text.ToLowerInvariant() -in @('true', 'yes', 'y', '1')
+    }
+
+    function Get-TrimmedPropertyValue {
+        param(
+            [object] $Row,
+            [string] $PropertyName
+        )
+
+        if ($null -eq $Row -or [string]::IsNullOrWhiteSpace($PropertyName)) { return $null }
+        if ($Row.PSObject.Properties.Name -notcontains $PropertyName) { return $null }
+
+        $value = ([string]$Row.$PropertyName).Trim()
+        if ([string]::IsNullOrWhiteSpace($value)) { return $null }
+
+        return $value
+    }
+
+    function Get-NonBlankPropertyCount {
+        param(
+            [object[]] $Rows,
+            [string] $PropertyName
+        )
+
+        return @(
+            @($Rows) | Where-Object {
+                $null -ne (Get-TrimmedPropertyValue -Row $_ -PropertyName $PropertyName)
+            }
+        ).Count
+    }
+
+    function Get-UniqueNonBlankPropertyCount {
+        param(
+            [object[]] $Rows,
+            [string] $PropertyName
+        )
+
+        return @(
+            @($Rows) |
+                ForEach-Object { Get-TrimmedPropertyValue -Row $_ -PropertyName $PropertyName } |
+                Where-Object { $null -ne $_ } |
+                Sort-Object -Unique
+        ).Count
+    }
+
+    function Get-EndpointMultiplier {
+        param([string] $BaseUri)
+
+        if ([string]::IsNullOrWhiteSpace($BaseUri)) {
+            return [pscustomobject]@{
+                Region     = 'unspecified'
+                Multiplier = 1.00
+            }
+        }
+
+        $normalized = $BaseUri.Trim().ToLowerInvariant()
+        if ($normalized -match 'api\.au\.itglue\.com') {
+            return [pscustomobject]@{
+                Region     = 'au'
+                Multiplier = 1.25
+            }
+        }
+
+        if ($normalized -match 'api\.eu\.itglue\.com') {
+            return [pscustomobject]@{
+                Region     = 'eu'
+                Multiplier = 1.10
+            }
+        }
+
+        return [pscustomobject]@{
+            Region     = 'default'
+            Multiplier = 1.00
+        }
     }
 
     function Get-ArchivedRowCount {
@@ -282,6 +370,33 @@ function Get-ITGlueMigrationETA {
             }
         ))
 
+    $importantContactLabels = @(
+        $contactRows | Where-Object { Test-TruthyExportValue -Value $_.important }
+    ).Count
+    $primaryLocationLabels = @(
+        $locationRows | Where-Object { Test-TruthyExportValue -Value $_.primary }
+    ).Count
+    $configurationStatusLabels = Get-NonBlankPropertyCount -Rows $configurationRows -PropertyName 'configuration_status'
+    $passwordCategoryLabels = Get-NonBlankPropertyCount -Rows $passwordRows -PropertyName 'password_category'
+
+    $labelCount =
+        $importantContactLabels +
+        $primaryLocationLabels +
+        $configurationStatusLabels +
+        $passwordCategoryLabels
+
+    $importantContactLabelTypes = 0
+    if ($importantContactLabels -gt 0) { $importantContactLabelTypes = 1 }
+
+    $primaryLocationLabelTypes = 0
+    if ($primaryLocationLabels -gt 0) { $primaryLocationLabelTypes = 1 }
+
+    $labelTypeCount =
+        $importantContactLabelTypes +
+        $primaryLocationLabelTypes +
+        (Get-UniqueNonBlankPropertyCount -Rows $configurationRows -PropertyName 'configuration_status') +
+        (Get-UniqueNonBlankPropertyCount -Rows $passwordRows -PropertyName 'password_category')
+
     # ------------------------------------------------------------
     # Files
     # ------------------------------------------------------------
@@ -382,6 +497,10 @@ function Get-ITGlueMigrationETA {
         LinkReplacement =
             ($companies + $flexibleAssets + $articles + $passwords) * $coef.LinkReplacementItem
 
+        Labels =
+            ($labelTypeCount * $coef.LabelType) +
+            ($labelCount * $coef.Label)
+
         Relations =
             ($relationSourceObjects * $coef.RelationSourceObject) +
             ($estimatedRelationCount * $coef.RelationCreate)
@@ -391,7 +510,9 @@ function Get-ITGlueMigrationETA {
     }
 
     $rawSeconds = Get-Sum $parts.Values
-    $etaSeconds = $rawSeconds * $Buffer
+    $endpointAdjustment = Get-EndpointMultiplier -BaseUri $ITGBaseURI
+    $effectiveBuffer = $Buffer * [double]$endpointAdjustment.Multiplier
+    $etaSeconds = $rawSeconds * $effectiveBuffer
     $eta        = [timespan]::FromSeconds($etaSeconds)
 
     if (-not $Detailed) {
@@ -412,6 +533,10 @@ function Get-ITGlueMigrationETA {
         EstimatedTime             = $eta
         EstimatedHours            = [math]::Round($eta.TotalHours, 2)
         Buffer                    = $Buffer
+        EndpointRegion            = $endpointAdjustment.Region
+        EndpointMultiplier        = $endpointAdjustment.Multiplier
+        EffectiveBuffer           = $effectiveBuffer
+        ITGBaseURI                = $ITGBaseURI
 
         Companies                 = $companies
         Locations                 = $locations
@@ -442,6 +567,12 @@ function Get-ITGlueMigrationETA {
         TotalAttachmentMB         = [math]::Round($attachmentMB, 2)
 
         IPAMObjects               = $IPAMCount
+        ImportantContactLabels    = $importantContactLabels
+        PrimaryLocationLabels     = $primaryLocationLabels
+        ConfigurationStatusLabels = $configurationStatusLabels
+        PasswordCategoryLabels    = $passwordCategoryLabels
+        LabelTypes                = $labelTypeCount
+        Labels                    = $labelCount
         RelationObjects           = $relationSourceObjects
         RelationSourceObjects     = $relationSourceObjects
         RelationSourceCountSource = $relationSourceCountSource
