@@ -54,6 +54,77 @@ function Test-ITGlueExportPathHasContent {
     return [bool](Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
 
+function New-ITGlueExportZipPassword {
+    [CmdletBinding()]
+    param(
+        [ValidateRange(16, 128)]
+        [int]$ByteCount = 32
+    )
+
+    $bytes = [byte[]]::new($ByteCount)
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    return [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
+
+function Get-ITGlueExportZipPasswordLogPath {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string]$LogsPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FallbackPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LogsPath)) {
+        $LogsPath = $FallbackPath
+    }
+
+    $null = New-Item -Path $LogsPath -ItemType Directory -Force
+    return Join-Path -Path $LogsPath -ChildPath 'ITGlueExportZipPassword.txt'
+}
+
+function Get-OrCreateITGlueExportZipPassword {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string]$LogsPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FallbackPath
+    )
+
+    $passwordLogPath = Get-ITGlueExportZipPasswordLogPath -LogsPath $LogsPath -FallbackPath $FallbackPath
+    if (Test-Path -LiteralPath $passwordLogPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $existingLog = Get-Content -LiteralPath $passwordLogPath -Raw -ErrorAction Stop
+        if ($existingLog -match '(?m)^Password:\s*(?<password>\S+)\s*$') {
+            Write-Host "Reusing IT Glue export ZIP password from $passwordLogPath" -ForegroundColor Yellow
+            return [pscustomobject]@{
+                Password = $Matches.password
+                Path     = $passwordLogPath
+                Reused   = $true
+            }
+        }
+    }
+
+    $password = New-ITGlueExportZipPassword
+    $createdAt = Get-Date -Format 'o'
+    @(
+        'IT Glue export ZIP password'
+        "CreatedAt: $createdAt"
+        "Password: $password"
+        ''
+        'Keep this file secure. The automated export bootstrap reuses this password on retry.'
+    ) | Set-Content -LiteralPath $passwordLogPath -Encoding UTF8 -Force
+
+    Write-Host "Generated IT Glue export ZIP password and wrote it to $passwordLogPath" -ForegroundColor Yellow
+    return [pscustomobject]@{
+        Password = $password
+        Path     = $passwordLogPath
+        Reused   = $false
+    }
+}
+
 function Resolve-SevenZipPath {
     [CmdletBinding()]
     param(
@@ -372,6 +443,11 @@ function Ensure-ITGlueExportAvailable {
         [AllowNull()]
         [string]$ZipPassword,
 
+        [AllowNull()]
+        [string]$LogsPath,
+
+        [bool]$GenerateZipPassword = $true,
+
         [bool]$IncludeLogs = $false,
 
         [ValidateRange(5, 3600)]
@@ -406,6 +482,12 @@ function Ensure-ITGlueExportAvailable {
     $null = New-Item -Path $exportParent -ItemType Directory -Force
     $null = New-Item -Path $ExportPath -ItemType Directory -Force
     $resolvedSevenZipPath = Resolve-SevenZipPath -SevenZipPath $SevenZipPath
+
+    $generatedPasswordInfo = $null
+    if ([string]::IsNullOrWhiteSpace($ZipPassword) -and $true -eq $GenerateZipPassword) {
+        $generatedPasswordInfo = Get-OrCreateITGlueExportZipPassword -LogsPath $LogsPath -FallbackPath $exportParent
+        $ZipPassword = $generatedPasswordInfo.Password
+    }
 
     if ([string]::IsNullOrWhiteSpace($DownloadPath)) {
         $safeTimestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -448,5 +530,6 @@ function Ensure-ITGlueExportAvailable {
         Started      = (-not $usedExistingExport)
         Reused       = $usedExistingExport
         Extracted    = $true
+        PasswordLog  = $generatedPasswordInfo.Path
     }
 }
