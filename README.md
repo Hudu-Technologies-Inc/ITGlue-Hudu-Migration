@@ -27,7 +27,7 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 <img width="1248" height="1066" alt="H83uf1uxHZ2OZnqzbyMXl (1)" src="https://github.com/user-attachments/assets/09386a13-79ab-4da2-8f46-cd121da5b5f0" /> <img width="1244" height="1192" alt="u8AsTcss0nzSAjYT5tXzc (1)" src="https://github.com/user-attachments/assets/eeb70697-89cc-4666-99cb-d7f46133600c" />
 
 
-- **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need your ITGlue export ZIP, API keys, and a compatible Hudu instance—work through **What you'll need** and **Prerequisites** later in this document before you start.
+- **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need ITGlue and Hudu API keys, a compatible Hudu instance, and either automated export access or an existing ITGlue export--work through **What you'll need** and **Prerequisites** later in this document before you start.
 - **Settings:** Stored by default under `%APPDATA%\HuduMigration`, same as the PowerShell workflow.
 - **Use PowerShell instead** if you rely on a customized **`environ.example`**, want full session control over variables, or need to manually invoke post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** -note, these are ran as part of the main script and are always ran, so you likely wont need to consider post-run scripts.
 
@@ -59,7 +59,7 @@ Items marked with **!** require **JWT** authentication (ITGlue session token fro
 - A Hudu instance (either self-hosted or cloud hosted)
 - A Hudu API Key
 - Your Hudu URL
-- A full export of your IT Glue tenant (it's recommended to put a halt on IT Glue data updates once you initiate an export)
+- A full export of your IT Glue tenant, prepared automatically by the migration or manually as a legacy fallback. It's recommended to put a halt on IT Glue data updates once you initiate an export.
 
 # My ITGlue URL?
 
@@ -104,7 +104,7 @@ It's highly encouraged to perform a clean up of your IT Glue environment, such a
 
 Check that your Flexible Layouts don’t have any fields named the same thing on the same layout. For example, if you have two fields called Pre-Shared Key on the "Wireless" asset (One for primary one for guest), rename one of them to prevent script errors. 
 
-ITGlue allows for more than one client to exist with the same Name but Hudu does not. This will cause issues during the migration as the first client will succeed and subsequent clients with the same name will fail with "Name Already Taken" error from Hudu's API. Make sure any client is at least named with a unique name so that the migration can complete successfully.
+ITGlue allows for more than one client to exist with the same Name but Hudu does not. Same-names will be suffixed with a -number to keep things unique. 
 
 Blank passwords in ITGlue will cause issues on import and cause the entire password to fail. 
 
@@ -113,18 +113,13 @@ Make sure the API Key you're using has password access, and that all passwords h
 
 ## Data Export
 
-1. **Initiate ITGlue Export.** You will need a full export of your instance. If the configured `ITGlueExportPath` does not exist or is empty, the migration can automatically request a full-tenant export through the IT Glue API, wait for the download URL, download the ZIP, and extract it with 7-Zip before continuing. Manual export still works: log into ITGlue as a Super Admin and go to Admin>Export. You can choose to run an export with or without activity logs (activity logs are not needed for the migration and having them selected can make the export take longer). ITGlue will email you when the export is completed (normally takes <30 minutes). 
-<img width="750"  alt="IT_Glue_Migration_Guide" src="https://github.com/user-attachments/assets/e5b2c49d-6ae5-4960-844e-5f28390de665" />
+The current migration flow can prepare the IT Glue export for you. If the configured `ITGlueExportPath` does not exist or is empty, the script will request a full-tenant export through the IT Glue API, wait for the download URL, download the ZIP, and extract it with 7-Zip before continuing.
 
-### ***NOTE- If presented with a checkbox asking whether or not to include passwords, be sure to do so!***
+1. Set `ITGlueExportPath` to the folder where the extracted export should live.
+2. Include 7-Zip CLI support by bundling `7zip\7za.exe`, installing 7-Zip, or setting `ITGlueExportSevenZipPath` / `ITG_HUDU_7Z_PATH`.
+3. Run the migration normally. When `ITGlueExportZipPassword` is blank, the script generates a secure ZIP password, writes it to `ITGlueExportZipPassword.txt` in the migration logs folder, uses it for the IT Glue export, then reuses it for extraction and retries.
 
-<img width="750" alt="include-passwords" src="https://github.com/user-attachments/assets/e75f9966-8eee-4696-b683-e8acbf150b17" />
-
-2. **Download ITGlue Export.** If you are using the automated pathway, include `7z.exe`/`7za.exe` in the project root, install 7-Zip, or set `ITGlueExportSevenZipPath` / `ITG_HUDU_7Z_PATH` to the full path of `7z.exe`; the script will download the ZIP and extract it into `ITGlueExportPath`. When `ITGlueExportZipPassword` is blank, the script generates a secure ZIP password and writes it to `ITGlueExportZipPassword.txt` in the migration logs folder so retries can reuse it. If bundling 7-Zip, include its license text with the binary. If downloading manually, once the export is complete, navigate back to Admin>Export in ITGlue, download the .zip file, and save it to a safe and secure place (we generally recommend somewhere easy like C:\temp\export). ***Do not unzip the files yet***
-
-3. **Unzipping the files.** Once your data is saved to a good place, it's time to extract the files. It's highly recommended to use a ZIP tool such as 7-zip as the ITGlue export can sometimes name files in a way that Windows Explorer does not natively handle and can cause file names to have strange characters (thus causing some KB articles to not migrate over correctly).
-
-(don't manipulate or change these files after extraction)
+Manual export still works as a legacy fallback. See [Addendum - Manual Export Legacy](#addendum---manual-export-legacy).
 
 ## API Keys
 
@@ -268,11 +263,16 @@ in the same powershell session. It will prompt you for the path to your unvaulte
 
 
 # Please Read!
-We use the Magick.NET libraries that you can find here https://github.com/dlemstra/Magick.NET/ for image type validation and metadata building.
 
-Please review the licensed rights for Magick.NET here https://github.com/dlemstra/Magick.NET/blob/main/License.txt
+We use the Magick.NET libraries that you can find [here](https://github.com/dlemstra/Magick.NET/)  Please review the licensed rights for Magick.NET here [Here](https://github.com/dlemstra/Magick.NET/blob/main/License.txt)
 
-These are used only when the image extension was not properly retained in the export, and so we need to determine the type and rename them.
+> ###### -These are used only when the image extension was not properly retained in the export, and so we need to determine the type and rename them. We first grab file signatures, but when those are unreliable, we fall back to trusty ImageMagick-
+
+7Zip CLI is also bundled with this project. Please review the licensed rights for 7zip [Here](./7zip/License.txt)
+
+
+---
+
 
 **The original blog post may still be relevant in some cases but is mostly outdated.** See [this link instead](https://mspbook.mspgeek.org/books/hudu-scripts-in-progress/page/itglue-to-hudu-migration) or [this other link here](https://demort.hosteddocs.io/shared_article/7BKhGktLGN1FEDSVEkh1bLpF)
 
@@ -286,12 +286,32 @@ This migration tool (PowerShell scripts, packaged executable, and all other item
 
 By using this tool, you acknowledge that you do so at your own risk. The authors and Hudu Technologies shall not be liable for any damages, losses, or issues that may arise from its use, including but not limited to data loss, system failures, or security breaches. Always review the code thoroughly and test it in a safe environment before deploying it in a production setting.
 
+
+## Community & Socials
+
+[![Hudu Community](https://img.shields.io/badge/Community-Forum-blue?logo=discourse)](https://community.hudu.com/)
+[![Reddit](https://img.shields.io/badge/Reddit-r%2Fhudu-FF4500?logo=reddit)](https://www.reddit.com/r/hudu)
+[![YouTube](https://img.shields.io/badge/YouTube-Hudu-red?logo=youtube)](https://www.youtube.com/@hudu1715)
+[![X (Twitter)](https://img.shields.io/badge/X-@HuduHQ-black?logo=x)](https://x.com/HuduHQ)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Hudu_Technologies-0A66C2?logo=linkedin)](https://www.linkedin.com/company/hudu-technologies/)
+[![Facebook](https://img.shields.io/badge/Facebook-HuduHQ-1877F2?logo=facebook)](https://www.facebook.com/HuduHQ/)
+[![Instagram](https://img.shields.io/badge/Instagram-@huduhq-E4405F?logo=instagram)](https://www.instagram.com/huduhq/)
+[![Feature Requests](https://img.shields.io/badge/Feedback-Feature_Requests-brightgreen?logo=github)](https://hudu.canny.io/)
+
+
+
 # Release Notes
 ## Get-MissingRelations.ps1 updated to include from-document, from locations/contacts asssets, and including both related items specifications from ITglue
 This script is run at the very end but is safe to run twice, with the Matched* variables existing from the migration, it'll loop through matched Configurations and Assets (Configurations and Flexible Assets in ITGlue) and pull the latest relations
 
 It will save variable: `$RelationsToCreate` that can be used to build relations in Hudu using the `New-HuduRelation` command. Duplicate relations won't be created as it'll throw an error so it's safe to re-run.
 
+# Addendum / historical
+
+Legacy and historical notes live here so the main guide can stay focused on the current migration path.
+
+- [Manual Export Legacy](#addendum---manual-export-legacy)
+- [Replace Base64 Images](#addendum---replace-base64-images)
 
 ___
 - `Replace-HuduBase64Images.ps1` has been updated to use the API and will be fully adapted for fixing completed imports that placed base64 images in articles.
@@ -324,22 +344,23 @@ Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can
 - The initialization will prompt for multiple ITGlue domain names and will ATTEMPT (lightly tested) to rewrite ALL of them to the correct Hudu ones.
 
 
-### Replace Base64 Images
+### Addendum - Replace Base64 Images
 Use this script to replace previous migrations that embedded Base64 images into your articles. If your Hudu is crashing or running out of memory trying to retrieve articles, this will generally fix it. If API isn't sufficient for collecting the articles you can switch to direct database access with an older version of this script.
 
 
-### Attachment Uploads
-The attachments script will use the API to upload the files create links inside of Hudu
-Note that there's no way to see the attachments currently via the API so if you run the script more than once it'll upload duplicate files and can fill up your space
+### Addendum - Manual Export Legacy
 
-## Community & Socials
+The manual export flow is the historical way to prepare migration data. It is still useful if API export is unavailable, disabled, or being handled separately.
 
-[![Hudu Community](https://img.shields.io/badge/Community-Forum-blue?logo=discourse)](https://community.hudu.com/)
-[![Reddit](https://img.shields.io/badge/Reddit-r%2Fhudu-FF4500?logo=reddit)](https://www.reddit.com/r/hudu)
-[![YouTube](https://img.shields.io/badge/YouTube-Hudu-red?logo=youtube)](https://www.youtube.com/@hudu1715)
-[![X (Twitter)](https://img.shields.io/badge/X-@HuduHQ-black?logo=x)](https://x.com/HuduHQ)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Hudu_Technologies-0A66C2?logo=linkedin)](https://www.linkedin.com/company/hudu-technologies/)
-[![Facebook](https://img.shields.io/badge/Facebook-HuduHQ-1877F2?logo=facebook)](https://www.facebook.com/HuduHQ/)
-[![Instagram](https://img.shields.io/badge/Instagram-@huduhq-E4405F?logo=instagram)](https://www.instagram.com/huduhq/)
-[![Feature Requests](https://img.shields.io/badge/Feedback-Feature_Requests-brightgreen?logo=github)](https://hudu.canny.io/)
+1. Log into ITGlue as a Super Admin and go to Admin > Export. You can choose to run an export with or without activity logs. Activity logs are not needed for the migration and can make the export take longer. ITGlue will email you when the export is completed, normally within 30 minutes.
+<img width="750"  alt="IT_Glue_Migration_Guide" src="https://github.com/user-attachments/assets/e5b2c49d-6ae5-4960-844e-5f28390de665" />
 
+**Important:** If presented with a checkbox asking whether or not to include passwords, be sure to do so.
+
+<img width="750" alt="include-passwords" src="https://github.com/user-attachments/assets/e75f9966-8eee-4696-b683-e8acbf150b17" />
+
+2. Once the export is complete, navigate back to Admin > Export in ITGlue, download the ZIP file, and save it to a safe place. We generally recommend somewhere easy like `C:\temp\export`. ***Do not unzip the files yet.***
+
+3. Extract the ZIP with 7-Zip into the folder configured as `ITGlueExportPath`. ITGlue exports can include filenames that Windows Explorer does not handle correctly, which can cause article files to extract with strange characters or fail to migrate cleanly.
+
+Do not manipulate or rename the extracted files after extraction.
