@@ -31,6 +31,7 @@ if (-not ($FirstTimeLoad -eq 1)) {
 		$AttchmentsPath = Join-Path -Path $ITGlueExportPath -ChildPath "attachments\documents"
 		$AttchmentsPath = "\\?\$AttchmentsPath"
         $Attachfiles = Get-ChildItem -LiteralPath $AttchmentsPath -Recurse -Force
+        $ImageMap = $ImageMap ?? @{}
         
                     # Now do the actual work of populating the content of articles
             $ArticleErrors = foreach ($Article in $UnmatchedArticles) {
@@ -106,7 +107,10 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                 $imagePath = $foundFile.FullName
                             } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($tnImgPath) + '*') -ErrorAction SilentlyContinue)) {
                                 $imagePath = $foundFile.FullName
-                            } else { 
+                            } elseif ($foundFile = Resolve-ITGlueAttachmentImageFile -SourceValues @($fullImgUrl, $tnImgUrl, $_.src, $fullImgPath, $tnImgPath) -ExportPath $ITGlueExportPath -AttachmentFiles $Attachfiles -ResourceType 'documents' -ResourceId $Article.ITGID) {
+                                $imagePath = $foundFile.FullName
+                                Write-Host "Resolved attachment image from export attachments folder: $imagePath" -ForegroundColor Cyan
+                            } else {
                                 Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                                 Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
                                 Write-Warning "Unable to validate image file."
@@ -133,6 +137,13 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                     Write-Host "Uploading new image"
                                     try {
                                         $UploadImage = New-HuduPublicPhoto -FilePath "$imagePath" -record_id $Article.HuduID -record_type 'Article'
+                                        $PublicPhotoUrl = "$($UploadImage.public_photo.url)"
+                                        $ImageMap["$OriginalFullImagePath"] = $PublicPhotoUrl
+                                        foreach ($ImageSource in @($fullImgUrl, $tnImgUrl, $_.src)) {
+                                            foreach ($ImageSourceCandidate in @(Get-HardcodedImageUrlReplacementCandidates -OriginalUrl $ImageSource)) {
+                                                $ImageMap["$ImageSourceCandidate"] = $PublicPhotoUrl
+                                            }
+                                        }
                                         $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
                                         $ImgLink = $html.Links | Where-Object {$_.innerHTML -eq $imgHTML}
                                         Write-Host "Setting image to: '$NewImageURL'"

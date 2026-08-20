@@ -1,9 +1,5 @@
 # This will be used to remake the ITGlue Links to Hudu, and relies on the migration logs existing.
 
-if (-not (Get-Command -Name Convert-HuduUploadImageSourcesToPublicPhotos -ErrorAction SilentlyContinue)) {
-    . $PSScriptRoot\Workaround-Uploads.ps1
-}
-
 $ITGlueURLCandidates = @($ITGURL)
 
 if ($environmentSettings.ITGCustomDomains) {
@@ -350,6 +346,276 @@ function Resolve-ITGlueImageMatch {
     return $false
 }
 
+function Get-ITGlueAttachmentIdFromUrl {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object[]]$Values
+    )
+
+    foreach ($value in @($Values)) {
+        if ([string]::IsNullOrWhiteSpace([string]$value)) {
+            continue
+        }
+
+        $decoded = [System.Net.WebUtility]::HtmlDecode(([string]$value).Trim())
+        $match = [regex]::Match($decoded, '(?i)(?:^|[\\/])attachments[\\/](?<AttachmentId>\d{1,20})(?=$|[\\/?#&])')
+        if ($match.Success) {
+            return $match.Groups['AttachmentId'].Value
+        }
+    }
+
+    return $null
+}
+
+function Find-ITGlueAttachmentFileById {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AttachmentId,
+
+        [AllowNull()]
+        [object[]]$AttachmentFiles
+    )
+
+    if ([string]::IsNullOrWhiteSpace($AttachmentId)) {
+        return $null
+    }
+
+    $escapedAttachmentId = [regex]::Escape($AttachmentId)
+    $fileMatches = @(
+        @($AttachmentFiles) |
+            Where-Object { $_ -and $_.PSIsContainer -ne $true } |
+            Where-Object {
+                $_.BaseName -eq $AttachmentId -or
+                $_.Name -match "^$escapedAttachmentId(?:\D|$)" -or
+                $_.FullName -match "[\\/]$escapedAttachmentId(?:[\\/._ -]|$)"
+            } |
+            Sort-Object @{
+                Expression = {
+                    if ($_.BaseName -eq $AttachmentId) { 0 }
+                    elseif ($_.Name -match "^$escapedAttachmentId(?:\D|$)") { 1 }
+                    else { 2 }
+                }
+            }, FullName
+    )
+
+    return $fileMatches | Select-Object -First 1
+}
+
+function Normalize-ITGlueAttachmentImageFileName {
+    param(
+        [AllowNull()]
+        [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return ''
+    }
+
+    return ([IO.Path]::GetFileName($Name).Trim()).ToLowerInvariant()
+}
+
+function Get-ITGlueAttachmentImageMetadataName {
+    param(
+        [AllowNull()]
+        $Attachment
+    )
+
+    @(
+        $Attachment.attributes.'file-name'
+        $Attachment.attributes.file_name
+        $Attachment.attributes.name
+        $Attachment.attributes.attachment.file_name
+        $Attachment.attributes.attachment.'file-name'
+        $Attachment.attributes.'attachment-file-name'
+        $Attachment.attributes.'attachment-file_name'
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1
+}
+
+function Get-ITGlueAttachmentImageMetadataForResource {
+    param(
+        [AllowNull()]
+        [string]$ResourceType,
+
+        [AllowNull()]
+        [string]$ResourceId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ResourceType) -or [string]::IsNullOrWhiteSpace($ResourceId)) {
+        return @()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ITGKey)) {
+        return @()
+    }
+
+    if (-not $script:ITGlueAttachmentImageMetadataCache) {
+        $script:ITGlueAttachmentImageMetadataCache = @{}
+    }
+
+    $cacheKey = "$ResourceType/$ResourceId"
+    if ($script:ITGlueAttachmentImageMetadataCache.ContainsKey($cacheKey)) {
+        return $script:ITGlueAttachmentImageMetadataCache[$cacheKey]
+    }
+
+    $apiBase = @($ITGAPIEndpoint, $settings.ITGAPIEndpoint, $environmentSettings.ITGAPIEndpoint) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($apiBase)) {
+        return @()
+    }
+
+    $uri = "$($apiBase.TrimEnd('/'))/$ResourceType/$ResourceId/relationships/attachments?page%5Bsize%5D=1000"
+    try {
+        $response = Invoke-RestMethod -Method GET -Uri $uri -Headers @{ 'x-api-key' = $ITGKey } -ErrorAction Stop
+        $attachments = @($response.data)
+    } catch {
+        Write-Warning "Unable to retrieve IT Glue attachments for $ResourceType/$ResourceId while resolving article image attachments. $($_.Exception.Message)"
+        $attachments = @()
+    }
+
+    $script:ITGlueAttachmentImageMetadataCache[$cacheKey] = $attachments
+    return $attachments
+}
+
+function Find-ITGlueAttachmentImageMetadataById {
+    param(
+        [AllowNull()]
+        [string]$AttachmentId,
+
+        [AllowNull()]
+        [string]$ResourceType,
+
+        [AllowNull()]
+        [string]$ResourceId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($AttachmentId)) {
+        return $null
+    }
+
+    $attachments = @(Get-ITGlueAttachmentImageMetadataForResource -ResourceType $ResourceType -ResourceId $ResourceId)
+    return $attachments | Where-Object { [string]$_.id -eq [string]$AttachmentId } | Select-Object -First 1
+}
+
+function Find-ITGlueAttachmentFileByName {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string]$AttachmentName,
+
+        [AllowNull()]
+        [string]$ResourceId,
+
+        [AllowNull()]
+        [object[]]$AttachmentFiles
+    )
+
+    $normalizedName = Normalize-ITGlueAttachmentImageFileName -Name $AttachmentName
+    if ([string]::IsNullOrWhiteSpace($normalizedName)) {
+        return $null
+    }
+
+    $normalizedStem = Normalize-ITGlueAttachmentImageFileName -Name ([IO.Path]::GetFileNameWithoutExtension($AttachmentName))
+    $normalizedRelativePath = ([string]$AttachmentName).Trim().Replace('/', '\').Trim('\').ToLowerInvariant()
+    $resourcePathPattern = if ([string]::IsNullOrWhiteSpace($ResourceId)) { $null } else { "[\\/]$([regex]::Escape($ResourceId))[\\/]" }
+
+    $fileMatches = @(
+        @($AttachmentFiles) |
+            Where-Object { $_ -and $_.PSIsContainer -ne $true } |
+            Where-Object {
+                $fileName = Normalize-ITGlueAttachmentImageFileName -Name $_.Name
+                $fileStem = Normalize-ITGlueAttachmentImageFileName -Name $_.BaseName
+                $fullName = ([string]$_.FullName).Replace('/', '\').ToLowerInvariant()
+                $fullName.EndsWith("\$normalizedRelativePath") -or
+                $fileName -eq $normalizedName -or
+                ($normalizedStem -and $fileStem -eq $normalizedStem)
+            } |
+            Sort-Object @{
+                Expression = {
+                    $fullName = ([string]$_.FullName).Replace('/', '\').ToLowerInvariant()
+                    if ($fullName.EndsWith("\$normalizedRelativePath")) { 0 }
+                    elseif ($resourcePathPattern -and $_.FullName -match $resourcePathPattern) { 1 }
+                    else { 2 }
+                }
+            }, FullName
+    )
+
+    return $fileMatches | Select-Object -First 1
+}
+
+function Resolve-ITGlueAttachmentImageFile {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object[]]$SourceValues,
+
+        [AllowNull()]
+        [string]$ExportPath,
+
+        [AllowNull()]
+        [object[]]$AttachmentFiles,
+
+        [AllowNull()]
+        [string]$ResourceType,
+
+        [AllowNull()]
+        [string]$ResourceId
+    )
+
+    $attachmentId = Get-ITGlueAttachmentIdFromUrl -Values $SourceValues
+    if ([string]::IsNullOrWhiteSpace($attachmentId)) {
+        return $null
+    }
+
+    $foundFile = Find-ITGlueAttachmentFileById -AttachmentId $attachmentId -AttachmentFiles $AttachmentFiles
+    if ($foundFile) {
+        return $foundFile
+    }
+
+    $attachmentMetadata = Find-ITGlueAttachmentImageMetadataById -AttachmentId $attachmentId -ResourceType $ResourceType -ResourceId $ResourceId
+    $attachmentName = Get-ITGlueAttachmentImageMetadataName -Attachment $attachmentMetadata
+    if (-not [string]::IsNullOrWhiteSpace([string]$attachmentName)) {
+        $foundFile = Find-ITGlueAttachmentFileByName -AttachmentName $attachmentName -ResourceId $ResourceId -AttachmentFiles $AttachmentFiles
+        if ($foundFile) {
+            return $foundFile
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ExportPath)) {
+        return $null
+    }
+
+    $attachmentRoot = Join-Path -Path $ExportPath -ChildPath 'attachments'
+    if (-not (Test-Path -LiteralPath $attachmentRoot -PathType Container -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    if (-not $script:ITGlueAttachmentImageFileCache) {
+        $script:ITGlueAttachmentImageFileCache = @{}
+    }
+
+    $attachmentRootKey = (Get-Item -LiteralPath $attachmentRoot).FullName
+    if (-not $script:ITGlueAttachmentImageFileCache.ContainsKey($attachmentRootKey)) {
+        $script:ITGlueAttachmentImageFileCache[$attachmentRootKey] = @(
+            Get-ChildItem -LiteralPath $attachmentRoot -Recurse -File -Force -ErrorAction SilentlyContinue
+        )
+    }
+
+    $allAttachmentFiles = $script:ITGlueAttachmentImageFileCache[$attachmentRootKey]
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$attachmentName)) {
+        $foundFile = Find-ITGlueAttachmentFileByName -AttachmentName $attachmentName -ResourceId $ResourceId -AttachmentFiles $allAttachmentFiles
+        if ($foundFile) {
+            return $foundFile
+        }
+    }
+
+    return Find-ITGlueAttachmentFileById -AttachmentId $attachmentId -AttachmentFiles $allAttachmentFiles
+}
+
 function Set-HtmlAnchorHref {
     param(
         [Parameter(Mandatory = $true)]
@@ -538,7 +804,8 @@ function Convert-HardcodedITGlueImagesToHudu {
     )
 
     $imageMapByLeaf = Get-HardcodedImageMapByLeaf -ImageMap $ImageMap
-    if ($imageMapByLeaf.Count -lt 1 -or [string]::IsNullOrWhiteSpace($Content)) {
+    $imageMapByUrl = Get-HardcodedImageMapByUrl -ImageMap $ImageMap
+    if (($imageMapByLeaf.Count + $imageMapByUrl.Count) -lt 1 -or [string]::IsNullOrWhiteSpace($Content)) {
         return [pscustomobject]@{
             Content      = $Content
             Changed      = $false
@@ -549,8 +816,37 @@ function Convert-HardcodedITGlueImagesToHudu {
     $pattern = Get-HardcodedITGlueImagePattern
     $replacements = [System.Collections.ArrayList]@()
 
+    $updatedContent = $Content
+
+    foreach ($candidateUrl in @($imageMapByUrl.Keys | Sort-Object Length -Descending)) {
+        if ([string]::IsNullOrWhiteSpace([string]$candidateUrl) -or -not $updatedContent.Contains([string]$candidateUrl)) {
+            continue
+        }
+
+        $replacementUrl = $imageMapByUrl[$candidateUrl]
+        $candidatePattern = [regex]::Escape($candidateUrl)
+        $count = [regex]::Matches($updatedContent, $candidatePattern).Count
+        if ($count -lt 1) {
+            continue
+        }
+
+        $updatedContent = [regex]::Replace(
+            $updatedContent,
+            $candidatePattern,
+            [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $replacementUrl },
+            $ITGlueURLReplacementRegexOptions
+        )
+
+        $null = $replacements.Add([pscustomobject]@{
+            OriginalUrl    = $candidateUrl
+            ReplacementUrl = $replacementUrl
+            Count          = $count
+            MatchType      = 'ImageMapUrl'
+        })
+    }
+
     $updatedContent = [regex]::Replace(
-        $Content,
+        $updatedContent,
         $pattern,
         [System.Text.RegularExpressions.MatchEvaluator]{
             param([System.Text.RegularExpressions.Match]$match)
@@ -600,6 +896,118 @@ function ConvertTo-RelativeUrlMap {
     return $relativeMap
 }
 
+function Get-HardcodedImageUrlReplacementCandidates {
+    param(
+        [AllowNull()]
+        [string]$OriginalUrl
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OriginalUrl)) {
+        return @()
+    }
+
+    $candidates = [System.Collections.ArrayList]@()
+    $addCandidate = {
+        param([AllowNull()][string]$Candidate)
+
+        if ([string]::IsNullOrWhiteSpace($Candidate)) {
+            return
+        }
+
+        $candidateText = [string]$Candidate
+        $null = $candidates.Add($candidateText)
+
+        $encodedCandidate = [System.Net.WebUtility]::HtmlEncode($candidateText)
+        if ($encodedCandidate -and $encodedCandidate -ne $candidateText) {
+            $null = $candidates.Add($encodedCandidate)
+        }
+
+        $decodedCandidate = [System.Net.WebUtility]::HtmlDecode($candidateText)
+        if ($decodedCandidate -and $decodedCandidate -ne $candidateText) {
+            $null = $candidates.Add($decodedCandidate)
+        }
+    }
+
+    & $addCandidate $OriginalUrl
+
+    try {
+        $parsedUrl = [Uri]$OriginalUrl
+        if ($parsedUrl.IsAbsoluteUri) {
+            & $addCandidate $parsedUrl.PathAndQuery
+            & $addCandidate $parsedUrl.AbsolutePath
+        }
+    } catch {}
+
+    $attachmentId = Get-ITGlueAttachmentIdFromUrl -Values @($OriginalUrl)
+    if (-not [string]::IsNullOrWhiteSpace($attachmentId)) {
+        $attachmentPaths = @(
+            "/attachments/$attachmentId"
+            "/attachments/$attachmentId`?preview=1"
+            "/attachments/$attachmentId`?preview=true"
+        )
+
+        foreach ($attachmentPath in $attachmentPaths) {
+            & $addCandidate $attachmentPath
+            foreach ($baseUrl in @($ITGURL, $settings.ITGURL, $environmentSettings.ITGURL)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$baseUrl)) {
+                    & $addCandidate "$(([string]$baseUrl).TrimEnd('/'))$attachmentPath"
+                }
+            }
+        }
+    }
+
+    @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique | Sort-Object Length -Descending)
+}
+
+function Get-HardcodedImageMapByUrl {
+    param(
+        [AllowNull()]
+        $ImageMap
+    )
+
+    $imageMapByUrl = @{}
+    if (-not $ImageMap) {
+        return $imageMapByUrl
+    }
+
+    foreach ($kvp in $ImageMap.GetEnumerator()) {
+        if ([string]::IsNullOrWhiteSpace([string]$kvp.Key) -or [string]::IsNullOrWhiteSpace([string]$kvp.Value)) {
+            continue
+        }
+
+        foreach ($candidate in @(Get-HardcodedImageUrlReplacementCandidates -OriginalUrl ([string]$kvp.Key))) {
+            if (-not $imageMapByUrl.ContainsKey($candidate)) {
+                $imageMapByUrl[$candidate] = ConvertTo-HuduRelativeURL -Url $kvp.Value
+            }
+        }
+    }
+
+    return $imageMapByUrl
+}
+
+function Test-HardcodedImageMapUrlCandidate {
+    param(
+        [AllowNull()]
+        [string]$Content,
+
+        [AllowNull()]
+        $ImageMap
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Content) -or -not $ImageMap) {
+        return $false
+    }
+
+    $imageMapByUrl = Get-HardcodedImageMapByUrl -ImageMap $ImageMap
+    foreach ($candidate in @($imageMapByUrl.Keys)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$candidate) -and $Content.Contains([string]$candidate)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Test-HuduHostedImageAnchorCandidate {
     param(
         [AllowNull()]
@@ -636,8 +1044,7 @@ function Test-HuduContentLinkReplacementCandidate {
         [switch]$IncludeHardcodedImages,
         [switch]$IncludeAttachments,
         [switch]$IncludeHostedImageAnchors,
-        [switch]$IncludeUploads,
-        [switch]$ForceUploadImageSourceWorkaround
+        [switch]$IncludeUploads
     )
 
     if ([string]::IsNullOrWhiteSpace($Content)) {
@@ -648,7 +1055,10 @@ function Test-HuduContentLinkReplacementCandidate {
         return $true
     }
 
-    if ($IncludeHardcodedImages -and $ImageMap -and $Content -imatch (Get-HardcodedITGlueImagePattern)) {
+    if ($IncludeHardcodedImages -and $ImageMap -and (
+            $Content -imatch (Get-HardcodedITGlueImagePattern) -or
+            (Test-HardcodedImageMapUrlCandidate -Content $Content -ImageMap $ImageMap)
+        )) {
         return $true
     }
 
@@ -658,12 +1068,6 @@ function Test-HuduContentLinkReplacementCandidate {
 
     if ($IncludeHostedImageAnchors -and (Test-HuduHostedImageAnchorCandidate -Content $Content -IncludeUploads:$IncludeUploads)) {
         return $true
-    }
-
-    if ($Type -eq 'rich' -and (Get-Command -Name Test-HuduUploadImageSourceWorkaroundCandidate -ErrorAction SilentlyContinue)) {
-        if (Test-HuduUploadImageSourceWorkaroundCandidate -Content $Content -Force:$ForceUploadImageSourceWorkaround) {
-            return $true
-        }
     }
 
     return $false
@@ -686,21 +1090,10 @@ function Update-HuduContentLinks {
         [AllowNull()]
         [hashtable]$AttachmentUrlLookup,
 
-        [AllowNull()]
-        [int]$RecordId,
-
-        [AllowNull()]
-        [ValidateSet('Article', 'Asset')]
-        [string]$RecordType,
-
-        [AllowNull()]
-        [string]$UploadWorkaroundOutDir,
-
         [switch]$IncludeHardcodedImages,
         [switch]$IncludeAttachments,
         [switch]$IncludeHostedImageAnchors,
-        [switch]$IncludeUploads,
-        [switch]$ForceUploadImageSourceWorkaround
+        [switch]$IncludeUploads
     )
 
     $newContent = $Content
@@ -750,29 +1143,6 @@ function Update-HuduContentLinks {
                 Replacements = $attachments.Replacements
             })
             $newContent = $attachments.Content
-        }
-    }
-
-    if ($Type -eq 'rich' -and (Get-Command -Name Convert-HuduUploadImageSourcesToPublicPhotos -ErrorAction SilentlyContinue)) {
-        $uploadWorkaroundSplat = @{
-            Content = $newContent
-            Force   = $ForceUploadImageSourceWorkaround
-        }
-        if ($RecordId -gt 0) { $uploadWorkaroundSplat.RecordId = $RecordId }
-        if (-not [string]::IsNullOrWhiteSpace($RecordType)) { $uploadWorkaroundSplat.RecordType = $RecordType }
-        if (-not [string]::IsNullOrWhiteSpace($UploadWorkaroundOutDir)) { $uploadWorkaroundSplat.OutDir = $UploadWorkaroundOutDir }
-
-        $uploadImageSources = Convert-HuduUploadImageSourcesToPublicPhotos @uploadWorkaroundSplat
-        if ($uploadImageSources.Changed) {
-            $null = $replacementSets.Add([pscustomobject]@{
-                Type         = 'HuduUploadImageSources'
-                Changed      = $true
-                Replacements = $uploadImageSources.Replacements
-                Failures     = $uploadImageSources.Failures
-            })
-            $newContent = $uploadImageSources.Content
-        } elseif ($uploadImageSources.Failures.Count -gt 0) {
-            Write-Warning "Hudu upload image source workaround found $($uploadImageSources.Failures.Count) unresolved image source(s)."
         }
     }
 

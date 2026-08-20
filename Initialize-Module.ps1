@@ -560,7 +560,6 @@ function Confirm-ITGlueExportPasswordCsv {
 $FontAwesomeUpgrade = Get-FontAwesomeMap
 
 # Add Replace URL functions
-. $PSScriptRoot\Private\Workaround-Uploads.ps1
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
 
 # Add Hudu Relations Function
