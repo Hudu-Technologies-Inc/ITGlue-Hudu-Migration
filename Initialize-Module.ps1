@@ -430,6 +430,7 @@ if ($true -eq $AutoDownloadITGlueExport) {
         DownloadPath   = $ITGlueExportDownloadPath ?? $environmentSettings.ITGlueExportDownloadPath ?? $null
         SevenZipPath   = $ITGlueExportSevenZipPath ?? $environmentSettings.ITGlueExportSevenZipPath ?? $null
         ZipPassword    = $ITGlueExportZipPassword ?? $environmentSettings.ITGlueExportZipPassword ?? $null
+        DownloadFileNameTag = $HuduBaseDomain ?? $settings.HuduBaseDomain ?? $environmentSettings.HuduBaseDomain ?? $settings.ITGURL ?? $environmentSettings.ITGURL ?? $ITGAPIEndpoint
         LogsPath       = $MigrationLogs
         GenerateZipPassword = [bool]($ITGlueExportGenerateZipPassword ?? $environmentSettings.ITGlueExportGenerateZipPassword ?? $true)
         ClearExistingExports = [bool]($ITGlueExportClearExistingExports ?? $environmentSettings.ITGlueExportClearExistingExports ?? $true)
