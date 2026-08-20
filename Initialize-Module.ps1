@@ -320,6 +320,10 @@ $PlaceInternalDocsInInternalCompany = [bool]$environmentSettings.PlaceInternalDo
 
 $ITGlueExportPath = $environmentSettings.ITGlueExportPath
 
+if (-not (Get-Command -Name Ensure-ITGlueExportAvailable -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Get-ITGlueExport.ps1
+}
+
 
 # Choose if you want to resume previous attempts from the last successful section
 $resumeQuestion = $resumeQuestion ?? $(Select-ObjectFromList -message "Would you like to resume a previous migration?" -objects @($true, $false) -allowNull $false)
@@ -416,6 +420,37 @@ if ($InitType -eq 'Full') {
 
 ############################ Migration Logs Path ##############################
 $MigrationLogs = $environmentSettings.MigrationLogs
+
+$AutoDownloadITGlueExport = $AutoDownloadITGlueExport ?? $environmentSettings.AutoDownloadITGlueExport ?? $true
+if ($true -eq $AutoDownloadITGlueExport) {
+    $autoExportParams = @{
+        ITGKey         = $ITGKey
+        ITGBaseURI     = $ITGAPIEndpoint
+        ExportPath     = $ITGlueExportPath
+        DownloadPath   = $ITGlueExportDownloadPath ?? $environmentSettings.ITGlueExportDownloadPath ?? $null
+        SevenZipPath   = $ITGlueExportSevenZipPath ?? $environmentSettings.ITGlueExportSevenZipPath ?? $null
+        ZipPassword    = $ITGlueExportZipPassword ?? $environmentSettings.ITGlueExportZipPassword ?? $null
+        LogsPath       = $MigrationLogs
+        GenerateZipPassword = [bool]($ITGlueExportGenerateZipPassword ?? $environmentSettings.ITGlueExportGenerateZipPassword ?? $true)
+        ClearExistingExports = [bool]($ITGlueExportClearExistingExports ?? $environmentSettings.ITGlueExportClearExistingExports ?? $true)
+        IncludeLogs    = [bool]($ITGlueExportIncludeLogs ?? $environmentSettings.ITGlueExportIncludeLogs ?? $false)
+        PollSeconds    = [int]($ITGlueExportPollSeconds ?? $environmentSettings.ITGlueExportPollSeconds ?? 60)
+        TimeoutMinutes = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)
+    }
+
+    try {
+        $ITGlueExportBootstrap = Ensure-ITGlueExportAvailable @autoExportParams
+        $ITGlueExportPath = $ITGlueExportBootstrap.ExportPath
+        if ($environmentSettings) {
+            $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
+        }
+    } catch {
+        Write-Host "Automatic IT Glue export download/extract failed: $($_.Exception.Message)" -ForegroundColor Red
+        throw
+    }
+} else {
+    Write-Host "Automatic IT Glue export download/extract is disabled. Using configured export path: $ITGlueExportPath" -ForegroundColor Yellow
+}
 
 # Now that ITGlue export jobs require a user to elect to include passwords via checkbox, we need to check for the presence of the passwords.csv and warn user in relation to their migration strategy.
 $resolvedITGlueExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath
@@ -554,7 +589,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
-$requiredHuduVersion = ([version]"2.45.0")
-$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0", [version]"2.44.1", [version]"2.44.2", [version]"2.44.3") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
+$requiredHuduVersion = ([version]"2.44.0")
+$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 

@@ -197,6 +197,17 @@ function Set-HuduPasswordFolderAssignment {
         throw "Expected one Hudu password for id $Id, received $(@($assetPassword).Count)."
     }
 
+    # Hudu GET returns the service URL as login_url, while PUT expects it as url.
+    # The GET url value is the Hudu record URL, so never echo that back as url.
+    $loginUrl = $assetPassword.login_url
+    if ($assetPassword.PSObject.Properties['url']) {
+        $assetPassword.PSObject.Properties.Remove('url')
+    }
+    if ($assetPassword.PSObject.Properties['login_url']) {
+        $assetPassword | Add-Member -MemberType NoteProperty -Name url -Force -Value $loginUrl
+        $assetPassword.PSObject.Properties.Remove('login_url')
+    }
+
     if ($CompanyId -gt 0) {
         $assetPassword | Add-Member -MemberType NoteProperty -Name company_id -Force -Value $CompanyId
     }
