@@ -32,7 +32,7 @@ write-host $BackupSafetyText -ForegroundColor DarkCyan
 Write-Host $LiabilityWarning -ForegroundColor Red
 
 # version checking
-$RequiredHuduVersion = [version]"2.45.0"; $DisallowedVersions = @([version]("2.37.0"), [version]("2.44.1"), [version]("2.44.2"), [version]("2.44.3"));
+$RequiredHuduVersion = [version]"2.44.0"; $DisallowedVersions = @([version]("2.37.0"));
 if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) { write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red; exit 1 }
 if ($DisallowedVersions -contains [version]($CurrentVersion)) {write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red; exit 1;} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
 
