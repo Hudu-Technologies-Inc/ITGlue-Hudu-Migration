@@ -13,18 +13,20 @@ $FirstTimeLoad = 1
 
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
-$estimateParams = @{
-    ExportPath  = $ITGlueExportPath
-    ITGBaseURI  = $ITGAPIEndpoint
-}
-if ($false -eq $importPasswordFolders) {
-    $estimateParams['PasswordFolderCount'] = 0
-} else {
-    
-}
-$estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
-Write-Host "Your Migration is estimated to finish some time around $($ScriptStartTime + $estimatedJobDuration) or about $($estimatedJobDuration.TotalHours) hours from now"
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
+
+function Stop-ITGlueExportBootstrapJobIfRunning {
+    if (-not $ITGlueExportBootstrapJob) {
+        return
+    }
+
+    if ($ITGlueExportBootstrapJob.State -eq 'Running') {
+        Write-Host "Stopping background IT Glue export job $($ITGlueExportBootstrapJob.Id)." -ForegroundColor Yellow
+        Stop-Job -Job $ITGlueExportBootstrapJob -ErrorAction SilentlyContinue
+    }
+
+    Remove-Job -Job $ITGlueExportBootstrapJob -Force -ErrorAction SilentlyContinue
+}
 
 ###################### Initial Setup and Confirmations ###############################
 Write-Host $InvocationWelcomeText -ForegroundColor Green
@@ -33,8 +35,16 @@ Write-Host $LiabilityWarning -ForegroundColor Red
 
 # version checking
 $RequiredHuduVersion = [version]"2.44.0"; $DisallowedVersions = @([version]("2.37.0"));
-if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) { write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red; exit 1 }
-if ($DisallowedVersions -contains [version]($CurrentVersion)) {write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red; exit 1;} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
+if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) {
+    write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+}
+if ($DisallowedVersions -contains [version]($CurrentVersion)) {
+    write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
 
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
@@ -46,7 +56,50 @@ write-host "Hudu API Key Scope for Password Access: $huduScopeOk"
 write-host "IT Glue API Key Scope for Password Access: $itglueScopeOk"
 if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
     Write-Host "One or both of your API keys do not have the required scope for password access. Please update the key scopes and try again." -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
     exit 1
+}
+
+write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
+$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
+. .\public\Check-LayoutCollisions.ps1
+if ($PreflightCollisionFound) {
+    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+}
+
+if ($ITGlueExportBootstrapJob) {
+    try {
+        $ITGlueExportBootstrap = Wait-ITGlueExportBootstrapJob -Job $ITGlueExportBootstrapJob
+        $ITGlueExportPath = $ITGlueExportBootstrap.ExportPath
+        if ($environmentSettings) {
+            $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
+        }
+    } catch {
+        Write-Host "Automatic IT Glue export download/extract failed: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+}
+
+$resolvedITGlueExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath
+$passwordCsvCheck = Confirm-ITGlueExportPasswordCsv `
+    -ExportPath $resolvedITGlueExportPath `
+    -PasswordsCSVOptional $passwordsCSVOptional `
+    -PasswordsCSVOptionalReason $passwordsCSVOptionalReason
+$ITGlueExportPath = $passwordCsvCheck.ExportPath
+$passwordsCSVPath = $passwordCsvCheck.PasswordsCSVPath
+$vaultedCSVPath = $passwordCsvCheck.VaultedCSVPath
+$passwordsCSVFound = $passwordCsvCheck.PasswordsCSVFound
+$overrideNoPassCSV = $passwordCsvCheck.OverrideNoPassCSV
+$VaultedPasswords = @()
+$possiblyVaultedPasswords = $false
+$uniqueVaultedOrgs = @()
+$userVaultedPasswordsDirPresent = $false
+$vaultCSVsPresent = @()
+$shouldRunVaultJob = $false
+if ($environmentSettings) {
+    $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
 }
 
 write-host "Checking available disk space for migration artifacts" -ForegroundColor DarkCyan
@@ -62,13 +115,15 @@ if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
     Write-Warning "Could not read $($diskSpaceCheck.EnumerationErrorCount) item(s) while estimating export size. Disk space estimate may be low."
 }
 
-write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
-$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
-. .\public\Check-LayoutCollisions.ps1
-if ($PreflightCollisionFound) {
-    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
-    exit 1
+$estimateParams = @{
+    ExportPath  = $ITGlueExportPath
+    ITGBaseURI  = $ITGAPIEndpoint
 }
+if ($false -eq $importPasswordFolders) {
+    $estimateParams['PasswordFolderCount'] = 0
+}
+$estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
+Write-Host "Your Migration is estimated to finish some time around $($ScriptStartTime + $estimatedJobDuration) or about $($estimatedJobDuration.TotalHours) hours from now"
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 

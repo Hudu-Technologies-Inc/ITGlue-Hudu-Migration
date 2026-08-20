@@ -571,7 +571,7 @@ function Ensure-ITGlueExportAvailable {
 
     if ([string]::IsNullOrWhiteSpace($DownloadPath)) {
         $safeTimestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $DownloadPath = Join-Path -Path $exportParent -ChildPath "ITGlueExport-$safeTimestamp.zip"
+        $DownloadPath = Join-Path -Path $exportParent -ChildPath "ITGlueExport-$(get-hudubaseurl)-$safeTimestamp.zip"
     }
 
     Write-Host "No extracted IT Glue export content was found at $ExportPath. Starting a full-tenant export." -ForegroundColor Yellow
@@ -635,4 +635,79 @@ function Ensure-ITGlueExportAvailable {
         PasswordLog  = $generatedPasswordInfo.Path
         ClearedExports = $clearedExportIds
     }
+}
+
+function Start-ITGlueExportBootstrapJob {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$ExportParameters,
+
+        [Parameter(Mandatory = $true)]
+        [string]$HelperScriptPath
+    )
+
+    if (-not (Test-Path -LiteralPath $HelperScriptPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "IT Glue export helper script was not found at $HelperScriptPath."
+    }
+
+    $jobName = "ITGlueExportBootstrap-$([guid]::NewGuid().ToString('N'))"
+    Start-Job -Name $jobName -ArgumentList $HelperScriptPath, $ExportParameters -ScriptBlock {
+        param(
+            [string]$ScriptPath,
+            [hashtable]$Parameters
+        )
+
+        . $ScriptPath
+        Ensure-ITGlueExportAvailable @Parameters
+    }
+}
+
+function Wait-ITGlueExportBootstrapJob {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.Job]$Job,
+
+        [switch]$KeepJob
+    )
+
+    Write-Host "Waiting for background IT Glue export job $($Job.Id) to finish." -ForegroundColor Cyan
+    $null = Wait-Job -Job $Job
+
+    try {
+        $received = @(Receive-Job -Job $Job -ErrorAction Stop)
+    } catch {
+        if (-not $KeepJob) {
+            Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+        }
+        throw "Background IT Glue export job failed while receiving output: $($_.Exception.Message)"
+    }
+
+    if ($Job.State -ne 'Completed') {
+        $jobErrors = @(
+            $Job.ChildJobs |
+                ForEach-Object { $_.JobStateInfo.Reason } |
+                Where-Object { $_ }
+        )
+        if (-not $KeepJob) {
+            Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+        }
+        $reason = if ($jobErrors.Count -gt 0) { ($jobErrors | Out-String).Trim() } else { "State: $($Job.State)" }
+        throw "Background IT Glue export job did not complete successfully. $reason"
+    }
+
+    if (-not $KeepJob) {
+        Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+    }
+
+    $bootstrapResult = $received |
+        Where-Object { $_ -and $_.PSObject.Properties['ExportPath'] } |
+        Select-Object -Last 1
+
+    if (-not $bootstrapResult) {
+        throw "Background IT Glue export job completed but did not return an export path."
+    }
+
+    return $bootstrapResult
 }
