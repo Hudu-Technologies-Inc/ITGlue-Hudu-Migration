@@ -1,5 +1,9 @@
 # This will be used to remake the ITGlue Links to Hudu, and relies on the migration logs existing.
 
+if (-not (Get-Command -Name Convert-HuduUploadImageSourcesToPublicPhotos -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Workaround-Uploads.ps1
+}
+
 $ITGlueURLCandidates = @($ITGURL)
 
 if ($environmentSettings.ITGCustomDomains) {
@@ -632,7 +636,8 @@ function Test-HuduContentLinkReplacementCandidate {
         [switch]$IncludeHardcodedImages,
         [switch]$IncludeAttachments,
         [switch]$IncludeHostedImageAnchors,
-        [switch]$IncludeUploads
+        [switch]$IncludeUploads,
+        [switch]$ForceUploadImageSourceWorkaround
     )
 
     if ([string]::IsNullOrWhiteSpace($Content)) {
@@ -655,6 +660,12 @@ function Test-HuduContentLinkReplacementCandidate {
         return $true
     }
 
+    if ($Type -eq 'rich' -and (Get-Command -Name Test-HuduUploadImageSourceWorkaroundCandidate -ErrorAction SilentlyContinue)) {
+        if (Test-HuduUploadImageSourceWorkaroundCandidate -Content $Content -Force:$ForceUploadImageSourceWorkaround) {
+            return $true
+        }
+    }
+
     return $false
 }
 
@@ -675,10 +686,21 @@ function Update-HuduContentLinks {
         [AllowNull()]
         [hashtable]$AttachmentUrlLookup,
 
+        [AllowNull()]
+        [int]$RecordId,
+
+        [AllowNull()]
+        [ValidateSet('Article', 'Asset')]
+        [string]$RecordType,
+
+        [AllowNull()]
+        [string]$UploadWorkaroundOutDir,
+
         [switch]$IncludeHardcodedImages,
         [switch]$IncludeAttachments,
         [switch]$IncludeHostedImageAnchors,
-        [switch]$IncludeUploads
+        [switch]$IncludeUploads,
+        [switch]$ForceUploadImageSourceWorkaround
     )
 
     $newContent = $Content
@@ -728,6 +750,29 @@ function Update-HuduContentLinks {
                 Replacements = $attachments.Replacements
             })
             $newContent = $attachments.Content
+        }
+    }
+
+    if ($Type -eq 'rich' -and (Get-Command -Name Convert-HuduUploadImageSourcesToPublicPhotos -ErrorAction SilentlyContinue)) {
+        $uploadWorkaroundSplat = @{
+            Content = $newContent
+            Force   = $ForceUploadImageSourceWorkaround
+        }
+        if ($RecordId -gt 0) { $uploadWorkaroundSplat.RecordId = $RecordId }
+        if (-not [string]::IsNullOrWhiteSpace($RecordType)) { $uploadWorkaroundSplat.RecordType = $RecordType }
+        if (-not [string]::IsNullOrWhiteSpace($UploadWorkaroundOutDir)) { $uploadWorkaroundSplat.OutDir = $UploadWorkaroundOutDir }
+
+        $uploadImageSources = Convert-HuduUploadImageSourcesToPublicPhotos @uploadWorkaroundSplat
+        if ($uploadImageSources.Changed) {
+            $null = $replacementSets.Add([pscustomobject]@{
+                Type         = 'HuduUploadImageSources'
+                Changed      = $true
+                Replacements = $uploadImageSources.Replacements
+                Failures     = $uploadImageSources.Failures
+            })
+            $newContent = $uploadImageSources.Content
+        } elseif ($uploadImageSources.Failures.Count -gt 0) {
+            Write-Warning "Hudu upload image source workaround found $($uploadImageSources.Failures.Count) unresolved image source(s)."
         }
     }
 

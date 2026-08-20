@@ -2490,6 +2490,8 @@ $articlesUpdated = foreach ($articleFound in $ArticleLinkReplacementCandidates) 
     $UpdatedContent = Update-HuduContentLinks `
         -Content $articleFound.content `
         -Type 'rich' `
+        -RecordId $articleFound.id `
+        -RecordType 'Article' `
         -ImageMap $ImageMap `
         -AttachmentUrlMap $AttachmentUrlMapForReplacement `
         -AttachmentUrlLookup $AttachmentUrlLookupForReplacement `
@@ -2692,6 +2694,8 @@ $assetRichTextLinkResults = foreach ($assetFound in $AssetRichTextLinkCandidates
         $updatedField = Update-HuduContentLinks `
             -Content $fieldContent `
             -Type 'rich' `
+            -RecordId $assetFound.id `
+            -RecordType 'Asset' `
             -ImageMap $ImageMap `
             -AttachmentUrlMap $AttachmentUrlMapForReplacement `
             -AttachmentUrlLookup $AttachmentUrlLookupForReplacement `
