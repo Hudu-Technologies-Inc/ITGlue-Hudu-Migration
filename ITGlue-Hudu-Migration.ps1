@@ -1992,9 +1992,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                             $imagePath = $foundFile.FullName
                         } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($tnImgPath) + '*') -ErrorAction SilentlyContinue)) {
                             $imagePath = $foundFile.FullName
-                        } elseif ($foundFile = Resolve-ITGlueAttachmentImageFile -SourceValues @($fullImgUrl, $tnImgUrl, $imageObject.src, $fullImgPath, $tnImgPath) -ExportPath $ITGlueExportPath -AttachmentFiles $Attachfiles -ResourceType 'documents' -ResourceId $Article.ITGID) {
-                            $imagePath = $foundFile.FullName
-                            Write-Host "Resolved attachment image from export attachments folder: $imagePath" -ForegroundColor Cyan
                         } else { 
                             Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                             Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
@@ -2030,13 +2027,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                 write-verbose "Uploading new/copied ITGlue image $OriginalFullImagePath => $imagePath"
                                 try {
                                     $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
-                                    $PublicPhotoUrl = "$($UploadImage.public_photo.url)"
-                                    $ImageMap["$OriginalFullImagePath"] = $PublicPhotoUrl
-                                    foreach ($ImageSource in @($fullImgUrl, $tnImgUrl, $imageObject.src)) {
-                                        foreach ($ImageSourceCandidate in @(Get-HardcodedImageUrlReplacementCandidates -OriginalUrl $ImageSource)) {
-                                            $ImageMap["$ImageSourceCandidate"] = $PublicPhotoUrl
-                                        }
-                                    }
+                                    $ImageMap["$OriginalFullImagePath"] = "$($UploadImage.public_photo.url)"
                                 } catch {
                     # issue during Upload
                                     $ManualLog = [PSCustomObject]@{
