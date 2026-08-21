@@ -5,6 +5,12 @@ if (-not ($FirstTimeLoad -eq 1)) {
     
     # Add Replace URL functions
     . $PSScriptRoot\..\Private\ConvertTo-HuduURL.ps1
+    if (-not (Get-Command -Name Set-HuduArticleLocalContent -ErrorAction SilentlyContinue)) {
+        . $PSScriptRoot\ArticleContentLocalCache.ps1
+    }
+    if (-not (Get-Command -Name Resolve-ITGlueArticleAttachmentImageFile -ErrorAction SilentlyContinue)) {
+        . $PSScriptRoot\Resolve-ArticleAttachmentImage.ps1
+    }
 
     Write-Host "Checking for Matched Variables"
     if (-not $MatchedPasswords) {$MatchedPasswords = (Get-Content -path "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
@@ -75,9 +81,9 @@ if (-not ($FirstTimeLoad -eq 1)) {
                     $images = @($html.Images)
 
                     $images | ForEach-Object {
-                        
-                        
+
                         if (($_.src -notmatch '^http[s]?://') -or ($_.src -match [regex]::Escape($ITGURL))) {
+                            $imagePathResolvedFromAttachment = $false
                             $script:HasImages = $true
                             $imgHTML = $_.outerHTML
                             Write-Host "Processing HTML: $imgHTML"
@@ -106,7 +112,11 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                 $imagePath = $foundFile.FullName
                             } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($tnImgPath) + '*') -ErrorAction SilentlyContinue)) {
                                 $imagePath = $foundFile.FullName
-                            } else { 
+                            } elseif ($foundFile = Resolve-ITGlueArticleAttachmentImageFile -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, $_.src, $imgHTML) -AttachmentFiles $Attachfiles -ExportPath $ITGlueExportPath) {
+                                $imagePath = $foundFile.FullName
+                                $imagePathResolvedFromAttachment = $true
+                                Write-Host "Resolved inline attachment image from article attachments: $imagePath" -ForegroundColor Cyan
+                            } else {
                                 Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                                 Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
                                 Write-Warning "Unable to validate image file."
@@ -132,8 +142,12 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                 if ($imageType) {
                                     Write-Host "Uploading new image"
                                     try {
-                                        $UploadImage = New-HuduPublicPhoto -FilePath "$imagePath" -record_id $Article.HuduID -record_type 'Article'
-                                        $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+                                        if ($imagePathResolvedFromAttachment) {
+                                            $NewImageURL = Convert-ITGlueArticleAttachmentImageToPublicPhoto -ImageFile (Get-Item -LiteralPath $imagePath) -Article $Article
+                                        } else {
+                                            $UploadImage = New-HuduPublicPhoto -FilePath "$imagePath" -record_id $Article.HuduID -record_type 'Article'
+                                            $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+                                        }
                                         $ImgLink = $html.Links | Where-Object {$_.innerHTML -eq $imgHTML}
                                         Write-Host "Setting image to: '$NewImageURL'"
                                         $_.src = [string]"$NewImageURL"
@@ -195,31 +209,10 @@ if (-not ($FirstTimeLoad -eq 1)) {
                 }
                 
                     
-                $articleUsesGlobalKB = if ($null -ne $Article.PSObject.Properties['IsGlobalKBArticle']) {
-                    [bool]$Article.IsGlobalKBArticle
-                } else {
-                    [bool]($Article.company.InternalCompany -and -not $PlaceInternalDocsInInternalCompany)
-                }
+                $localContentPath = Set-HuduArticleLocalContent -Article $Article -Content $page_out -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
+                Write-Host "$($Article.name) local article HTML prepared at $localContentPath" -ForegroundColor Green
 
-                if (-not $articleUsesGlobalKB) {
-                    $ArticleSplat = @{
-                        article_id = $Article.HuduID
-                        name       = $Article.name
-                        content    = $page_out
-                        company_id = $Article.company.HuduID                   
-                    }	
-                } else {
-                    $ArticleSplat = @{
-                        article_id = $Article.HuduID
-                        name       = $Article.name
-                        content    = $page_out
-                    }	
-                }
-                    
-                $null = Set-HuduArticle @ArticleSplat
-                Write-Host "$($Article.name) completed" -ForegroundColor Green
-            
-                $Article.Imported = "Created-By-Script"
+                $Article.Imported = "Content-Prepared-Locally"
                 
             } 
 

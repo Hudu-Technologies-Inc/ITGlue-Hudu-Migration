@@ -1963,6 +1963,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                     # Reset per-image so resolution and the error message never carry a stale path from a previous image/article
                     $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
                     $matchedImage = $null; $foundFile = $null; $imagePath = $null
+                    $imagePathResolvedFromAttachment = $false
                     if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL))) {
                         $script:HasImages = $true
                         $imgHTML = $imageObject.outerHTML
@@ -1992,6 +1993,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                             $imagePath = $foundFile.FullName
                         } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($tnImgPath) + '*') -ErrorAction SilentlyContinue)) {
                             $imagePath = $foundFile.FullName
+                        } elseif ($foundFile = Resolve-ITGlueArticleAttachmentImageFile -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, $imageObject.src, $imgHTML) -AttachmentFiles $Attachfiles -ExportPath $ITGlueExportPath) {
+                            $imagePath = $foundFile.FullName
+                            $imagePathResolvedFromAttachment = $true
+                            Write-Host "Resolved inline attachment image from article attachments: $imagePath" -ForegroundColor Cyan
                         } else { 
                             Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                             Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
@@ -2026,8 +2031,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 
                                 write-verbose "Uploading new/copied ITGlue image $OriginalFullImagePath => $imagePath"
                                 try {
-                                    $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
-                                    $ImageMap["$OriginalFullImagePath"] = "$($UploadImage.public_photo.url)"
+                                    if ($imagePathResolvedFromAttachment) {
+                                        $NewImageURL = Convert-ITGlueArticleAttachmentImageToPublicPhoto -ImageFile (Get-Item -LiteralPath $imagePath) -Article $Article
+                                        $ImageMap["$OriginalFullImagePath"] = $NewImageURL
+                                    } else {
+                                        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
+                                        $ImageMap["$OriginalFullImagePath"] = "$($UploadImage.public_photo.url)"
+                                    }
                                 } catch {
                     # issue during Upload
                                     $ManualLog = [PSCustomObject]@{
@@ -2047,7 +2057,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                     continue
                                 }
                                 try {                                    
-                                    $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+                                    if (-not $imagePathResolvedFromAttachment) {
+                                        $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+                                    }
 
                                     # Update the <img> tag src
                                     $imageObject.src = [string]$NewImageURL
@@ -2114,31 +2126,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
             }
 			
 				
-            $articleUsesGlobalKB = if ($null -ne $Article.PSObject.Properties['IsGlobalKBArticle']) {
-                [bool]$Article.IsGlobalKBArticle
-            } else {
-                [bool]($Article.company.InternalCompany -and -not $PlaceInternalDocsInInternalCompany)
-            }
-
-            if (-not $articleUsesGlobalKB) {
-                $ArticleSplat = @{
-                    article_id = $Article.HuduID
-                    name       = $Article.name
-                    content    = $page_out
-                    company_id = $Article.company.HuduID                   
-                }	
-            } else {
-                $ArticleSplat = @{
-                    article_id = $Article.HuduID
-                    name       = $Article.name
-                    content    = $page_out
-                }	
-            }
-				
-            $null = Set-HuduArticle @ArticleSplat
-            Write-Host "$($Article.name) completed" -ForegroundColor Green
+            $localContentPath = Set-HuduArticleLocalContent -Article $Article -Content $page_out -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
+            Write-Host "$($Article.name) local article HTML prepared at $localContentPath" -ForegroundColor Green
 		
-            $Article.Imported = "Created-By-Script"
+            $Article.Imported = "Content-Prepared-Locally"
 			
         } 
 
@@ -2527,23 +2518,27 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
     @{}
 }
 
-$ArticleLinkReplacementCandidates = @(
-    Get-HuduArticles | Where-Object {
-        Test-HuduContentLinkReplacementCandidate `
-            -Content ([string]$_.content) `
-            -Type 'rich' `
-            -ImageMap $ImageMap `
-            -AttachmentUrlMap $AttachmentUrlMapForReplacement `
-            -IncludeHardcodedImages `
-            -IncludeAttachments `
-            -IncludeHostedImageAnchors `
-            -IncludeUploads
-    }
-)
+$ArticleContentCommitCandidates = @($MatchedArticles | Where-Object { $_ -and ($_.HuduID ?? $_.id) })
 
-$articlesUpdated = foreach ($articleFound in $ArticleLinkReplacementCandidates) {
+$articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
+    $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
+    if ($null -eq $localArticleContent) {
+        $message = "Local article HTML was not found for '$($articleFound.name)' at '$($articleFound.LocalContentPath)'. Refusing to use Hudu-returned content as a fallback."
+        Write-Warning $message
+        [pscustomobject]@{
+            status             = 'failed'
+            article_id         = $articleFound.HuduID ?? $articleFound.id
+            article_name       = $articleFound.name
+            original_article   = $articleFound
+            source_content_path = $articleFound.LocalContentPath
+            replacement_sets   = @()
+            error              = $message
+        }
+        continue
+    }
+
     $UpdatedContent = Update-HuduContentLinks `
-        -Content $articleFound.content `
+        -Content $localArticleContent `
         -Type 'rich' `
         -ImageMap $ImageMap `
         -AttachmentUrlMap $AttachmentUrlMapForReplacement `
@@ -2553,48 +2548,77 @@ $articlesUpdated = foreach ($articleFound in $ArticleLinkReplacementCandidates) 
         -IncludeHostedImageAnchors `
         -IncludeUploads
 
-    if (-not $UpdatedContent.Changed) {
-        [pscustomobject]@{
-            status          = 'clean'
-            original_article = $articleFound
-            replacement_sets = @()
-        }
-        continue
+    $finalArticleContent = $UpdatedContent.Content
+    $standaloneAttachmentNoteApplied = $false
+    if ($finalArticleContent -eq 'Empty Document in IT Glue Export - Please Check IT Glue' -and $articleFound.name -ilike '*.*') {
+        $finalArticleContent = "Please see attached file, $($articleFound.name)"
+        $standaloneAttachmentNoteApplied = $true
     }
+    $finalContentPath = $articleFound.LocalContentPath
 
-    Write-Host "Updating Article $($articleFound.name) with replaced content" -ForegroundColor 'Green'
+    $status = if ($UpdatedContent.Changed -or $standaloneAttachmentNoteApplied) { 'replaced' } else { 'committed' }
+    Write-Host "Committing Article $($articleFound.name) from local HTML ($status)" -ForegroundColor 'Green'
     try {
+        $finalContentPath = Set-HuduArticleLocalContent -Article $articleFound -Content $finalArticleContent -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
         $ArticleSplat = @{
-            Id      = $articleFound.id
-            Content = $UpdatedContent.Content
+            Id      = $articleFound.HuduID ?? $articleFound.id
+            Content = $finalArticleContent
         }
         if ($articleFound.name) { $ArticleSplat.Name = $articleFound.name }
-        if ($articleFound.company_id) { $ArticleSplat.CompanyId = $articleFound.company_id }
+        $articleUsesGlobalKB = if ($null -ne $articleFound.PSObject.Properties['IsGlobalKBArticle']) {
+            [bool]$articleFound.IsGlobalKBArticle
+        } else {
+            [bool]($articleFound.company.InternalCompany -and -not $PlaceInternalDocsInInternalCompany)
+        }
+        if (-not $articleUsesGlobalKB -and $articleFound.company.HuduID) {
+            $ArticleSplat.CompanyId = $articleFound.company.HuduID
+        } elseif ($articleFound.company_id) {
+            $ArticleSplat.CompanyId = $articleFound.company_id
+        }
+
+        $updatedArticle = Set-HuduArticle @ArticleSplat -ErrorAction Stop
+        $updatedArticleObject = $updatedArticle.article ?? $updatedArticle
+        $updatedArticleSummary = [pscustomobject]@{
+            id         = $updatedArticleObject.id ?? $ArticleSplat.Id
+            name       = $updatedArticleObject.name ?? $articleFound.name
+            company_id = $updatedArticleObject.company_id ?? $ArticleSplat.CompanyId
+            url        = $updatedArticleObject.url ?? $articleFound.HuduObject.url
+        }
+        $articleFound | Add-Member -MemberType NoteProperty -Name LocalContentCommittedAt -Value (Get-Date).ToString('o') -Force
 
         [pscustomobject]@{
-            status          = 'replaced'
-            original_article = $articleFound
-            updated_article  = Set-HuduArticle @ArticleSplat -ErrorAction Stop
-            replacement_sets = $UpdatedContent.ReplacementSets
+            status             = $status
+            article_id         = $ArticleSplat.Id
+            article_name       = $articleFound.name
+            original_article   = $articleFound
+            updated_article    = $updatedArticleSummary
+            source_content_path = $finalContentPath
+            standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
+            replacement_sets   = $UpdatedContent.ReplacementSets
         }
     } catch {
         [pscustomobject]@{
-            status            = 'failed'
-            original_article  = $articleFound
-            attempted_changes = $UpdatedContent.Content
-            replacement_sets  = $UpdatedContent.ReplacementSets
-            error             = $_.Exception.Message
+            status             = 'failed'
+            article_id         = $articleFound.HuduID ?? $articleFound.id
+            article_name       = $articleFound.name
+            original_article   = $articleFound
+            source_content_path = $finalContentPath
+            attempted_changes  = $finalArticleContent
+            standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
+            replacement_sets   = $UpdatedContent.ReplacementSets
+            error              = $_.Exception.Message
         }
     }
 }
 
 $articlesUpdated | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedArticlesURL.json"
+$MatchedArticles | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\Articles.json"
 $replacedAttachmentURLs = @(
     $articlesUpdated | Where-Object { $_.replacement_sets.Type -contains 'AttachmentLinks' } | ForEach-Object {
         [pscustomobject]@{
             Status       = $_.status
-            ArticleId    = $_.original_article.id
-            ArticleName  = $_.original_article.name
+            ArticleId    = $_.article_id
+            ArticleName  = $_.article_name
             Replacements = @($_.replacement_sets | Where-Object { $_.Type -eq 'AttachmentLinks' } | ForEach-Object { $_.Replacements })
         }
     }
@@ -2604,8 +2628,8 @@ $imageAnchorReplacementResults = @(
     $articlesUpdated | Where-Object { $_.replacement_sets.Type -contains 'HostedImageAnchors' } | ForEach-Object {
         [pscustomobject]@{
             Status      = $_.status
-            ArticleId   = $_.original_article.id
-            ArticleName = $_.original_article.name
+            ArticleId   = $_.article_id
+            ArticleName = $_.article_name
         }
     }
 )
@@ -2809,8 +2833,7 @@ if ($true -eq $allowSettingFlagsAndTypes){
     . .\public\Add-HuduFlagsFlagtypes.ps1
 }
 
-write-host "wrapup 5/10... Setting Standalone articles with attachments to filename..."; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
-foreach ($a in $(Get-HuduArticles | where-object {$_.content -eq "Empty Document in IT Glue Export - Please Check IT Glue" -and $_.name -ilike "*.*"})){Set-HuduArticle -id $a.id -content "Please see attached file, $($a.name)"}
+write-host "wrapup 5/10... Standalone article attachment placeholders were handled during local article commit"; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
 
 write-host "wrapup 6/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
 if ($true -eq $importPasswordFolders){

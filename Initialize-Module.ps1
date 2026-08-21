@@ -571,6 +571,8 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 # Add numeral casting, password folder fetching, and article stub starting helpers
 . $PSScriptRoot\Public\Get-CastIfNumeric.ps1
 . $PSScriptRoot\Public\Start-ArticleStubs.ps1
+. $PSScriptRoot\Public\ArticleContentLocalCache.ps1
+. $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1
 . $PSScriptRoot\Public\Get-PasswordFolders.ps1
 
 # Add migration scope helper
