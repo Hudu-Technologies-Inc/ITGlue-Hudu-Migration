@@ -13,18 +13,20 @@ $FirstTimeLoad = 1
 
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
-$estimateParams = @{
-    ExportPath  = $ITGlueExportPath
-    ITGBaseURI  = $ITGAPIEndpoint
-}
-if ($false -eq $importPasswordFolders) {
-    $estimateParams['PasswordFolderCount'] = 0
-} else {
-    
-}
-$estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
-Write-Host "Your Migration is estimated to finish some time around $($ScriptStartTime + $estimatedJobDuration) or about $($estimatedJobDuration.TotalHours) hours from now"
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
+
+function Stop-ITGlueExportBootstrapJobIfRunning {
+    if (-not $ITGlueExportBootstrapJob) {
+        return
+    }
+
+    if ($ITGlueExportBootstrapJob.State -eq 'Running') {
+        Write-Host "Stopping background IT Glue export job $($ITGlueExportBootstrapJob.Id)." -ForegroundColor Yellow
+        Stop-Job -Job $ITGlueExportBootstrapJob -ErrorAction SilentlyContinue
+    }
+
+    Remove-Job -Job $ITGlueExportBootstrapJob -Force -ErrorAction SilentlyContinue
+}
 
 ###################### Initial Setup and Confirmations ###############################
 Write-Host $InvocationWelcomeText -ForegroundColor Green
@@ -33,8 +35,16 @@ Write-Host $LiabilityWarning -ForegroundColor Red
 
 # version checking
 $RequiredHuduVersion = [version]"2.44.0"; $DisallowedVersions = @([version]("2.37.0"));
-if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) { write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red; exit 1 }
-if ($DisallowedVersions -contains [version]($CurrentVersion)) {write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red; exit 1;} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
+if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) {
+    write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+}
+if ($DisallowedVersions -contains [version]($CurrentVersion)) {
+    write-host "disallowed version $($CurrentVersion); Please upgrade or downgrade if possible first." -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+} else {write-host "$($CurrentVersion) is allowed!" -ForegroundColor Green}
 
 # Prompt for backups, initialize modules, check versions
 $backups=$(if ($true -eq $NonInteractive) {"Y"} else {Read-Host "Y/n"})
@@ -46,7 +56,50 @@ write-host "Hudu API Key Scope for Password Access: $huduScopeOk"
 write-host "IT Glue API Key Scope for Password Access: $itglueScopeOk"
 if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
     Write-Host "One or both of your API keys do not have the required scope for password access. Please update the key scopes and try again." -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
     exit 1
+}
+
+write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
+$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
+. .\public\Check-LayoutCollisions.ps1
+if ($PreflightCollisionFound) {
+    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+}
+
+if ($ITGlueExportBootstrapJob) {
+    try {
+        $ITGlueExportBootstrap = Wait-ITGlueExportBootstrapJob -Job $ITGlueExportBootstrapJob
+        $ITGlueExportPath = $ITGlueExportBootstrap.ExportPath
+        if ($environmentSettings) {
+            $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
+        }
+    } catch {
+        Write-Host "Automatic IT Glue export download/extract failed: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+}
+
+$resolvedITGlueExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath
+$passwordCsvCheck = Confirm-ITGlueExportPasswordCsv `
+    -ExportPath $resolvedITGlueExportPath `
+    -PasswordsCSVOptional $passwordsCSVOptional `
+    -PasswordsCSVOptionalReason $passwordsCSVOptionalReason
+$ITGlueExportPath = $passwordCsvCheck.ExportPath
+$passwordsCSVPath = $passwordCsvCheck.PasswordsCSVPath
+$vaultedCSVPath = $passwordCsvCheck.VaultedCSVPath
+$passwordsCSVFound = $passwordCsvCheck.PasswordsCSVFound
+$overrideNoPassCSV = $passwordCsvCheck.OverrideNoPassCSV
+$VaultedPasswords = @()
+$possiblyVaultedPasswords = $false
+$uniqueVaultedOrgs = @()
+$userVaultedPasswordsDirPresent = $false
+$vaultCSVsPresent = @()
+$shouldRunVaultJob = $false
+if ($environmentSettings) {
+    $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
 }
 
 write-host "Checking available disk space for migration artifacts" -ForegroundColor DarkCyan
@@ -62,13 +115,15 @@ if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
     Write-Warning "Could not read $($diskSpaceCheck.EnumerationErrorCount) item(s) while estimating export size. Disk space estimate may be low."
 }
 
-write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
-$PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
-. .\public\Check-LayoutCollisions.ps1
-if ($PreflightCollisionFound) {
-    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
-    exit 1
+$estimateParams = @{
+    ExportPath  = $ITGlueExportPath
+    ITGBaseURI  = $ITGAPIEndpoint
 }
+if ($false -eq $importPasswordFolders) {
+    $estimateParams['PasswordFolderCount'] = 0
+}
+$estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
+Write-Host "Your Migration is estimated to finish some time around $($ScriptStartTime + $estimatedJobDuration) or about $($estimatedJobDuration.TotalHours) hours from now"
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
@@ -1908,6 +1963,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                     # Reset per-image so resolution and the error message never carry a stale path from a previous image/article
                     $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
                     $matchedImage = $null; $foundFile = $null; $imagePath = $null
+                    $imagePathResolvedFromAttachment = $false
                     if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL))) {
                         $script:HasImages = $true
                         $imgHTML = $imageObject.outerHTML
@@ -1937,6 +1993,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                             $imagePath = $foundFile.FullName
                         } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($tnImgPath) + '*') -ErrorAction SilentlyContinue)) {
                             $imagePath = $foundFile.FullName
+                        } elseif ($foundFile = Resolve-ITGlueArticleAttachmentImageFile -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, $imageObject.src, $imgHTML) -AttachmentFiles $Attachfiles -ExportPath $ITGlueExportPath) {
+                            $imagePath = $foundFile.FullName
+                            $imagePathResolvedFromAttachment = $true
+                            Write-Host "Resolved inline attachment image from article attachments: $imagePath" -ForegroundColor Cyan
                         } else { 
                             Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                             Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
@@ -1971,8 +2031,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 
                                 write-verbose "Uploading new/copied ITGlue image $OriginalFullImagePath => $imagePath"
                                 try {
-                                    $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
-                                    $ImageMap["$OriginalFullImagePath"] = "$($UploadImage.public_photo.url)"
+                                    if ($imagePathResolvedFromAttachment) {
+                                        $NewImageURL = Convert-ITGlueArticleAttachmentImageToPublicPhoto -ImageFile (Get-Item -LiteralPath $imagePath) -Article $Article
+                                        $ImageMap["$OriginalFullImagePath"] = $NewImageURL
+                                    } else {
+                                        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
+                                        $ImageMap["$OriginalFullImagePath"] = "$($UploadImage.public_photo.url)"
+                                    }
                                 } catch {
                     # issue during Upload
                                     $ManualLog = [PSCustomObject]@{
@@ -1992,7 +2057,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                     continue
                                 }
                                 try {                                    
-                                    $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+                                    if (-not $imagePathResolvedFromAttachment) {
+                                        $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+                                    }
 
                                     # Update the <img> tag src
                                     $imageObject.src = [string]$NewImageURL
@@ -2059,31 +2126,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
             }
 			
 				
-            $articleUsesGlobalKB = if ($null -ne $Article.PSObject.Properties['IsGlobalKBArticle']) {
-                [bool]$Article.IsGlobalKBArticle
-            } else {
-                [bool]($Article.company.InternalCompany -and -not $PlaceInternalDocsInInternalCompany)
-            }
-
-            if (-not $articleUsesGlobalKB) {
-                $ArticleSplat = @{
-                    article_id = $Article.HuduID
-                    name       = $Article.name
-                    content    = $page_out
-                    company_id = $Article.company.HuduID                   
-                }	
-            } else {
-                $ArticleSplat = @{
-                    article_id = $Article.HuduID
-                    name       = $Article.name
-                    content    = $page_out
-                }	
-            }
-				
-            $null = Set-HuduArticle @ArticleSplat
-            Write-Host "$($Article.name) completed" -ForegroundColor Green
+            $localContentPath = Set-HuduArticleLocalContent -Article $Article -Content $page_out -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
+            Write-Host "$($Article.name) local article HTML prepared at $localContentPath" -ForegroundColor Green
 		
-            $Article.Imported = "Created-By-Script"
+            $Article.Imported = "Content-Prepared-Locally"
 			
         } 
 
@@ -2472,23 +2518,27 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
     @{}
 }
 
-$ArticleLinkReplacementCandidates = @(
-    Get-HuduArticles | Where-Object {
-        Test-HuduContentLinkReplacementCandidate `
-            -Content ([string]$_.content) `
-            -Type 'rich' `
-            -ImageMap $ImageMap `
-            -AttachmentUrlMap $AttachmentUrlMapForReplacement `
-            -IncludeHardcodedImages `
-            -IncludeAttachments `
-            -IncludeHostedImageAnchors `
-            -IncludeUploads
-    }
-)
+$ArticleContentCommitCandidates = @($MatchedArticles | Where-Object { $_ -and ($_.HuduID ?? $_.id) })
 
-$articlesUpdated = foreach ($articleFound in $ArticleLinkReplacementCandidates) {
+$articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
+    $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
+    if ($null -eq $localArticleContent) {
+        $message = "Local article HTML was not found for '$($articleFound.name)' at '$($articleFound.LocalContentPath)'. Refusing to use Hudu-returned content as a fallback."
+        Write-Warning $message
+        [pscustomobject]@{
+            status             = 'failed'
+            article_id         = $articleFound.HuduID ?? $articleFound.id
+            article_name       = $articleFound.name
+            original_article   = $articleFound
+            source_content_path = $articleFound.LocalContentPath
+            replacement_sets   = @()
+            error              = $message
+        }
+        continue
+    }
+
     $UpdatedContent = Update-HuduContentLinks `
-        -Content $articleFound.content `
+        -Content $localArticleContent `
         -Type 'rich' `
         -ImageMap $ImageMap `
         -AttachmentUrlMap $AttachmentUrlMapForReplacement `
@@ -2498,48 +2548,77 @@ $articlesUpdated = foreach ($articleFound in $ArticleLinkReplacementCandidates) 
         -IncludeHostedImageAnchors `
         -IncludeUploads
 
-    if (-not $UpdatedContent.Changed) {
-        [pscustomobject]@{
-            status          = 'clean'
-            original_article = $articleFound
-            replacement_sets = @()
-        }
-        continue
+    $finalArticleContent = $UpdatedContent.Content
+    $standaloneAttachmentNoteApplied = $false
+    if ($finalArticleContent -eq 'Empty Document in IT Glue Export - Please Check IT Glue' -and $articleFound.name -ilike '*.*') {
+        $finalArticleContent = "Please see attached file, $($articleFound.name)"
+        $standaloneAttachmentNoteApplied = $true
     }
+    $finalContentPath = $articleFound.LocalContentPath
 
-    Write-Host "Updating Article $($articleFound.name) with replaced content" -ForegroundColor 'Green'
+    $status = if ($UpdatedContent.Changed -or $standaloneAttachmentNoteApplied) { 'replaced' } else { 'committed' }
+    Write-Host "Committing Article $($articleFound.name) from local HTML ($status)" -ForegroundColor 'Green'
     try {
+        $finalContentPath = Set-HuduArticleLocalContent -Article $articleFound -Content $finalArticleContent -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
         $ArticleSplat = @{
-            Id      = $articleFound.id
-            Content = $UpdatedContent.Content
+            Id      = $articleFound.HuduID ?? $articleFound.id
+            Content = $finalArticleContent
         }
         if ($articleFound.name) { $ArticleSplat.Name = $articleFound.name }
-        if ($articleFound.company_id) { $ArticleSplat.CompanyId = $articleFound.company_id }
+        $articleUsesGlobalKB = if ($null -ne $articleFound.PSObject.Properties['IsGlobalKBArticle']) {
+            [bool]$articleFound.IsGlobalKBArticle
+        } else {
+            [bool]($articleFound.company.InternalCompany -and -not $PlaceInternalDocsInInternalCompany)
+        }
+        if (-not $articleUsesGlobalKB -and $articleFound.company.HuduID) {
+            $ArticleSplat.CompanyId = $articleFound.company.HuduID
+        } elseif ($articleFound.company_id) {
+            $ArticleSplat.CompanyId = $articleFound.company_id
+        }
+
+        $updatedArticle = Set-HuduArticle @ArticleSplat -ErrorAction Stop
+        $updatedArticleObject = $updatedArticle.article ?? $updatedArticle
+        $updatedArticleSummary = [pscustomobject]@{
+            id         = $updatedArticleObject.id ?? $ArticleSplat.Id
+            name       = $updatedArticleObject.name ?? $articleFound.name
+            company_id = $updatedArticleObject.company_id ?? $ArticleSplat.CompanyId
+            url        = $updatedArticleObject.url ?? $articleFound.HuduObject.url
+        }
+        $articleFound | Add-Member -MemberType NoteProperty -Name LocalContentCommittedAt -Value (Get-Date).ToString('o') -Force
 
         [pscustomobject]@{
-            status          = 'replaced'
-            original_article = $articleFound
-            updated_article  = Set-HuduArticle @ArticleSplat -ErrorAction Stop
-            replacement_sets = $UpdatedContent.ReplacementSets
+            status             = $status
+            article_id         = $ArticleSplat.Id
+            article_name       = $articleFound.name
+            original_article   = $articleFound
+            updated_article    = $updatedArticleSummary
+            source_content_path = $finalContentPath
+            standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
+            replacement_sets   = $UpdatedContent.ReplacementSets
         }
     } catch {
         [pscustomobject]@{
-            status            = 'failed'
-            original_article  = $articleFound
-            attempted_changes = $UpdatedContent.Content
-            replacement_sets  = $UpdatedContent.ReplacementSets
-            error             = $_.Exception.Message
+            status             = 'failed'
+            article_id         = $articleFound.HuduID ?? $articleFound.id
+            article_name       = $articleFound.name
+            original_article   = $articleFound
+            source_content_path = $finalContentPath
+            attempted_changes  = $finalArticleContent
+            standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
+            replacement_sets   = $UpdatedContent.ReplacementSets
+            error              = $_.Exception.Message
         }
     }
 }
 
 $articlesUpdated | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedArticlesURL.json"
+$MatchedArticles | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\Articles.json"
 $replacedAttachmentURLs = @(
     $articlesUpdated | Where-Object { $_.replacement_sets.Type -contains 'AttachmentLinks' } | ForEach-Object {
         [pscustomobject]@{
             Status       = $_.status
-            ArticleId    = $_.original_article.id
-            ArticleName  = $_.original_article.name
+            ArticleId    = $_.article_id
+            ArticleName  = $_.article_name
             Replacements = @($_.replacement_sets | Where-Object { $_.Type -eq 'AttachmentLinks' } | ForEach-Object { $_.Replacements })
         }
     }
@@ -2549,8 +2628,8 @@ $imageAnchorReplacementResults = @(
     $articlesUpdated | Where-Object { $_.replacement_sets.Type -contains 'HostedImageAnchors' } | ForEach-Object {
         [pscustomobject]@{
             Status      = $_.status
-            ArticleId   = $_.original_article.id
-            ArticleName = $_.original_article.name
+            ArticleId   = $_.article_id
+            ArticleName = $_.article_name
         }
     }
 )
@@ -2754,8 +2833,7 @@ if ($true -eq $allowSettingFlagsAndTypes){
     . .\public\Add-HuduFlagsFlagtypes.ps1
 }
 
-write-host "wrapup 5/10... Setting Standalone articles with attachments to filename..."; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
-foreach ($a in $(Get-HuduArticles | where-object {$_.content -eq "Empty Document in IT Glue Export - Please Check IT Glue" -and $_.name -ilike "*.*"})){Set-HuduArticle -id $a.id -content "Please see attached file, $($a.name)"}
+write-host "wrapup 5/10... Standalone article attachment placeholders were handled during local article commit"; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
 
 write-host "wrapup 6/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
 if ($true -eq $importPasswordFolders){

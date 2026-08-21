@@ -259,6 +259,10 @@ param(
     [string]$MapPath = "$MigrationLogs\AttachmentUrlMap.json",
     [string]$OutputPath = "$MigrationLogs\ReplacedAttachmentLinks.json"
 )
+    if (-not (Get-Command -Name Get-HuduArticleLocalContent -ErrorAction SilentlyContinue)) {
+        . $PSScriptRoot\ArticleContentLocalCache.ps1
+    }
+
     if (-not $UrlMap) {
         $UrlMap = Get-AttachmentUrlMap -MapPath $MapPath
     }
@@ -271,28 +275,36 @@ param(
     $UrlLookup = New-AttachmentUrlReplacementLookup -UrlMap $UrlMap
 
     if (-not $Articles) {
-        $Articles = @(Get-HuduArticles)
+        if ($MatchedArticles) {
+            $Articles = @($MatchedArticles)
+        } elseif (Test-Path -LiteralPath "$MigrationLogs\Articles.json" -PathType Leaf -ErrorAction SilentlyContinue) {
+            $Articles = @(Get-Content -LiteralPath "$MigrationLogs\Articles.json" -Raw | ConvertFrom-Json -Depth 100)
+        } else {
+            Write-Warning "No local article migration log was found. Refusing to use Hudu-returned article content for attachment link replacement."
+            return @()
+        }
     }
 
     $Results = foreach ($Article in $Articles) {
-        if ([string]::IsNullOrEmpty($Article.content)) {
+        $ArticleContent = Get-HuduArticleLocalContent -Article $Article
+        if ([string]::IsNullOrEmpty($ArticleContent)) {
             [pscustomobject]@{
                 Status       = 'skipped'
-                ArticleId    = $Article.id
+                ArticleId    = $Article.HuduID ?? $Article.id
                 ArticleName  = $Article.name
-                Reason       = 'empty content'
+                Reason       = "empty or missing local content at '$($Article.LocalContentPath)'"
                 Replacements = @()
             }
             continue
         }
 
-        $Updated = Update-ContentWithAttachmentUrlLookup -Content $Article.content -Lookup $UrlLookup
+        $Updated = Update-ContentWithAttachmentUrlLookup -Content $ArticleContent -Lookup $UrlLookup
         if (-not $Updated.Changed) {
-            $UnresolvedAttachmentUrls = Get-ITGlueAttachmentUrls -Content $Article.content
+            $UnresolvedAttachmentUrls = Get-ITGlueAttachmentUrls -Content $ArticleContent
             if ($UnresolvedAttachmentUrls.Count -gt 0) {
                 [pscustomobject]@{
                     Status                   = 'unresolved'
-                    ArticleId                = $Article.id
+                    ArticleId                = $Article.HuduID ?? $Article.id
                     ArticleName              = $Article.name
                     Reason                   = 'attachment URLs found but no AttachmentUrlMap match'
                     UnresolvedAttachmentUrls = $UnresolvedAttachmentUrls
@@ -303,7 +315,7 @@ param(
 
             [pscustomobject]@{
                 Status       = 'clean'
-                ArticleId    = $Article.id
+                ArticleId    = $Article.HuduID ?? $Article.id
                 ArticleName  = $Article.name
                 Reason       = 'no attachment URLs found'
                 Replacements = @()
@@ -315,29 +327,31 @@ param(
 
         try {
             $UpdatedArticle = $null
-            if ($PSCmdlet.ShouldProcess("Article $($Article.id) '$($Article.name)'", "replace attachment links")) {
+            $ArticleId = $Article.HuduID ?? $Article.id
+            if ($PSCmdlet.ShouldProcess("Article $ArticleId '$($Article.name)'", "replace attachment links")) {
                 $SetArticleSplat = @{
-                    Id      = $Article.id
+                    Id      = $ArticleId
                     Content = $Updated.Content
                 }
                 if ($Article.name) { $SetArticleSplat.Name = $Article.name }
-                if ($Article.company_id) { $SetArticleSplat.CompanyId = $Article.company_id }
+                if ($Article.company.HuduID) { $SetArticleSplat.CompanyId = $Article.company.HuduID }
+                elseif ($Article.company_id) { $SetArticleSplat.CompanyId = $Article.company_id }
 
                 $UpdatedArticle = Set-HuduArticle @SetArticleSplat -ErrorAction Stop
             }
 
             [pscustomobject]@{
                 Status       = if ($WhatIfPreference) { 'whatif' } else { 'replaced' }
-                ArticleId    = $Article.id
+                ArticleId    = $Article.HuduID ?? $Article.id
                 ArticleName  = $Article.name
                 Replacements = $Updated.Replacements
-                UpdatedArticle = $UpdatedArticle
+                UpdatedArticle = $UpdatedArticle.article.id ?? $UpdatedArticle.id ?? ($Article.HuduID ?? $Article.id)
             }
         }
         catch {
             [pscustomobject]@{
                 Status       = 'failed'
-                ArticleId    = $Article.id
+                ArticleId    = $Article.HuduID ?? $Article.id
                 ArticleName  = $Article.name
                 Error        = $_.Exception.Message
                 Replacements = $Updated.Replacements

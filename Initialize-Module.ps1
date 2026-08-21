@@ -430,6 +430,7 @@ if ($true -eq $AutoDownloadITGlueExport) {
         DownloadPath   = $ITGlueExportDownloadPath ?? $environmentSettings.ITGlueExportDownloadPath ?? $null
         SevenZipPath   = $ITGlueExportSevenZipPath ?? $environmentSettings.ITGlueExportSevenZipPath ?? $null
         ZipPassword    = $ITGlueExportZipPassword ?? $environmentSettings.ITGlueExportZipPassword ?? $null
+        DownloadFileNameTag = $HuduBaseDomain ?? $settings.HuduBaseDomain ?? $environmentSettings.HuduBaseDomain ?? $settings.ITGURL ?? $environmentSettings.ITGURL ?? $ITGAPIEndpoint
         LogsPath       = $MigrationLogs
         GenerateZipPassword = [bool]($ITGlueExportGenerateZipPassword ?? $environmentSettings.ITGlueExportGenerateZipPassword ?? $true)
         ClearExistingExports = [bool]($ITGlueExportClearExistingExports ?? $environmentSettings.ITGlueExportClearExistingExports ?? $true)
@@ -439,10 +440,18 @@ if ($true -eq $AutoDownloadITGlueExport) {
     }
 
     try {
-        $ITGlueExportBootstrap = Ensure-ITGlueExportAvailable @autoExportParams
-        $ITGlueExportPath = $ITGlueExportBootstrap.ExportPath
-        if ($environmentSettings) {
-            $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
+        $ITGlueExportRunInBackground = [bool]($ITGlueExportRunInBackground ?? $environmentSettings.ITGlueExportRunInBackground ?? $true)
+        if ($ITGlueExportRunInBackground -and -not (Test-ITGlueExportPathHasContent -Path $ITGlueExportPath)) {
+            $ITGlueExportBootstrapJob = Start-ITGlueExportBootstrapJob `
+                -ExportParameters $autoExportParams `
+                -HelperScriptPath (Join-Path -Path $PSScriptRoot -ChildPath 'Public\Get-ITGlueExport.ps1')
+            Write-Host "Started IT Glue export download/extract in the background as job $($ITGlueExportBootstrapJob.Id)." -ForegroundColor Green
+        } else {
+            $ITGlueExportBootstrap = Ensure-ITGlueExportAvailable @autoExportParams
+            $ITGlueExportPath = $ITGlueExportBootstrap.ExportPath
+            if ($environmentSettings) {
+                $environmentSettings | Add-Member -MemberType NoteProperty -Name ITGlueExportPath -Value $ITGlueExportPath -Force
+            }
         }
     } catch {
         Write-Host "Automatic IT Glue export download/extract failed: $($_.Exception.Message)" -ForegroundColor Red
@@ -452,7 +461,7 @@ if ($true -eq $AutoDownloadITGlueExport) {
     Write-Host "Automatic IT Glue export download/extract is disabled. Using configured export path: $ITGlueExportPath" -ForegroundColor Yellow
 }
 
-# Now that ITGlue export jobs require a user to elect to include passwords via checkbox, we need to check for the presence of the passwords.csv and warn user in relation to their migration strategy.
+# Password CSV validation is deferred until after any background export job has finished.
 $resolvedITGlueExportPath = $ITGlueExportPath ?? $environmentSettings.ITGlueExportPath ?? $settings.ITGlueExportPath
 $passwordsCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) { Join-Path -Path $resolvedITGlueExportPath -ChildPath "passwords.csv" } else { $null }
 $vaultedCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) { Join-Path -Path $resolvedITGlueExportPath -ChildPath "vaulted" } else { $null }
@@ -468,63 +477,57 @@ $userVaultedPasswordsDirPresent = $false
 $vaultCSVsPresent = @()
 $shouldRunVaultJob = $false
 
-if ([string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) {
-    throw "ITGlue export path is blank. Please set ITGlueExportPath before checking for passwords.csv."
-}
+function Confirm-ITGlueExportPasswordCsv {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string]$ExportPath,
 
-while ($passwordsCSVvalidated -eq $false) {
-    if (Test-Path -LiteralPath $passwordsCSVPath -PathType Leaf -ErrorAction SilentlyContinue) {
-        Write-Host "Password CSV found at $passwordsCSVPath" -ForegroundColor Cyan
-        $passwordsCSVFound = $true
-        $passwordsCSVvalidated = $true
-    } elseif ($passwordsCSVOptional) {
-        Write-Host "passwords.csv not found at $passwordsCSVPath, but since $passwordsCSVOptionalReason, this file is not needed specifically for your migration. If you later choose to migrate either of those sections, make sure to have a passwords.csv in your export folder." -ForegroundColor Yellow; Start-Sleep -Seconds 2
-        $passwordsCSVvalidated = $true
-    } else {
-        Write-Host "passwords.csv not found at $passwordsCSVPath. You'll want to take another export, this time ensuring that passwords are included. Failure to do so will result in missing password data. Passwords.csv is used in both flexible assets and passwords portions of the migration." -ForegroundColor Red; Start-Sleep -Seconds 2
-        $overrideNoPassCSV = Read-Host "Press Enter to re-check for the file if you have extracted a new export to $resolvedITGlueExportPath, or Ctrl+C to exit. To continue anyway without passwords CSV (not recommended), please enter this phrase exactly with no quotes: 'migrate-anyway'"
-        if ($overrideNoPassCSV -ieq 'migrate-anyway') {
-            Write-Host "Continuing without passwords.csv. Password data will be missing from the migration." -ForegroundColor Yellow
-            $passwordsCSVvalidated = $true
+        [bool]$PasswordsCSVOptional,
+
+        [AllowNull()]
+        [string]$PasswordsCSVOptionalReason
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExportPath)) {
+        throw "ITGlue export path is blank. Please set ITGlueExportPath before checking for passwords.csv."
+    }
+
+    $resolvedPath = (Resolve-Path -LiteralPath $ExportPath -ErrorAction SilentlyContinue).Path
+    if ([string]::IsNullOrWhiteSpace($resolvedPath)) {
+        $resolvedPath = $ExportPath
+    }
+
+    $candidatePasswordCsvPath = Join-Path -Path $resolvedPath -ChildPath "passwords.csv"
+    $validated = $false
+    $found = $false
+    $override = $null
+
+    while ($validated -eq $false) {
+        if (Test-Path -LiteralPath $candidatePasswordCsvPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            Write-Host "Password CSV found at $candidatePasswordCsvPath" -ForegroundColor Cyan
+            $found = $true
+            $validated = $true
+        } elseif ($PasswordsCSVOptional) {
+            Write-Host "passwords.csv not found at $candidatePasswordCsvPath, but since $PasswordsCSVOptionalReason, this file is not needed specifically for your migration. If you later choose to migrate either of those sections, make sure to have a passwords.csv in your export folder." -ForegroundColor Yellow; Start-Sleep -Seconds 2
+            $validated = $true
+        } else {
+            Write-Host "passwords.csv not found at $candidatePasswordCsvPath. You'll want to take another export, this time ensuring that passwords are included. Failure to do so will result in missing password data. Passwords.csv is used in both flexible assets and passwords portions of the migration." -ForegroundColor Red; Start-Sleep -Seconds 2
+            $override = Read-Host "Press Enter to re-check for the file if you have extracted a new export to $resolvedPath, or Ctrl+C to exit. To continue anyway without passwords CSV (not recommended), please enter this phrase exactly with no quotes: 'migrate-anyway'"
+            if ($override -ieq 'migrate-anyway') {
+                Write-Host "Continuing without passwords.csv. Password data will be missing from the migration." -ForegroundColor Yellow
+                $validated = $true
+            }
         }
     }
-}
 
-if ($passwordsCSVFound -and $overrideNoPassCSV -ine 'migrate-anyway') {
-    try {
-        $passwordRows = @(Import-Csv -LiteralPath $passwordsCSVPath -ErrorAction Stop)
-    } catch {
-        Write-Warning "Unable to parse passwords.csv at $passwordsCSVPath. Vaulted password detection will be skipped. Error: $($_.Exception.Message)"
-        $passwordRows = @()
+    [pscustomobject]@{
+        ExportPath          = $resolvedPath
+        PasswordsCSVPath    = $candidatePasswordCsvPath
+        VaultedCSVPath      = Join-Path -Path $resolvedPath -ChildPath "vaulted"
+        PasswordsCSVFound   = $found
+        OverrideNoPassCSV   = $override
     }
-
-    $passwordCsvHeaders = @($passwordRows | Select-Object -First 1 | ForEach-Object { $_.PSObject.Properties.Name })
-    if ($passwordRows.Count -gt 0 -and $passwordCsvHeaders -inotcontains 'password') {
-        Write-Warning "passwords.csv at $passwordsCSVPath does not appear to contain a 'password' column. Vaulted password detection will be skipped."
-    } elseif ($passwordRows.Count -gt 0) {
-        $VaultedPasswords = @($passwordRows | Where-Object {
-            [string]::IsNullOrWhiteSpace($_.password) -or
-            $_.password -ilike "AES256GCM*" -or
-            $_.password -ilike "AES-256-GCM*"
-        })
-        $possiblyVaultedPasswords = ($VaultedPasswords.Count -gt 0)
-        $uniqueVaultedOrgs = @($VaultedPasswords | ForEach-Object { $_.organization } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-    }
-
-    $userVaultedPasswordsDirPresent = Test-Path -LiteralPath $vaultedCSVPath -PathType Container -ErrorAction SilentlyContinue
-    $vaultCSVsPresent = if ($userVaultedPasswordsDirPresent) { @(Get-ChildItem -LiteralPath $vaultedCSVPath -Filter "*.csv" -File -ErrorAction SilentlyContinue) } else { @() }
-
-    if ($possiblyVaultedPasswords -eq $true -and ($userVaultedPasswordsDirPresent -eq $false -or $vaultCSVsPresent.Count -eq 0)) {
-        Write-Host "It looks like you may have around $($VaultedPasswords.Count) vaulted passwords from $($uniqueVaultedOrgs.Count) unique organizations in this export, but the vaulted passwords directory doesn't seem to be present or has no CSV files. If you have vaulted passwords, place the unvaulted password CSV files in $vaultedCSVPath" -ForegroundColor Yellow
-        New-Item -Path $vaultedCSVPath -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-        Write-Host "You can un-vault passwords at a later time, but it is recommended to download password CSVs for the following orgs and place them in the vaulted password directory to ensure those passwords are decrypted:" -ForegroundColor Yellow
-        $uniqueVaultedOrgs | ForEach-Object { Write-Host "Organization: $_" -ForegroundColor Cyan }
-        Read-Host "Press Enter after placing unvaulted CSV files in $vaultedCSVPath, or press Enter to continue without them"
-    }
-
-    $userVaultedPasswordsDirPresent = Test-Path -LiteralPath $vaultedCSVPath -PathType Container -ErrorAction SilentlyContinue
-    $vaultCSVsPresent = if ($userVaultedPasswordsDirPresent) { @(Get-ChildItem -LiteralPath $vaultedCSVPath -Filter "*.csv" -File -ErrorAction SilentlyContinue) } else { @() }
-    $shouldRunVaultJob = [bool](($possiblyVaultedPasswords -eq $true) -and ($vaultCSVsPresent.Count -gt 0))
 }
 
 ############################### Functions ###############################
@@ -568,6 +571,8 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 # Add numeral casting, password folder fetching, and article stub starting helpers
 . $PSScriptRoot\Public\Get-CastIfNumeric.ps1
 . $PSScriptRoot\Public\Start-ArticleStubs.ps1
+. $PSScriptRoot\Public\ArticleContentLocalCache.ps1
+. $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1
 . $PSScriptRoot\Public\Get-PasswordFolders.ps1
 
 # Add migration scope helper

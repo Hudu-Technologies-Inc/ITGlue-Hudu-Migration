@@ -1,6 +1,25 @@
 function Start-ITGlueToHuduURLRewrite {
 
-$UpdateArticles = (Get-HuduArticles | Where-Object {$_.content -like "*$ITGURL*"})
+if (-not (Get-Command -Name Get-HuduArticleLocalContent -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\ArticleContentLocalCache.ps1
+}
+
+$ArticleContentCandidates = if ($MatchedArticles) {
+    @($MatchedArticles)
+} elseif (Test-Path -LiteralPath "$MigrationLogs\Articles.json" -PathType Leaf -ErrorAction SilentlyContinue) {
+    @(Get-Content -LiteralPath "$MigrationLogs\Articles.json" -Raw | ConvertFrom-Json -Depth 100)
+} else {
+    @()
+}
+$UpdateArticles = $ArticleContentCandidates | Where-Object {
+    $ArticleContent = Get-HuduArticleLocalContent -Article $_
+    if ($null -eq $ArticleContent) {
+        Write-Warning "Skipping article '$($_.name)' because local article HTML was not found at '$($_.LocalContentPath)'."
+        return $false
+    }
+
+    Test-ITGlueURLReplacementCandidate -Content $ArticleContent
+}
 $UpdateAssets = $MatchedAssets | Where-Object {$_.HuduObject.fields.value -like "*$ITGURL*"}
 $UpdatePasswords = $MatchedPasswords | Where-Object { Test-ITGlueURLReplacementCandidate -Content ([string]$_.HuduObject.description) }
 $UpdateAssetPasswords = $MatchedAssetPasswords | Where-Object {
@@ -13,18 +32,20 @@ $UpdateCompanyNotes = $MatchedCompanies | Where-Object { Test-ITGlueURLReplaceme
 # Articles
 $articlesUpdated = @()
 foreach ($articleFound in $UpdateArticles) {
-    if ($NewContent = Update-StringWithCaptureGroups -inputString $articleFound.content -pattern $RichRegexPatternToMatchSansAssets -type "rich") {
+    $ArticleContent = Get-HuduArticleLocalContent -Article $articleFound
+    if ($NewContent = Update-StringWithCaptureGroups -inputString $ArticleContent -pattern $RichRegexPatternToMatchSansAssets -type "rich") {
         $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichRegexPatternToMatchWithAssets -type "rich"
 	$NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorUrlPatternToMatch -type "rich"
     $NewContent = Update-StringWithCaptureGroups -inputString $NewContent -pattern $RichDocLocatorRelativeURLPatternToMatch -type "rich"
         Write-Host "Updating Article $($articleFound.name) with replaced Content" -ForegroundColor 'Green'
 	try {
-        $ArticlePost = Set-HuduArticle -Name $articleFound.name -id $articleFound.id -Content $NewContent -ErrorAction Stop
-        $articlesUpdated = $articlesUpdated + @{"status" = "replaced"; "original_article" = $articleFound; "updated_article" = $ArticlePost}
+        $ArticleId = $articleFound.HuduID ?? $articleFound.id
+        $ArticlePost = Set-HuduArticle -Name $articleFound.name -id $ArticleId -Content $NewContent -ErrorAction Stop
+        $articlesUpdated = $articlesUpdated + @{"status" = "replaced"; "article_id" = $ArticleId; "original_article" = $articleFound; "updated_article" = ($ArticlePost.article.id ?? $ArticlePost.id ?? $ArticleId)}
 	} catch { $articlesUpdated = $articlesUpdated + @{"status" = "failed"; "original_article" = $articleFound; "attempted_changes" = $newContent} }
         }
     else {
-        Write-Warning "Article $articleFound.id found ITGlue URL but didn't match"
+        Write-Warning "Article $($articleFound.HuduID ?? $articleFound.id) found ITGlue URL but didn't match"
         $articlesUpdated = $articlesUpdated + @{"status" = "clean"; "original_article" = $articleFound}
     }
 }
