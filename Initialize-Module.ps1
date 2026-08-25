@@ -610,3 +610,4 @@ $RelationCommitParallelism = $RelationCommitParallelism ?? $MigrationParallelism
 $ArchiveCommitParallelism = $ArchiveCommitParallelism ?? $MigrationParallelismLimit
 
 $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit -ArticleContentCommitParallelism $ArticleContentCommitParallelism -RelationCommitParallelism $RelationCommitParallelism -ArchiveCommitParallelism $ArchiveCommitParallelism
+write-host $ParalellismSettingsInfo
