@@ -591,6 +591,8 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\PreFlightTests.ps1
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
 . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
+. $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
+. $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
@@ -599,3 +601,12 @@ $requiredHuduVersion = ([version]"2.44.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
+$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1))); $MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit));
+$UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true          # use direct article content PUTs during wrap-up instead of Set-HuduArticle's GET+PUT path
+$UseFastRelationCommit = $UseFastRelationCommit ?? $true                # use direct parallel relation POSTs during missing relation wrap-up
+$UseFastArchiveCommit = $UseFastArchiveCommit ?? $true                 # use direct parallel archive PUTs during final archive wrap-up
+$ArticleContentCommitParallelism = $ArticleContentCommitParallelism ?? $MigrationParallelismLimit # number of concurrent article content PUTs; lower this if Hudu Cloud rate limits or self-hosted feels saturated
+$RelationCommitParallelism = $RelationCommitParallelism ?? $MigrationParallelismLimit
+$ArchiveCommitParallelism = $ArchiveCommitParallelism ?? $MigrationParallelismLimit
+
+$ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit -ArticleContentCommitParallelism $ArticleContentCommitParallelism -RelationCommitParallelism $RelationCommitParallelism -ArchiveCommitParallelism $ArchiveCommitParallelism

@@ -29,6 +29,20 @@ function Get-RandomHexColor {
     '#{0:X6}' -f [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(0x1000000)
 }
 
+function Get-ParalellismSettingsInfo {
+    param (
+        [int]$MigrationParallelismLimit=1,
+        [int]$ArticleContentCommitParallelism=1,
+        [int]$RelationCommitParallelism=1,
+        [int]$ArchiveCommitParallelism=1
+    )
+    return @"
+MigrationParallelismLimit: $MigrationParallelismLimit
+ArticleContentCommitParallelism: $ArticleContentCommitParallelism
+RelationCommitParallelism: $RelationCommitParallelism
+ArchiveCommitParallelism: $ArchiveCommitParallelism
+"@
+}
 
 function Get-HuduAssetFieldLabel {
     param(

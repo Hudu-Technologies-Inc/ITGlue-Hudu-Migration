@@ -83,20 +83,18 @@ $ImportArticles                      = $true  # default true;
 $ImportPasswords                     = $true  # default true;
 $importPasswordFolders               = $true  # default true;
 
-$IncludeIgnoredFirstArticleDirectory = $true  # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
-$UseFastArticleContentCommit = $true          # use direct article content PUTs during wrap-up instead of Set-HuduArticle's GET+PUT path
-$ArticleContentCommitParallelism = 4          # number of concurrent article content PUTs; lower this if Hudu Cloud rate limits or self-hosted feels saturated
-# $HuduFastArticleCommitHeaders = @{}         # optional extra headers for the fast direct PUT path, for example access-proxy service headers
 $ImportConfigInterfaces              = $true  # default true;  this creates IPAM addresses + networks in Hudu
 $NonInteractive                      = $true  # Select $false for interactive steps, $true for noninteractive/no pauses (default)
 $skipIntegratorLayouts               = $true  # do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name
          
+$IncludeIgnoredFirstArticleDirectory = $true  # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
 $DisableWebsiteMonitoring            = $false # default false;
 $allowSettingFlagsAndTypes           = $false # Apply flags and flag types during the migration; requires Hudu 2.40+
 $ScopedMigration                     = $false # If you want to scope migration to just come companies, set to 2/$true  (default 1/$false)
 $MergedOrganizationTypes             = $false # if you want to merge vendors or other org types from ITG into a single organization, set to 2/$true (default 1/$false)
 $importChecklists                    = $false # default false; (requires JWT authentication)
 $GlobalPasswordFolderMode            = $false # or $true
+# $HuduFastArticleCommitHeaders = @{}         # optional extra headers for the fast direct PUT path, for example access-proxy service headers
 
 
 # these require JWT authentication to perform [default is 1/false; 2 for true]

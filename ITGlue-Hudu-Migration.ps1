@@ -14,6 +14,8 @@ $FirstTimeLoad = 1
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
+$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
+$MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
 
 function Stop-ITGlueExportBootstrapJobIfRunning {
     if (-not $ITGlueExportBootstrapJob) {
@@ -2520,7 +2522,7 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
 
 $ArticleContentCommitCandidates = @($MatchedArticles | Where-Object { $_ -and ($_.HuduID ?? $_.id) })
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
-$ArticleContentCommitParallelism = [math]::Max(1, [int]($ArticleContentCommitParallelism ?? 4))
+$ArticleContentCommitParallelism = [math]::Max(1, [math]::Min($MigrationParallelismLimit, [int]($ArticleContentCommitParallelism ?? $MigrationParallelismLimit)))
 if ($UseFastArticleContentCommit -and -not (Get-Command -Name Invoke-FastHuduArticleContentCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
 }
@@ -2980,12 +2982,78 @@ $DocsCsv = import-csv "$ITGlueExportPath\documents.csv"
 $ArchivedPasswords = $MatchedPasswords | Where-Object {$_.itgobject.attributes.archived -eq $true}
 $ArchivedConfigurations = $MatchedConfigurations | Where-Object {$_.ITGObject.attributes.archived -eq $true}    
 $ArchivedAssets = $MatchedAssets | Where-Object {$_.ITGObject.attributes.archived -eq $true}
-
-$ptaresults = $ArchivedPasswords | ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduPasswordArchive -id $_.huduid -Archive $true}}
-$ctaresults = $ArchivedConfigurations |ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduAssetArchive -Id $_.huduid -CompanyId $_.huduobject.company_id -Archive $true}}
-$ataresults = $ArchivedAssets |ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduAssetArchive -Id $_.huduid -CompanyId $_.huduobject.company_id -Archive $true}}
 $documentsForArchive =  $($matchedarticles | Where-Object {@($($($DocsCsv) | Where-Object {$_.archived -ne "No"}) | ForEach-Object {"$($_.id)"}) -contains [string]($_.ITGID)})
-$documentArchiveResults = foreach ($doc in $documentsForArchive) {if ($doc.huduid -and $doc.huduid -gt 0) {Set-HuduArticleArchive -id $doc.huduid -Archive $true -confirm:$false}};
+
+$UseFastArchiveCommit = $UseFastArchiveCommit ?? $true
+$ArchiveCommitParallelism = [math]::Max(1, [math]::Min($MigrationParallelismLimit, [int]($ArchiveCommitParallelism ?? $MigrationParallelismLimit)))
+if ($UseFastArchiveCommit -and -not (Get-Command -Name Invoke-FastHuduArchiveCommit -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
+}
+
+$archiveRequests = @(
+    $ArchivedPasswords | Where-Object { $_.huduid -and $_.huduid -gt 0 } | ForEach-Object {
+        [pscustomobject]@{ Group = 'passwords'; Type = 'AssetPassword'; Id = [int]$_.huduid; Source = $_ }
+    }
+    $ArchivedConfigurations | Where-Object { $_.huduid -and $_.huduid -gt 0 -and $_.huduobject.company_id } | ForEach-Object {
+        [pscustomobject]@{ Group = 'configs'; Type = 'Asset'; Id = [int]$_.huduid; CompanyId = [int]$_.huduobject.company_id; Source = $_ }
+    }
+    $ArchivedAssets | Where-Object { $_.huduid -and $_.huduid -gt 0 -and $_.huduobject.company_id } | ForEach-Object {
+        [pscustomobject]@{ Group = 'assets'; Type = 'Asset'; Id = [int]$_.huduid; CompanyId = [int]$_.huduobject.company_id; Source = $_ }
+    }
+    $documentsForArchive | Where-Object { $_.huduid -and $_.huduid -gt 0 } | ForEach-Object {
+        [pscustomobject]@{ Group = 'docs'; Type = 'Article'; Id = [int]$_.huduid; Source = $_ }
+    }
+)
+
+$archiveCommitResults = if ($UseFastArchiveCommit) {
+    $fastArchiveCommitParams = @{
+        ArchiveRequests = @($archiveRequests)
+        ThrottleLimit   = $ArchiveCommitParallelism
+    }
+    if ($HuduFastArchiveCommitHeaders -and $HuduFastArchiveCommitHeaders.Count -gt 0) {
+        $fastArchiveCommitParams.CustomHeaders = $HuduFastArchiveCommitHeaders
+    }
+    Invoke-FastHuduArchiveCommit @fastArchiveCommitParams
+} else {
+    foreach ($archiveRequest in @($archiveRequests)) {
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            $archivedObject = switch ($archiveRequest.Type) {
+                'AssetPassword' { Set-HuduPasswordArchive -id $archiveRequest.Id -Archive $true }
+                'Asset' { Set-HuduAssetArchive -Id $archiveRequest.Id -CompanyId $archiveRequest.CompanyId -Archive $true }
+                'Article' { Set-HuduArticleArchive -id $archiveRequest.Id -Archive $true -confirm:$false }
+            }
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = if ($archivedObject) { 'archived' } else { 'skipped' }
+                ArchiveRequest = $archiveRequest
+                ArchivedObject = $archivedObject
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+            }
+        } catch {
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = 'failed'
+                ArchiveRequest = $archiveRequest
+                ArchivedObject = $null
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+                Error          = $_.Exception.Message
+            }
+        }
+    }
+}
+
+$ptaresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'passwords' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$ctaresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'configs' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$ataresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'assets' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$documentArchiveResults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'docs' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$archiveCommitResults | ConvertTo-Json -Depth 75 | Out-File $(join-path $settings.MigrationLogs "archive-commit-results.json")
 foreach ($obj in @(
     @{Name = "passwords";       Archived = $ptaresults ?? @() },
     @{Name = "configs";         Archived = $ctaresults ?? @() },
@@ -3059,6 +3127,10 @@ if ($JobDurationReport.Count -gt 0) {
         'Job Durations'
         '-------------------------------------------------------'
         $JobDurationSummary
+        '-------------------------------------------------------'
+        'Paralellism Settings'
+        '-------------------------------------------------------'
+        $ParalellismSettingsInfo        
     ) -join [Environment]::NewLine
 
     $JobDurationReport | ConvertTo-Json -Depth 5 | Out-File "$MigrationLogs\JobDurations.json" -Encoding utf8
