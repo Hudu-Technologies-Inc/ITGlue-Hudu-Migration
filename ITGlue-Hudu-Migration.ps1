@@ -2615,51 +2615,56 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
     }
 }
 
-$articleCommitTransportResults = if ($preparedArticleCommits.Count -gt 0 -and $UseFastArticleContentCommit) {
-    $fastArticleCommitParams = @{
-        CommitRequests = @($preparedArticleCommits)
-        ThrottleLimit  = $ArticleContentCommitParallelism
-    }
-    if ($HuduFastArticleCommitHeaders -and $HuduFastArticleCommitHeaders.Count -gt 0) {
-        $fastArticleCommitParams.CustomHeaders = $HuduFastArticleCommitHeaders
-    }
-    Invoke-FastHuduArticleContentCommit @fastArticleCommitParams
-} elseif ($preparedArticleCommits.Count -gt 0) {
-    foreach ($commitRequest in @($preparedArticleCommits)) {
-        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        try {
-            $articleSplat = $commitRequest.ArticleSplat
-            $updatedArticle = Set-HuduArticle @articleSplat -ErrorAction Stop
-            $stopwatch.Stop()
-            [pscustomobject]@{
-                Status         = 'committed'
-                Index          = $commitRequest.Index
-                ArticleId      = $commitRequest.ArticleId
-                ArticleName    = $commitRequest.ArticleName
-                UpdatedArticle = $updatedArticle.article ?? $updatedArticle
-                Attempts       = 1
-                SleptSeconds   = 0
-                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
-                StatusCode     = 200
-            }
-        } catch {
-            $stopwatch.Stop()
-            [pscustomobject]@{
-                Status         = 'failed'
-                Index          = $commitRequest.Index
-                ArticleId      = $commitRequest.ArticleId
-                ArticleName    = $commitRequest.ArticleName
-                UpdatedArticle = $null
-                Attempts       = 1
-                SleptSeconds   = 0
-                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
-                StatusCode     = $null
-                Error          = $_.Exception.Message
+$null = Start-MigrationJob -Name "Wrap-Up - Article Content Commit"
+try {
+    $articleCommitTransportResults = if ($preparedArticleCommits.Count -gt 0 -and $UseFastArticleContentCommit) {
+        $fastArticleCommitParams = @{
+            CommitRequests = @($preparedArticleCommits)
+            ThrottleLimit  = $ArticleContentCommitParallelism
+        }
+        if ($HuduFastArticleCommitHeaders -and $HuduFastArticleCommitHeaders.Count -gt 0) {
+            $fastArticleCommitParams.CustomHeaders = $HuduFastArticleCommitHeaders
+        }
+        Invoke-FastHuduArticleContentCommit @fastArticleCommitParams
+    } elseif ($preparedArticleCommits.Count -gt 0) {
+        foreach ($commitRequest in @($preparedArticleCommits)) {
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                $articleSplat = $commitRequest.ArticleSplat
+                $updatedArticle = Set-HuduArticle @articleSplat -ErrorAction Stop
+                $stopwatch.Stop()
+                [pscustomobject]@{
+                    Status         = 'committed'
+                    Index          = $commitRequest.Index
+                    ArticleId      = $commitRequest.ArticleId
+                    ArticleName    = $commitRequest.ArticleName
+                    UpdatedArticle = $updatedArticle.article ?? $updatedArticle
+                    Attempts       = 1
+                    SleptSeconds   = 0
+                    ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    StatusCode     = 200
+                }
+            } catch {
+                $stopwatch.Stop()
+                [pscustomobject]@{
+                    Status         = 'failed'
+                    Index          = $commitRequest.Index
+                    ArticleId      = $commitRequest.ArticleId
+                    ArticleName    = $commitRequest.ArticleName
+                    UpdatedArticle = $null
+                    Attempts       = 1
+                    SleptSeconds   = 0
+                    ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    StatusCode     = $null
+                    Error          = $_.Exception.Message
+                }
             }
         }
+    } else {
+        @()
     }
-} else {
-    @()
+} finally {
+    $null = Complete-MigrationJob -Name "Wrap-Up - Article Content Commit" -CompletedAt (Get-Date)
 }
 
 $articleCommitTransportResultsByIndex = @{}
