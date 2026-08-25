@@ -21,6 +21,7 @@ function Invoke-FastHuduArticleContentCommit {
     $huduBaseUrl = (Get-HuduBaseURL).TrimEnd('/')
     $huduApiKey = (New-Object PSCredential 'user', (Get-HuduApiKey)).GetNetworkCredential().Password
     $ThrottleLimit = [math]::Max(1, $ThrottleLimit)
+    $rateLimitGate = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
 
     Write-Host "Committing $($CommitRequests.Count) article content update(s) to Hudu with $ThrottleLimit worker(s)." -ForegroundColor Cyan
 
@@ -30,6 +31,7 @@ function Invoke-FastHuduArticleContentCommit {
         $apiKey = $using:huduApiKey
         $maxRetries = $using:MaxRetries
         $customHeaders = $using:CustomHeaders
+        $rateLimitGate = $using:rateLimitGate
         $articleId = $request.ArticleId
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -66,6 +68,19 @@ function Invoke-FastHuduArticleContentCommit {
         $sleptSeconds = 0
 
         while ($attempt -le $maxRetries) {
+            $gateUntil = [datetime]::MinValue
+            if ($rateLimitGate.TryGetValue('WaitUntil', [ref]$gateUntil)) {
+                $now = Get-Date
+                if ($gateUntil -gt $now) {
+                    $gateSleepSeconds = [math]::Ceiling(($gateUntil - $now).TotalSeconds)
+                    if ($gateSleepSeconds -gt 0) {
+                        Write-Host "Hudu API rate-limit gate active; article $articleId sleeping for $gateSleepSeconds seconds."
+                        $sleptSeconds += $gateSleepSeconds
+                        Start-Sleep -Seconds $gateSleepSeconds
+                    }
+                }
+            }
+
             $attempt++
             try {
                 $response = Invoke-RestMethod @restMethod -ErrorAction Stop
@@ -93,16 +108,33 @@ function Invoke-FastHuduArticleContentCommit {
                     }
                 } catch {}
 
-                if ($attempt -gt $maxRetries) {
-                    break
-                }
-
                 $sleepSeconds = 5
                 if ($lastStatusCode -eq 429 -or $lastError -ilike '*Retry later*' -or $lastError -ilike '*Too Many Requests*') {
                     $now = Get-Date
                     $windowLength = 5 * 60
                     $secondsIntoWindow = (($now.Minute % 5) * 60) + $now.Second
                     $sleepSeconds = [math]::Max(1, $windowLength - $secondsIntoWindow + (Get-Random -Minimum 1 -Maximum 5))
+                    $waitUntil = $now.AddSeconds($sleepSeconds)
+                    $gateUpdated = $false
+                    do {
+                        $existingWaitUntil = [datetime]::MinValue
+                        $hasExistingWaitUntil = $rateLimitGate.TryGetValue('WaitUntil', [ref]$existingWaitUntil)
+                        if ($hasExistingWaitUntil -and $existingWaitUntil -ge $waitUntil) {
+                            $gateUpdated = $true
+                            break
+                        }
+                        if ($hasExistingWaitUntil) {
+                            $gateUpdated = $rateLimitGate.TryUpdate('WaitUntil', $waitUntil, $existingWaitUntil)
+                        } else {
+                            $gateUpdated = $rateLimitGate.TryAdd('WaitUntil', $waitUntil)
+                        }
+                    } until ($gateUpdated)
+
+                    Write-Host "Hudu API Rate limited; pausing fast article commits until $($waitUntil.ToString('HH:mm:ss'))."
+                }
+
+                if ($attempt -gt $maxRetries) {
+                    break
                 }
 
                 $sleptSeconds += $sleepSeconds
