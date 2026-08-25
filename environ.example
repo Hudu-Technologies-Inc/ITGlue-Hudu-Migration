@@ -94,9 +94,6 @@ $ScopedMigration                     = $false # If you want to scope migration t
 $MergedOrganizationTypes             = $false # if you want to merge vendors or other org types from ITG into a single organization, set to 2/$true (default 1/$false)
 $importChecklists                    = $false # default false; (requires JWT authentication)
 $GlobalPasswordFolderMode            = $false # or $true
-# $HuduFastArticleCommitHeaders = @{}         # optional extra headers for the fast direct PUT path, for example access-proxy service headers
-
-
 # these require JWT authentication to perform [default is 1/false; 2 for true]
 $PasswordFolderNameDelimiter = " - " # seperator when concatenating folders in squashed / flattened password folder
 $FolderNamingMode = "Name Based on Full Path with Delimiter" # how to name the password folders which get flattened in hudu.

@@ -31,16 +31,10 @@ function Get-RandomHexColor {
 
 function Get-ParalellismSettingsInfo {
     param (
-        [int]$MigrationParallelismLimit=1,
-        [int]$ArticleContentCommitParallelism=1,
-        [int]$RelationCommitParallelism=1,
-        [int]$ArchiveCommitParallelism=1
+        [int]$MigrationParallelismLimit=1
     )
     return @"
 MigrationParallelismLimit: $MigrationParallelismLimit
-ArticleContentCommitParallelism: $ArticleContentCommitParallelism
-RelationCommitParallelism: $RelationCommitParallelism
-ArchiveCommitParallelism: $ArchiveCommitParallelism
 "@
 }
 

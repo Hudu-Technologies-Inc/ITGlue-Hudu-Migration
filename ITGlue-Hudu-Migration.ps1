@@ -16,6 +16,8 @@ $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
 $MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
+$UseFastLabelCommit = $UseFastLabelCommit ?? $true
+$HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
 
 function Stop-ITGlueExportBootstrapJobIfRunning {
     if (-not $ITGlueExportBootstrapJob) {
@@ -575,10 +577,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 $primaryLocations = $matchedlocations | Where-Object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
 if ($primaryLocations -and $primaryLocations.count -gt 0) {
     $LocationLabelTypeCache = @{}
-    $LocationLabelResults = foreach ($primaryLocation in $primaryLocations) {
-        write-host "Adding label for primary location $($primaryLocation.Name) for $($primaryLocation.CompanyName) in Hudu" -ForegroundColor DarkCyan
-        Add-HuduMigrationLabel -LabelName "Primary $LocImportAssetLayoutName" -RecordType "Asset" -RecordId $primaryLocation.HuduObject.id -RecordName $primaryLocation.Name -LabelTypeCache $LocationLabelTypeCache
+    $LocationLabelRequests = foreach ($primaryLocation in $primaryLocations) {
+        [pscustomobject]@{
+            LabelName  = "Primary $LocImportAssetLayoutName"
+            RecordType = 'Asset'
+            RecordId   = $primaryLocation.HuduObject.id
+            RecordName = $primaryLocation.Name
+        }
     }
+    $LocationLabelResults = Add-HuduMigrationLabels -Labels $LocationLabelRequests -LabelTypeCache $LocationLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
     $LocationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\LocationLabels.json"
 } else {
     $primaryLocations = @()
@@ -1038,14 +1045,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 }
 
 $ConfigLabelTypeCache = @{}
-$ConfigurationLabelResults = @()
+$ConfigurationLabelRequests = @()
 foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
     $configurationStatusColor = if ($configurationstatus -ilike "active*") { 'green' } elseif ($configurationstatus -ilike "inactive*") { 'red' } else { "$(Get-RandomHexColor)" }
     foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-        write-host "Adding label for configuration status $($configurationstatus) for $($ConfigLabel.Name) in Hudu" -ForegroundColor DarkCyan
-        $ConfigurationLabelResults += Add-HuduMigrationLabel -LabelName $configurationstatus -RecordType "Asset" -RecordId $ConfigLabel.HuduObject.id -RecordName $ConfigLabel.Name -LabelTypeCache $ConfigLabelTypeCache -Color $configurationStatusColor
+        $ConfigurationLabelRequests += [pscustomobject]@{
+            LabelName  = $configurationstatus
+            RecordType = 'Asset'
+            RecordId   = $ConfigLabel.HuduObject.id
+            RecordName = $ConfigLabel.Name
+            Color      = $configurationStatusColor
+        }
     }
 }
+$ConfigurationLabelResults = Add-HuduMigrationLabels -Labels $ConfigurationLabelRequests -LabelTypeCache $ConfigLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $ConfigurationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ConfigurationLabels.json"
 
 
@@ -1214,10 +1227,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
 }
 
 $ContactLabelTypeCache = @{}
-$ContactLabelResults = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-    write-host "Adding label for Primary Contact $($importantContact.Name) for $($importantContact.CompanyName) in Hudu" -ForegroundColor DarkCyan
-    Add-HuduMigrationLabel -LabelName "Important $ConImportAssetLayoutName" -RecordType "Asset" -RecordId $importantContact.HuduObject.id -RecordName $importantContact.Name -LabelTypeCache $ContactLabelTypeCache
+$ContactLabelRequests = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+    [pscustomobject]@{
+        LabelName  = "Important $ConImportAssetLayoutName"
+        RecordType = 'Asset'
+        RecordId   = $importantContact.HuduObject.id
+        RecordName = $importantContact.Name
+    }
 }
+$ContactLabelResults = Add-HuduMigrationLabels -Labels $ContactLabelRequests -LabelTypeCache $ContactLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $ContactLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ContactLabels.json"
 
 	
@@ -2429,15 +2447,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 }
 
 $PasswordLabelTypeCache = @{}
-$PasswordLabelResults = @()
+$PasswordLabelRequests = @()
 foreach ($passwordType in $( $($MatchedPasswords | Where-Object { $null -ne $_.huduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'password-category-name' | Select-Object -Unique)) {
     if ([string]::IsNullOrWhiteSpace([string]$passwordType)) { continue }
 
     foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-        write-host "Adding label for Password $($labelablePassword.Name) as $($passwordType) in Hudu" -ForegroundColor DarkCyan
-        $PasswordLabelResults += Add-HuduMigrationLabel -LabelName $passwordType -RecordType "AssetPassword" -RecordId $labelablePassword.HuduObject.id -RecordName $labelablePassword.Name -LabelTypeCache $PasswordLabelTypeCache
+        $PasswordLabelRequests += [pscustomobject]@{
+            LabelName  = $passwordType
+            RecordType = 'AssetPassword'
+            RecordId   = $labelablePassword.HuduObject.id
+            RecordName = $labelablePassword.Name
+        }
     }
 }
+$PasswordLabelResults = Add-HuduMigrationLabels -Labels $PasswordLabelRequests -LabelTypeCache $PasswordLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $PasswordLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\PasswordLabels.json"
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
@@ -2522,7 +2545,6 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
 
 $ArticleContentCommitCandidates = @($MatchedArticles | Where-Object { $_ -and ($_.HuduID ?? $_.id) })
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
-$ArticleContentCommitParallelism = [math]::Max(1, [math]::Min($MigrationParallelismLimit, [int]($ArticleContentCommitParallelism ?? $MigrationParallelismLimit)))
 if ($UseFastArticleContentCommit -and -not (Get-Command -Name Invoke-FastHuduArticleContentCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
 }
@@ -2622,10 +2644,10 @@ try {
     $articleCommitTransportResults = if ($preparedArticleCommits.Count -gt 0 -and $UseFastArticleContentCommit) {
         $fastArticleCommitParams = @{
             CommitRequests = @($preparedArticleCommits)
-            ThrottleLimit  = $ArticleContentCommitParallelism
+            ThrottleLimit  = $MigrationParallelismLimit
         }
-        if ($HuduFastArticleCommitHeaders -and $HuduFastArticleCommitHeaders.Count -gt 0) {
-            $fastArticleCommitParams.CustomHeaders = $HuduFastArticleCommitHeaders
+        if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+            $fastArticleCommitParams.CustomHeaders = $HuduFastCommitHeaders
         }
         Invoke-FastHuduArticleContentCommit @fastArticleCommitParams
     } elseif ($preparedArticleCommits.Count -gt 0) {
@@ -2985,7 +3007,6 @@ $ArchivedAssets = $MatchedAssets | Where-Object {$_.ITGObject.attributes.archive
 $documentsForArchive =  $($matchedarticles | Where-Object {@($($($DocsCsv) | Where-Object {$_.archived -ne "No"}) | ForEach-Object {"$($_.id)"}) -contains [string]($_.ITGID)})
 
 $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true
-$ArchiveCommitParallelism = [math]::Max(1, [math]::Min($MigrationParallelismLimit, [int]($ArchiveCommitParallelism ?? $MigrationParallelismLimit)))
 if ($UseFastArchiveCommit -and -not (Get-Command -Name Invoke-FastHuduArchiveCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
 }
@@ -3008,10 +3029,10 @@ $archiveRequests = @(
 $archiveCommitResults = if ($UseFastArchiveCommit) {
     $fastArchiveCommitParams = @{
         ArchiveRequests = @($archiveRequests)
-        ThrottleLimit   = $ArchiveCommitParallelism
+        ThrottleLimit   = $MigrationParallelismLimit
     }
-    if ($HuduFastArchiveCommitHeaders -and $HuduFastArchiveCommitHeaders.Count -gt 0) {
-        $fastArchiveCommitParams.CustomHeaders = $HuduFastArchiveCommitHeaders
+    if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+        $fastArchiveCommitParams.CustomHeaders = $HuduFastCommitHeaders
     }
     Invoke-FastHuduArchiveCommit @fastArchiveCommitParams
 } else {

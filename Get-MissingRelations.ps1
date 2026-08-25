@@ -716,7 +716,7 @@ if (-not $RelationsToCreate -and (Test-Path -LiteralPath "$MigrationLogs\Relatio
 $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
 $MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
 $UseFastRelationCommit = $UseFastRelationCommit ?? $true
-$RelationCommitParallelism = [math]::Max(1, [math]::Min($MigrationParallelismLimit, [int]($RelationCommitParallelism ?? $MigrationParallelismLimit)))
+$HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
 if ($UseFastRelationCommit -and -not (Get-Command -Name Invoke-FastHuduRelationCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
 }
@@ -872,10 +872,10 @@ write-host "Creating approximately $($AllRelationsToCreate.count) relations"
 $RelationCommitResults = if ($UseFastRelationCommit) {
     $fastRelationCommitParams = @{
         Relations     = @($AllRelationsToCreate)
-        ThrottleLimit = $RelationCommitParallelism
+        ThrottleLimit = $MigrationParallelismLimit
     }
-    if ($HuduFastRelationCommitHeaders -and $HuduFastRelationCommitHeaders.Count -gt 0) {
-        $fastRelationCommitParams.CustomHeaders = $HuduFastRelationCommitHeaders
+    if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+        $fastRelationCommitParams.CustomHeaders = $HuduFastCommitHeaders
     }
     Invoke-FastHuduRelationCommit @fastRelationCommitParams
 } else {
