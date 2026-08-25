@@ -590,6 +590,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\NetworkInformation.ps1
 . $PSScriptRoot\Public\PreFlightTests.ps1
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
+. $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1

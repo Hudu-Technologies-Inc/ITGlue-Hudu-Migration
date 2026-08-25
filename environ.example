@@ -84,6 +84,9 @@ $ImportPasswords                     = $true  # default true;
 $importPasswordFolders               = $true  # default true;
 
 $IncludeIgnoredFirstArticleDirectory = $true  # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
+$UseFastArticleContentCommit = $true          # use direct article content PUTs during wrap-up instead of Set-HuduArticle's GET+PUT path
+$ArticleContentCommitParallelism = 4          # number of concurrent article content PUTs; lower this if Hudu Cloud rate limits or self-hosted feels saturated
+# $HuduFastArticleCommitHeaders = @{}         # optional extra headers for the fast direct PUT path, for example access-proxy service headers
 $ImportConfigInterfaces              = $true  # default true;  this creates IPAM addresses + networks in Hudu
 $NonInteractive                      = $true  # Select $false for interactive steps, $true for noninteractive/no pauses (default)
 $skipIntegratorLayouts               = $true  # do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name

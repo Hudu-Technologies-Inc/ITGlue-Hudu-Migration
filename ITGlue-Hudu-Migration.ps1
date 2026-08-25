@@ -2519,13 +2519,22 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
 }
 
 $ArticleContentCommitCandidates = @($MatchedArticles | Where-Object { $_ -and ($_.HuduID ?? $_.id) })
+$UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
+$ArticleContentCommitParallelism = [math]::Max(1, [int]($ArticleContentCommitParallelism ?? 4))
+if ($UseFastArticleContentCommit -and -not (Get-Command -Name Invoke-FastHuduArticleContentCommit -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
+}
 
-$articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
+$preparedArticleCommits = [System.Collections.ArrayList]@()
+$articlePreCommitFailures = [System.Collections.ArrayList]@()
+$articleCommitIndex = 0
+
+foreach ($articleFound in $ArticleContentCommitCandidates) {
     $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
     if ($null -eq $localArticleContent) {
         $message = "Local article HTML was not found for '$($articleFound.name)' at '$($articleFound.LocalContentPath)'. Refusing to use Hudu-returned content as a fallback."
         Write-Warning $message
-        [pscustomobject]@{
+        $null = $articlePreCommitFailures.Add([pscustomobject]@{
             status             = 'failed'
             article_id         = $articleFound.HuduID ?? $articleFound.id
             article_name       = $articleFound.name
@@ -2533,7 +2542,7 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
             source_content_path = $articleFound.LocalContentPath
             replacement_sets   = @()
             error              = $message
-        }
+        })
         continue
     }
 
@@ -2557,7 +2566,7 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
     $finalContentPath = $articleFound.LocalContentPath
 
     $status = if ($UpdatedContent.Changed -or $standaloneAttachmentNoteApplied) { 'replaced' } else { 'committed' }
-    Write-Host "Committing Article $($articleFound.name) from local HTML ($status)" -ForegroundColor 'Green'
+    Write-Host "Preparing Article $($articleFound.name) from local HTML for commit ($status)" -ForegroundColor 'Green'
     try {
         $finalContentPath = Set-HuduArticleLocalContent -Article $articleFound -Content $finalArticleContent -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
         $ArticleSplat = @{
@@ -2576,28 +2585,23 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
             $ArticleSplat.CompanyId = $articleFound.company_id
         }
 
-        $updatedArticle = Set-HuduArticle @ArticleSplat -ErrorAction Stop
-        $updatedArticleObject = $updatedArticle.article ?? $updatedArticle
-        $updatedArticleSummary = [pscustomobject]@{
-            id         = $updatedArticleObject.id ?? $ArticleSplat.Id
-            name       = $updatedArticleObject.name ?? $articleFound.name
-            company_id = $updatedArticleObject.company_id ?? $ArticleSplat.CompanyId
-            url        = $updatedArticleObject.url ?? $articleFound.HuduObject.url
-        }
-        $articleFound | Add-Member -MemberType NoteProperty -Name LocalContentCommittedAt -Value (Get-Date).ToString('o') -Force
-
-        [pscustomobject]@{
-            status             = $status
-            article_id         = $ArticleSplat.Id
-            article_name       = $articleFound.name
-            original_article   = $articleFound
-            updated_article    = $updatedArticleSummary
-            source_content_path = $finalContentPath
-            standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
-            replacement_sets   = $UpdatedContent.ReplacementSets
-        }
+        $null = $preparedArticleCommits.Add([pscustomobject]@{
+            Index                              = $articleCommitIndex
+            ArticleSplat                       = $ArticleSplat
+            ArticleId                          = $ArticleSplat.Id
+            ArticleName                        = $articleFound.name
+            Name                               = $ArticleSplat['Name']
+            CompanyId                          = $ArticleSplat['CompanyId']
+            Content                            = $finalArticleContent
+            OriginalArticle                    = $articleFound
+            SourceContentPath                  = $finalContentPath
+            ExpectedStatus                     = $status
+            StandaloneAttachmentNoteApplied    = $standaloneAttachmentNoteApplied
+            ReplacementSets                    = $UpdatedContent.ReplacementSets
+        })
+        $articleCommitIndex++
     } catch {
-        [pscustomobject]@{
+        $null = $articlePreCommitFailures.Add([pscustomobject]@{
             status             = 'failed'
             article_id         = $articleFound.HuduID ?? $articleFound.id
             article_name       = $articleFound.name
@@ -2607,9 +2611,124 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
             standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
             replacement_sets   = $UpdatedContent.ReplacementSets
             error              = $_.Exception.Message
+        })
+    }
+}
+
+$articleCommitTransportResults = if ($preparedArticleCommits.Count -gt 0 -and $UseFastArticleContentCommit) {
+    $fastArticleCommitParams = @{
+        CommitRequests = @($preparedArticleCommits)
+        ThrottleLimit  = $ArticleContentCommitParallelism
+    }
+    if ($HuduFastArticleCommitHeaders -and $HuduFastArticleCommitHeaders.Count -gt 0) {
+        $fastArticleCommitParams.CustomHeaders = $HuduFastArticleCommitHeaders
+    }
+    Invoke-FastHuduArticleContentCommit @fastArticleCommitParams
+} elseif ($preparedArticleCommits.Count -gt 0) {
+    foreach ($commitRequest in @($preparedArticleCommits)) {
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            $articleSplat = $commitRequest.ArticleSplat
+            $updatedArticle = Set-HuduArticle @articleSplat -ErrorAction Stop
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = 'committed'
+                Index          = $commitRequest.Index
+                ArticleId      = $commitRequest.ArticleId
+                ArticleName    = $commitRequest.ArticleName
+                UpdatedArticle = $updatedArticle.article ?? $updatedArticle
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = 200
+            }
+        } catch {
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = 'failed'
+                Index          = $commitRequest.Index
+                ArticleId      = $commitRequest.ArticleId
+                ArticleName    = $commitRequest.ArticleName
+                UpdatedArticle = $null
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+                Error          = $_.Exception.Message
+            }
+        }
+    }
+} else {
+    @()
+}
+
+$articleCommitTransportResultsByIndex = @{}
+foreach ($commitResult in @($articleCommitTransportResults)) {
+    $articleCommitTransportResultsByIndex[[string]$commitResult.Index] = $commitResult
+}
+
+$articleCommitResults = foreach ($commitRequest in @($preparedArticleCommits | Sort-Object Index)) {
+    $commitResult = $articleCommitTransportResultsByIndex[[string]$commitRequest.Index]
+    if (-not $commitResult) {
+        [pscustomobject]@{
+            status                             = 'failed'
+            article_id                         = $commitRequest.ArticleId
+            article_name                       = $commitRequest.ArticleName
+            original_article                   = $commitRequest.OriginalArticle
+            source_content_path                = $commitRequest.SourceContentPath
+            attempted_changes                  = $commitRequest.Content
+            standalone_attachment_note_applied = $commitRequest.StandaloneAttachmentNoteApplied
+            replacement_sets                   = $commitRequest.ReplacementSets
+            error                              = 'No article commit result was returned.'
+        }
+        continue
+    }
+
+    if ($commitResult.Status -eq 'committed') {
+        $updatedArticleObject = $commitResult.UpdatedArticle.article ?? $commitResult.UpdatedArticle
+        $updatedArticleSummary = [pscustomobject]@{
+            id         = $updatedArticleObject.id ?? $commitRequest.ArticleId
+            name       = $updatedArticleObject.name ?? $commitRequest.ArticleName
+            company_id = $updatedArticleObject.company_id ?? $commitRequest.CompanyId
+            url        = $updatedArticleObject.url ?? $commitRequest.OriginalArticle.HuduObject.url
+        }
+        $commitRequest.OriginalArticle | Add-Member -MemberType NoteProperty -Name LocalContentCommittedAt -Value (Get-Date).ToString('o') -Force
+
+        [pscustomobject]@{
+            status                             = $commitRequest.ExpectedStatus
+            article_id                         = $commitRequest.ArticleId
+            article_name                       = $commitRequest.ArticleName
+            original_article                   = $commitRequest.OriginalArticle
+            updated_article                    = $updatedArticleSummary
+            source_content_path                = $commitRequest.SourceContentPath
+            standalone_attachment_note_applied = $commitRequest.StandaloneAttachmentNoteApplied
+            replacement_sets                   = $commitRequest.ReplacementSets
+            commit_attempts                    = $commitResult.Attempts
+            commit_elapsed_seconds            = $commitResult.ElapsedSeconds
+            commit_slept_seconds              = $commitResult.SleptSeconds
+            commit_mode                        = if ($UseFastArticleContentCommit) { 'direct-put' } else { 'set-huduarticle' }
+        }
+    } else {
+        [pscustomobject]@{
+            status                             = 'failed'
+            article_id                         = $commitRequest.ArticleId
+            article_name                       = $commitRequest.ArticleName
+            original_article                   = $commitRequest.OriginalArticle
+            source_content_path                = $commitRequest.SourceContentPath
+            attempted_changes                  = $commitRequest.Content
+            standalone_attachment_note_applied = $commitRequest.StandaloneAttachmentNoteApplied
+            replacement_sets                   = $commitRequest.ReplacementSets
+            error                              = $commitResult.Error
+            commit_attempts                    = $commitResult.Attempts
+            commit_elapsed_seconds            = $commitResult.ElapsedSeconds
+            commit_slept_seconds              = $commitResult.SleptSeconds
+            commit_status_code                 = $commitResult.StatusCode
+            commit_mode                        = if ($UseFastArticleContentCommit) { 'direct-put' } else { 'set-huduarticle' }
         }
     }
 }
+
+$articlesUpdated = @($articlePreCommitFailures.ToArray()) + @($articleCommitResults)
 
 $articlesUpdated | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedArticlesURL.json"
 $MatchedArticles | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\Articles.json"

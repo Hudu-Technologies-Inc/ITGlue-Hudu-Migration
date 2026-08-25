@@ -1,0 +1,127 @@
+function Invoke-FastHuduArticleContentCommit {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$CommitRequests,
+
+        [ValidateRange(1, 32)]
+        [int]$ThrottleLimit = 4,
+
+        [ValidateRange(0, 5)]
+        [int]$MaxRetries = 1,
+
+        [hashtable]$CustomHeaders = @{}
+    )
+
+    if (-not $CommitRequests -or $CommitRequests.Count -lt 1) {
+        return @()
+    }
+
+    $huduBaseUrl = (Get-HuduBaseURL).TrimEnd('/')
+    $huduApiKey = (New-Object PSCredential 'user', (Get-HuduApiKey)).GetNetworkCredential().Password
+    $ThrottleLimit = [math]::Max(1, $ThrottleLimit)
+
+    Write-Host "Committing $($CommitRequests.Count) article content update(s) to Hudu with $ThrottleLimit worker(s)." -ForegroundColor Cyan
+
+    $CommitRequests | ForEach-Object -Parallel {
+        $request = $_
+        $baseUrl = $using:huduBaseUrl
+        $apiKey = $using:huduApiKey
+        $maxRetries = $using:MaxRetries
+        $customHeaders = $using:CustomHeaders
+        $articleId = $request.ArticleId
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+        $article = [ordered]@{
+            content = [string]$request.Content
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$request.Name)) {
+            $article.name = [string]$request.Name
+        }
+        if ($request.CompanyId) {
+            $article.company_id = [int]$request.CompanyId
+        }
+
+        $body = @{ article = $article } | ConvertTo-Json -Depth 10
+        $headers = @{
+            'x-api-key' = $apiKey
+        }
+        if ($customHeaders) {
+            foreach ($customHeaderKey in $customHeaders.Keys) {
+                $headers[$customHeaderKey] = $customHeaders[$customHeaderKey]
+            }
+        }
+        $restMethod = @{
+            Method      = 'PUT'
+            Uri         = "$baseUrl/api/v1/articles/$articleId"
+            Headers     = $headers
+            ContentType = 'application/json; charset=utf-8'
+            Body        = $body
+        }
+
+        $attempt = 0
+        $lastError = $null
+        $lastStatusCode = $null
+        $sleptSeconds = 0
+
+        while ($attempt -le $maxRetries) {
+            $attempt++
+            try {
+                $response = Invoke-RestMethod @restMethod -ErrorAction Stop
+                $stopwatch.Stop()
+
+                $articleObject = $response.article ?? $response
+                return [pscustomobject]@{
+                    Status         = 'committed'
+                    Index          = $request.Index
+                    ArticleId      = $articleId
+                    ArticleName    = $request.ArticleName
+                    UpdatedArticle = $articleObject
+                    Attempts       = $attempt
+                    SleptSeconds   = $sleptSeconds
+                    ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    StatusCode     = 200
+                }
+            }
+            catch {
+                $lastError = $_.Exception.Message
+                $lastStatusCode = $null
+                try {
+                    if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+                        $lastStatusCode = [int]$_.Exception.Response.StatusCode
+                    }
+                } catch {}
+
+                if ($attempt -gt $maxRetries) {
+                    break
+                }
+
+                $sleepSeconds = 5
+                if ($lastStatusCode -eq 429 -or $lastError -ilike '*Retry later*' -or $lastError -ilike '*Too Many Requests*') {
+                    $now = Get-Date
+                    $windowLength = 5 * 60
+                    $secondsIntoWindow = (($now.Minute % 5) * 60) + $now.Second
+                    $sleepSeconds = [math]::Max(1, $windowLength - $secondsIntoWindow + (Get-Random -Minimum 1 -Maximum 5))
+                }
+
+                $sleptSeconds += $sleepSeconds
+                Start-Sleep -Seconds $sleepSeconds
+            }
+        }
+
+        $stopwatch.Stop()
+        [pscustomobject]@{
+            Status         = 'failed'
+            Index          = $request.Index
+            ArticleId      = $articleId
+            ArticleName    = $request.ArticleName
+            UpdatedArticle = $null
+            Attempts       = $attempt
+            SleptSeconds   = $sleptSeconds
+            ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+            StatusCode     = $lastStatusCode
+            Error          = $lastError
+        }
+    } -ThrottleLimit $ThrottleLimit
+}
