@@ -594,6 +594,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastLabelCommit.ps1
+. $PSScriptRoot\Public\Invoke-FastAssetCommit.ps1
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
@@ -606,6 +607,7 @@ $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12,
 $MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
+$UseFastAssetCommit = $UseFastAssetCommit ?? $true
 $UseFastRelationCommit = $UseFastRelationCommit ?? $true
 $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true
 $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}

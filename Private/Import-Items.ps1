@@ -8,7 +8,11 @@ function Import-Items {
         $ImportAssetLayoutName,
         $ItemSelect,
         $MigrationName,
-        $ITGImports
+        $ITGImports,
+        [int]$ThrottleLimit = ($MigrationParallelismLimit ?? 4),
+        [bool]$UseFastAssetCommit = ($UseFastAssetCommit ?? $true),
+        [bool]$UseFastArchiveCommit = ($UseFastArchiveCommit ?? $true),
+        [hashtable]$CustomHeaders = ($HuduFastCommitHeaders ?? @{})
     )
 
 
@@ -93,8 +97,18 @@ function Import-Items {
 	
         $ImportOption = Get-ImportMode -ImportName $MigrationName
 	
-        if (($importOption -eq "A") -or ($importOption -eq "S") ) {		
-	
+        if (($importOption -eq "A") -or ($importOption -eq "S") ) {
+            if ($UseFastAssetCommit -and -not (Get-Command -Name Invoke-FastHuduAssetCommit -ErrorAction SilentlyContinue)) {
+                $UseFastAssetCommit = $false
+            }
+
+            if ($UseFastArchiveCommit -and -not (Get-Command -Name Invoke-FastHuduArchiveCommit -ErrorAction SilentlyContinue)) {
+                $UseFastArchiveCommit = $false
+            }
+
+            $AssetCreateRequests = [System.Collections.ArrayList]@()
+            $requestIndex = 0
+
             foreach ($company in $CompaniesToMigrate) {
                 # if ($true -eq $itgimport.attributes.archived){
                 #     write-host "SKIPPING ARCHIVED IMPORT: $($itgimport.attributes.name) is archived in ITGlue and is being skipped for migration" -ForegroundColor Yellow
@@ -115,23 +129,138 @@ function Import-Items {
                     Write-Host "Starting $($unmatchedImport.Name)"
 	
                     $HuduAssetName = $($unmatchedImport.Name)
-					
-                    
-                    $HuduNewImport = (New-HuduAsset -name $HuduAssetName -company_id $company.HuduCompanyObject.ID -asset_layout_id $ImportLayout.id -fields $AssetFields).asset
-		    if ($itgimport.attributes.archived) {
-      			Write-Host "WARNING: $($HuduAssetName) is archived in ITGlue and is being archived in Hudu" -ForegroundColor Magenta
-      			$Null = Set-HuduAssetArchive -Id $HuduNewImport.id -CompanyId $HuduNewImport.company_id -Archive $true
-	 	 	}
-	
+
+                    $null = $AssetCreateRequests.Add([pscustomobject]@{
+                        Index              = $requestIndex
+                        Name               = $HuduAssetName
+                        CompanyId          = [int]$company.HuduCompanyObject.ID
+                        AssetLayoutId      = [int]$ImportLayout.id
+                        Fields             = @($AssetFields)
+                        SourceImport       = $unmatchedImport
+                        ArchiveAfterCreate = ($true -eq $unmatchedImport.ITGObject.attributes.archived)
+                    })
+                    $requestIndex++
+                }
+            }
+
+            $AssetCreateResults = if ($AssetCreateRequests.Count -gt 0 -and $UseFastAssetCommit) {
+                $fastAssetCommitParams = @{
+                    AssetRequests = @($AssetCreateRequests)
+                    Operation     = 'Create'
+                    ThrottleLimit = $ThrottleLimit
+                }
+                if ($CustomHeaders -and $CustomHeaders.Count -gt 0) {
+                    $fastAssetCommitParams.CustomHeaders = $CustomHeaders
+                }
+                Invoke-FastHuduAssetCommit @fastAssetCommitParams
+            } else {
+                foreach ($assetCreateRequest in @($AssetCreateRequests)) {
+                    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    try {
+                        $HuduNewImport = (New-HuduAsset -name $assetCreateRequest.Name -company_id $assetCreateRequest.CompanyId -asset_layout_id $assetCreateRequest.AssetLayoutId -fields $assetCreateRequest.Fields).asset
+                        $stopwatch.Stop()
+                        [pscustomobject]@{
+                            Status         = if ($HuduNewImport) { 'created' } else { 'failed' }
+                            Operation      = 'Create'
+                            Index          = $assetCreateRequest.Index
+                            AssetId        = $HuduNewImport.id
+                            AssetName      = $assetCreateRequest.Name
+                            CompanyId      = $assetCreateRequest.CompanyId
+                            Asset          = $HuduNewImport
+                            SourceRequest  = $assetCreateRequest
+                            Attempts       = 1
+                            SleptSeconds   = 0
+                            ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                            StatusCode     = $null
+                            Error          = $null
+                        }
+                    } catch {
+                        $stopwatch.Stop()
+                        [pscustomobject]@{
+                            Status         = 'failed'
+                            Operation      = 'Create'
+                            Index          = $assetCreateRequest.Index
+                            AssetId        = $null
+                            AssetName      = $assetCreateRequest.Name
+                            CompanyId      = $assetCreateRequest.CompanyId
+                            Asset          = $null
+                            SourceRequest  = $assetCreateRequest
+                            Attempts       = 1
+                            SleptSeconds   = 0
+                            ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                            StatusCode     = $null
+                            Error          = $_.Exception.Message
+                        }
+                    }
+                }
+            }
+
+            $AssetCreateRequestsByIndex = @{}
+            foreach ($assetCreateRequest in @($AssetCreateRequests)) {
+                $AssetCreateRequestsByIndex[[int]$assetCreateRequest.Index] = $assetCreateRequest
+            }
+
+            $ArchiveRequests = [System.Collections.ArrayList]@()
+            foreach ($assetCreateResult in @($AssetCreateResults | Sort-Object Index)) {
+                $assetCreateRequest = $AssetCreateRequestsByIndex[[int]$assetCreateResult.Index]
+                $unmatchedImport = $assetCreateRequest.SourceImport
+                if ($assetCreateResult.Status -eq 'created' -and $assetCreateResult.Asset) {
+                    $HuduNewImport = $assetCreateResult.Asset
+                    if ($assetCreateRequest.ArchiveAfterCreate) {
+                        Write-Host "WARNING: $($assetCreateResult.AssetName) is archived in ITGlue and is being archived in Hudu" -ForegroundColor Magenta
+                        $null = $ArchiveRequests.Add([pscustomobject]@{
+                            Group     = $MigrationName
+                            Type      = 'Asset'
+                            Id        = [int]$HuduNewImport.id
+                            CompanyId = [int]$HuduNewImport.company_id
+                            Source    = $unmatchedImport
+                        })
+                    }
+
                     $unmatchedImport.matched = $true
                     $unmatchedImport.HuduID = $HuduNewImport.id
                     $unmatchedImport."HuduObject" = $HuduNewImport
                     $unmatchedImport.Imported = "Created-By-Script"
-	
+
                     $ImportsMigrated = $ImportsMigrated + 1
-	
+
                     Write-host "$($unmatchedImport.Name) Has been created in Hudu"
                     Write-Host ""
+                } else {
+                    $unmatchedImport.Imported = "Create-Failed"
+                    Write-Host "Failed to create $($unmatchedImport.Name) in Hudu: $($assetCreateResult.Error)" -ForegroundColor Red
+                }
+            }
+
+            $createdCount = @($AssetCreateResults | Where-Object { $_.Status -eq 'created' -and $_.Asset }).Count
+            $failedCount = @($AssetCreateResults | Where-Object { $_.Status -ne 'created' -or -not $_.Asset }).Count
+            Write-Host "$MigrationName asset create commits complete: $createdCount/$($AssetCreateRequests.Count) created, $failedCount failed." -ForegroundColor Cyan
+            if ($failedCount -gt 0) {
+                Write-Host "$MigrationName had $failedCount failed asset create commit(s). Review the errors above before trusting this section as complete." -ForegroundColor Red
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace([string]$MigrationLogs)) {
+                $safeMigrationName = ([string]$MigrationName -replace '[^\w.-]+', '-').Trim('-')
+                if ([string]::IsNullOrWhiteSpace($safeMigrationName)) {
+                    $safeMigrationName = 'ImportItems'
+                }
+                $AssetCreateResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\$safeMigrationName-AssetCreateCommitResults.json"
+            }
+
+            if ($ArchiveRequests.Count -gt 0) {
+                if ($UseFastArchiveCommit) {
+                    $fastArchiveCommitParams = @{
+                        ArchiveRequests = @($ArchiveRequests)
+                        ThrottleLimit   = $ThrottleLimit
+                    }
+                    if ($CustomHeaders -and $CustomHeaders.Count -gt 0) {
+                        $fastArchiveCommitParams.CustomHeaders = $CustomHeaders
+                    }
+                    $null = Invoke-FastHuduArchiveCommit @fastArchiveCommitParams
+                } else {
+                    foreach ($archiveRequest in @($ArchiveRequests)) {
+                        $null = Set-HuduAssetArchive -Id $archiveRequest.Id -CompanyId $archiveRequest.CompanyId -Archive $true
+                    }
                 }
             }
         }

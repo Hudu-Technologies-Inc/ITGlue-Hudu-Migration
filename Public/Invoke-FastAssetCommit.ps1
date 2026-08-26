@@ -1,9 +1,12 @@
-function Invoke-FastHuduArticleContentCommit {
+function Invoke-FastHuduAssetCommit {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
-        [object[]]$CommitRequests,
+        [object[]]$AssetRequests,
+
+        [ValidateSet('Create', 'Update')]
+        [string]$Operation = 'Update',
 
         [ValidateRange(1, 32)]
         [int]$ThrottleLimit = 4,
@@ -14,7 +17,7 @@ function Invoke-FastHuduArticleContentCommit {
         [hashtable]$CustomHeaders = @{}
     )
 
-    if (-not $CommitRequests -or $CommitRequests.Count -lt 1) {
+    if (-not $AssetRequests -or $AssetRequests.Count -lt 1) {
         return @()
     }
 
@@ -23,29 +26,71 @@ function Invoke-FastHuduArticleContentCommit {
     $ThrottleLimit = [math]::Max(1, $ThrottleLimit)
     $rateLimitGate = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
 
-    Write-Host "Committing $($CommitRequests.Count) article content update(s) to Hudu with $ThrottleLimit worker(s)." -ForegroundColor Cyan
+    Write-Host "$($Operation) committing $($AssetRequests.Count) Hudu asset(s) with $ThrottleLimit worker(s)." -ForegroundColor Cyan
 
-    $CommitRequests | ForEach-Object -Parallel {
-        $request = $_
+    $AssetRequests | ForEach-Object -Parallel {
+        $assetRequest = $_
         $baseUrl = $using:huduBaseUrl
         $apiKey = $using:huduApiKey
+        $operation = $using:Operation
         $maxRetries = $using:MaxRetries
         $customHeaders = $using:CustomHeaders
         $rateLimitGate = $using:rateLimitGate
-        $articleId = $request.ArticleId
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
-        $article = [ordered]@{
-            content = [string]$request.Content
-        }
-        if (-not [string]::IsNullOrWhiteSpace([string]$request.Name)) {
-            $article.name = [string]$request.Name
-        }
-        if ($request.CompanyId) {
-            $article.company_id = [int]$request.CompanyId
+        $assetId = $assetRequest.AssetId
+        $companyId = $assetRequest.CompanyId
+        $assetLayoutId = $assetRequest.AssetLayoutId
+
+        if (-not $companyId -or -not $assetLayoutId -or ($operation -eq 'Update' -and -not $assetId)) {
+            $stopwatch.Stop()
+            return [pscustomobject]@{
+                Status         = 'failed'
+                Operation      = $operation
+                Index          = $assetRequest.Index
+                AssetId        = $assetId
+                AssetName      = $assetRequest.Name
+                CompanyId      = $companyId
+                Asset          = $null
+                SourceRequest  = $assetRequest
+                Attempts       = 0
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+                Error          = 'Asset request is missing CompanyId, AssetLayoutId, or AssetId.'
+            }
         }
 
-        $body = @{ article = $article } | ConvertTo-Json -Depth 10
+        $asset = [ordered]@{
+            name            = [string]$assetRequest.Name
+            asset_layout_id = [int]$assetLayoutId
+        }
+
+        $fields = @($assetRequest.Fields)
+        if ($fields.Count -gt 0) {
+            $asset.custom_fields = $fields
+        }
+
+        foreach ($optionalProperty in @('PrimarySerial', 'PrimaryMail', 'PrimaryModel', 'PrimaryManufacturer', 'Slug')) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$assetRequest.$optionalProperty)) {
+                $wireName = switch ($optionalProperty) {
+                    'PrimarySerial' { 'primary_serial' }
+                    'PrimaryMail' { 'primary_mail' }
+                    'PrimaryModel' { 'primary_model' }
+                    'PrimaryManufacturer' { 'primary_manufacturer' }
+                    'Slug' { 'slug' }
+                }
+                $asset[$wireName] = [string]$assetRequest.$optionalProperty
+            }
+        }
+
+        $body = @{ asset = $asset } | ConvertTo-Json -Depth 20
+        $resource = if ($operation -eq 'Create') {
+            "/api/v1/companies/$companyId/assets"
+        } else {
+            "/api/v1/companies/$companyId/assets/$assetId"
+        }
+
         $headers = @{
             'x-api-key' = $apiKey
         }
@@ -55,8 +100,8 @@ function Invoke-FastHuduArticleContentCommit {
             }
         }
         $restMethod = @{
-            Method      = 'PUT'
-            Uri         = "$baseUrl/api/v1/articles/$articleId"
+            Method      = if ($operation -eq 'Create') { 'POST' } else { 'PUT' }
+            Uri         = "$baseUrl$resource"
             Headers     = $headers
             ContentType = 'application/json; charset=utf-8'
             Body        = $body
@@ -74,7 +119,7 @@ function Invoke-FastHuduArticleContentCommit {
                 if ($gateUntil -gt $now) {
                     $gateSleepSeconds = [math]::Ceiling(($gateUntil - $now).TotalSeconds)
                     if ($gateSleepSeconds -gt 0) {
-                        Write-Host "Hudu API rate-limit gate active; article $articleId sleeping for $gateSleepSeconds seconds."
+                        Write-Host "Hudu API rate-limit gate active; asset '$($assetRequest.Name)' sleeping for $gateSleepSeconds seconds."
                         $sleptSeconds += $gateSleepSeconds
                         Start-Sleep -Seconds $gateSleepSeconds
                     }
@@ -86,13 +131,15 @@ function Invoke-FastHuduArticleContentCommit {
                 $response = Invoke-RestMethod @restMethod -ErrorAction Stop
                 $stopwatch.Stop()
 
-                $articleObject = $response.article ?? $response
                 return [pscustomobject]@{
-                    Status         = 'committed'
-                    Index          = $request.Index
-                    ArticleId      = $articleId
-                    ArticleName    = $request.ArticleName
-                    UpdatedArticle = $articleObject
+                    Status         = if ($operation -eq 'Create') { 'created' } else { 'updated' }
+                    Operation      = $operation
+                    Index          = $assetRequest.Index
+                    AssetId        = ($response.asset.id ?? $assetId)
+                    AssetName      = $assetRequest.Name
+                    CompanyId      = $companyId
+                    Asset          = ($response.asset ?? $response)
+                    SourceRequest  = $assetRequest
                     Attempts       = $attempt
                     SleptSeconds   = $sleptSeconds
                     ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
@@ -132,7 +179,6 @@ function Invoke-FastHuduArticleContentCommit {
                     break
                 }
 
-                $sleepSeconds = 5
                 if ($rateLimited) {
                     $now = Get-Date
                     $windowLength = 5 * 60
@@ -154,9 +200,10 @@ function Invoke-FastHuduArticleContentCommit {
                         }
                     } until ($gateUpdated)
 
-                    Write-Host "Hudu API Rate limited; pausing fast article commits until $($waitUntil.ToString('HH:mm:ss'))."
+                    Write-Host "Hudu API Rate limited; pausing fast asset commits until $($waitUntil.ToString('HH:mm:ss'))."
                 } else {
-                    Write-Host "Hudu API transient error during fast article commit for article $articleId; retrying in $sleepSeconds seconds. $lastError" -ForegroundColor Yellow
+                    $sleepSeconds = 5
+                    Write-Host "Hudu API transient error during fast asset commit for '$($assetRequest.Name)'; retrying in $sleepSeconds seconds. $lastError" -ForegroundColor Yellow
                 }
 
                 $sleptSeconds += $sleepSeconds
@@ -167,10 +214,13 @@ function Invoke-FastHuduArticleContentCommit {
         $stopwatch.Stop()
         [pscustomobject]@{
             Status         = 'failed'
-            Index          = $request.Index
-            ArticleId      = $articleId
-            ArticleName    = $request.ArticleName
-            UpdatedArticle = $null
+            Operation      = $operation
+            Index          = $assetRequest.Index
+            AssetId        = $assetId
+            AssetName      = $assetRequest.Name
+            CompanyId      = $companyId
+            Asset          = $null
+            SourceRequest  = $assetRequest
             Attempts       = $attempt
             SleptSeconds   = $sleptSeconds
             ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)

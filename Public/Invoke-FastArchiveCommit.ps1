@@ -111,35 +111,55 @@ function Invoke-FastHuduArchiveCommit {
                     }
                 } catch {}
 
+                $errorText = @($lastError, $_.Exception.InnerException.Message, $_.ErrorDetails.Message) -join ' '
+                $transientStatusCodes = @(408, 500, 502, 503, 504)
                 $rateLimited = ($lastStatusCode -eq 429 -or $lastError -ilike '*Retry later*' -or $lastError -ilike '*Too Many Requests*')
-                if (-not $rateLimited) {
+                $transientFailure = (
+                    $transientStatusCodes -contains $lastStatusCode -or
+                    $errorText -ilike '*timed out*' -or
+                    $errorText -ilike '*timeout*' -or
+                    $errorText -ilike '*connection attempt failed*' -or
+                    $errorText -ilike '*connection refused*' -or
+                    $errorText -ilike '*actively refused*' -or
+                    $errorText -ilike '*unable to connect*' -or
+                    $errorText -ilike '*failed to respond*' -or
+                    $errorText -ilike '*connection was closed*' -or
+                    $errorText -ilike '*request was aborted*' -or
+                    $errorText -ilike '*temporarily unavailable*'
+                )
+                if (-not $rateLimited -and -not $transientFailure) {
                     break
                 }
 
-                $now = Get-Date
-                $windowLength = 5 * 60
-                $secondsIntoWindow = (($now.Minute % 5) * 60) + $now.Second
-                $sleepSeconds = [math]::Max(1, $windowLength - $secondsIntoWindow + (Get-Random -Minimum 1 -Maximum 5))
-                $waitUntil = $now.AddSeconds($sleepSeconds)
-                $gateUpdated = $false
-                do {
-                    $existingWaitUntil = [datetime]::MinValue
-                    $hasExistingWaitUntil = $rateLimitGate.TryGetValue('WaitUntil', [ref]$existingWaitUntil)
-                    if ($hasExistingWaitUntil -and $existingWaitUntil -ge $waitUntil) {
-                        $gateUpdated = $true
-                        break
-                    }
-                    if ($hasExistingWaitUntil) {
-                        $gateUpdated = $rateLimitGate.TryUpdate('WaitUntil', $waitUntil, $existingWaitUntil)
-                    } else {
-                        $gateUpdated = $rateLimitGate.TryAdd('WaitUntil', $waitUntil)
-                    }
-                } until ($gateUpdated)
-
-                Write-Host "Hudu API Rate limited; pausing fast archive commits until $($waitUntil.ToString('HH:mm:ss'))."
-
                 if ($attempt -gt $maxRetries) {
                     break
+                }
+
+                if ($rateLimited) {
+                    $now = Get-Date
+                    $windowLength = 5 * 60
+                    $secondsIntoWindow = (($now.Minute % 5) * 60) + $now.Second
+                    $sleepSeconds = [math]::Max(1, $windowLength - $secondsIntoWindow + (Get-Random -Minimum 1 -Maximum 5))
+                    $waitUntil = $now.AddSeconds($sleepSeconds)
+                    $gateUpdated = $false
+                    do {
+                        $existingWaitUntil = [datetime]::MinValue
+                        $hasExistingWaitUntil = $rateLimitGate.TryGetValue('WaitUntil', [ref]$existingWaitUntil)
+                        if ($hasExistingWaitUntil -and $existingWaitUntil -ge $waitUntil) {
+                            $gateUpdated = $true
+                            break
+                        }
+                        if ($hasExistingWaitUntil) {
+                            $gateUpdated = $rateLimitGate.TryUpdate('WaitUntil', $waitUntil, $existingWaitUntil)
+                        } else {
+                            $gateUpdated = $rateLimitGate.TryAdd('WaitUntil', $waitUntil)
+                        }
+                    } until ($gateUpdated)
+
+                    Write-Host "Hudu API Rate limited; pausing fast archive commits until $($waitUntil.ToString('HH:mm:ss'))."
+                } else {
+                    $sleepSeconds = 5
+                    Write-Host "Hudu API transient error during fast archive commit for $($archiveRequest.Type) $($archiveRequest.Id); retrying in $sleepSeconds seconds. $lastError" -ForegroundColor Yellow
                 }
 
                 $sleptSeconds += $sleepSeconds

@@ -17,6 +17,7 @@ $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@
 $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
 $MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
+$UseFastAssetCommit = $UseFastAssetCommit ?? $true
 $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
 
 function Stop-ITGlueExportBootstrapJobIfRunning {
@@ -1619,16 +1620,23 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
             Write-Host "Layouts scoped... $OriginalLayoutsCount => $($MatchedLayouts.count)"
         }
 
+        if ($UseFastAssetCommit -and -not (Get-Command -Name Invoke-FastHuduAssetCommit -ErrorAction SilentlyContinue)) {
+            $UseFastAssetCommit = $false
+        }
+
+        $AssetCreateRequests = [System.Collections.ArrayList]@()
+        $assetCreateIndex = 0
+
         Foreach ($Layout in $MatchedLayouts) {
             if ([string]::IsNullOrWhiteSpace([string]$Layout.HuduID) -or @($Layout.ITGAssets).Count -eq 0) {
                 Write-Host "Skipping base asset creation for $($Layout.Name) because the layout was not created or has no assets in scope." -ForegroundColor Yellow
                 continue
             }
 
-            Write-Host "Creating base assets for $($layout.name)"
+            Write-Host "Preparing base assets for $($layout.name)"
             foreach ($ITGAsset in $Layout.ITGAssets) {
                 # Match Company
-                $HuduCompanyID = ($MatchedCompanies | Where-Object { $_.ITGID -eq $ITGAsset.attributes.'organization-id' }).HuduID
+                $HuduCompanyID = ($MatchedCompanies | Where-Object { $_.ITGID -eq $ITGAsset.attributes.'organization-id' } | Select-Object -First 1).HuduID
 
                 $AssetFields = @{ 
                     'Imported From ITGlue' = Get-Date -Format "o"
@@ -1638,24 +1646,109 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
                     'ITG Date Last Updated' = $(Get-CoercedDate $ITGAsset.attributes.'updated-at')                    
                 }
 			
-                $NewHuduAsset = (New-HuduAsset -name $ITGAsset.attributes.name -company_id $HuduCompanyID -asset_layout_id $Layout.HuduObject.id -fields $AssetFields).asset
+                $null = $AssetCreateRequests.Add([pscustomobject]@{
+                    Index         = $assetCreateIndex
+                    Name          = $ITGAsset.attributes.name
+                    CompanyId     = $HuduCompanyID
+                    AssetLayoutId = $Layout.HuduObject.id
+                    Fields        = @($AssetFields)
+                    ITGAsset      = $ITGAsset
+                })
+                $assetCreateIndex++
+            }
+        }
 
+        $AssetCreateResults = if ($AssetCreateRequests.Count -gt 0 -and $UseFastAssetCommit) {
+            $fastAssetCommitParams = @{
+                AssetRequests = @($AssetCreateRequests)
+                Operation     = 'Create'
+                ThrottleLimit = $MigrationParallelismLimit
+            }
+            if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+                $fastAssetCommitParams.CustomHeaders = $HuduFastCommitHeaders
+            }
+            Invoke-FastHuduAssetCommit @fastAssetCommitParams
+        } else {
+            foreach ($assetCreateRequest in @($AssetCreateRequests)) {
+                $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                try {
+                    $NewHuduAsset = (New-HuduAsset -name $assetCreateRequest.Name -company_id $assetCreateRequest.CompanyId -asset_layout_id $assetCreateRequest.AssetLayoutId -fields $assetCreateRequest.Fields).asset
+                    $stopwatch.Stop()
+                    [pscustomobject]@{
+                        Status         = if ($NewHuduAsset) { 'created' } else { 'failed' }
+                        Operation      = 'Create'
+                        Index          = $assetCreateRequest.Index
+                        AssetId        = $NewHuduAsset.id
+                        AssetName      = $assetCreateRequest.Name
+                        CompanyId      = $assetCreateRequest.CompanyId
+                        Asset          = $NewHuduAsset
+                        SourceRequest  = $assetCreateRequest
+                        Attempts       = 1
+                        SleptSeconds   = 0
+                        ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                        StatusCode     = $null
+                        Error          = $null
+                    }
+                } catch {
+                    $stopwatch.Stop()
+                    [pscustomobject]@{
+                        Status         = 'failed'
+                        Operation      = 'Create'
+                        Index          = $assetCreateRequest.Index
+                        AssetId        = $null
+                        AssetName      = $assetCreateRequest.Name
+                        CompanyId      = $assetCreateRequest.CompanyId
+                        Asset          = $null
+                        SourceRequest  = $assetCreateRequest
+                        Attempts       = 1
+                        SleptSeconds   = 0
+                        ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                        StatusCode     = $null
+                        Error          = $_.Exception.Message
+                    }
+                }
+            }
+        }
+
+        $AssetCreateRequestsByIndex = @{}
+        foreach ($assetCreateRequest in @($AssetCreateRequests)) {
+            $AssetCreateRequestsByIndex[[int]$assetCreateRequest.Index] = $assetCreateRequest
+        }
+
+        foreach ($assetCreateResult in @($AssetCreateResults | Sort-Object Index)) {
+            $assetCreateRequest = $AssetCreateRequestsByIndex[[int]$assetCreateResult.Index]
+            if ($assetCreateResult.Status -eq 'created' -and $assetCreateResult.Asset) {
+                $NewHuduAsset = $assetCreateResult.Asset
                 $AssetDetails = [PSCustomObject]@{
-                    "Name"       = $ITGAsset.attributes.name
-                    "ITGID"      = $ITGAsset.id
+                    "Name"       = $assetCreateRequest.ITGAsset.attributes.name
+                    "ITGID"      = $assetCreateRequest.ITGAsset.id
                     "HuduID"     = $NewHuduAsset.Id
                     "Matched"    = $false
                     "HuduObject" = $NewHuduAsset
-                    "ITGObject"  = $ITGAsset
+                    "ITGObject"  = $assetCreateRequest.ITGAsset
                     "Imported"   = "First Pass"
                 }
                 $null = $MatchedAssets.add($AssetDetails)
+            } else {
+                Write-Host "Failed to create base asset $($assetCreateResult.AssetName): $($assetCreateResult.Error)" -ForegroundColor Red
             }
         }
+
+        $assetCreateSucceeded = @($AssetCreateResults | Where-Object { $_.Status -eq 'created' -and $_.Asset }).Count
+        $assetCreateFailed = @($AssetCreateResults | Where-Object { $_.Status -ne 'created' -or -not $_.Asset }).Count
+        Write-Host "Flexible asset base create commits complete: $assetCreateSucceeded/$($AssetCreateRequests.Count) created, $assetCreateFailed failed." -ForegroundColor Cyan
+        if ($assetCreateFailed -gt 0) {
+            Write-Host "Flexible asset base creation had $assetCreateFailed failed commit(s). Review AssetCreateCommitResults.json before trusting this section as complete." -ForegroundColor Red
+        }
+
+        $AssetCreateResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetCreateCommitResults.json"
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
         
+        $AssetUpdateRequests = [System.Collections.ArrayList]@()
+        $assetUpdateIndex = 0
+
         # foreach ($UpdateAsset in $MatchedAssets | where-object {$_.ITGObject.attributes.archived -ne $true}) {
         foreach ($UpdateAsset in $MatchedAssets) {
             Write-Host "Populating $($UpdateAsset.Name)"
@@ -1876,11 +1969,95 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
 
                 $CleanedAssetFields += @{ $fieldName = $value }
             }
-            $UpdatedHuduAsset = (Set-HuduAsset -asset_id $UpdateAsset.HuduID -name $UpdateAsset.name -company_id $($UpdateAsset.HuduObject.company_id) -asset_layout_id $UpdateAsset.HuduObject.asset_layout_id -fields $CleanedAssetFields).asset
-
-            $UpdateAsset.HuduObject = $UpdatedHuduAsset
-            $UpdateAsset.Imported = "Created-By-Script"
+            $null = $AssetUpdateRequests.Add([pscustomobject]@{
+                Index         = $assetUpdateIndex
+                AssetId       = [int]$UpdateAsset.HuduID
+                Name          = $UpdateAsset.name
+                CompanyId     = [int]$UpdateAsset.HuduObject.company_id
+                AssetLayoutId = [int]$UpdateAsset.HuduObject.asset_layout_id
+                Fields        = @($CleanedAssetFields)
+                SourceAsset   = $UpdateAsset
+            })
+            $assetUpdateIndex++
         }
+
+        $AssetUpdateResults = if ($AssetUpdateRequests.Count -gt 0 -and $UseFastAssetCommit) {
+            $fastAssetCommitParams = @{
+                AssetRequests = @($AssetUpdateRequests)
+                Operation     = 'Update'
+                ThrottleLimit = $MigrationParallelismLimit
+            }
+            if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+                $fastAssetCommitParams.CustomHeaders = $HuduFastCommitHeaders
+            }
+            Invoke-FastHuduAssetCommit @fastAssetCommitParams
+        } else {
+            foreach ($assetUpdateRequest in @($AssetUpdateRequests)) {
+                $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                try {
+                    $UpdatedHuduAsset = (Set-HuduAsset -asset_id $assetUpdateRequest.AssetId -name $assetUpdateRequest.Name -company_id $assetUpdateRequest.CompanyId -asset_layout_id $assetUpdateRequest.AssetLayoutId -fields $assetUpdateRequest.Fields).asset
+                    $stopwatch.Stop()
+                    [pscustomobject]@{
+                        Status         = if ($UpdatedHuduAsset) { 'updated' } else { 'failed' }
+                        Operation      = 'Update'
+                        Index          = $assetUpdateRequest.Index
+                        AssetId        = $assetUpdateRequest.AssetId
+                        AssetName      = $assetUpdateRequest.Name
+                        CompanyId      = $assetUpdateRequest.CompanyId
+                        Asset          = $UpdatedHuduAsset
+                        SourceRequest  = $assetUpdateRequest
+                        Attempts       = 1
+                        SleptSeconds   = 0
+                        ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                        StatusCode     = $null
+                        Error          = $null
+                    }
+                } catch {
+                    $stopwatch.Stop()
+                    [pscustomobject]@{
+                        Status         = 'failed'
+                        Operation      = 'Update'
+                        Index          = $assetUpdateRequest.Index
+                        AssetId        = $assetUpdateRequest.AssetId
+                        AssetName      = $assetUpdateRequest.Name
+                        CompanyId      = $assetUpdateRequest.CompanyId
+                        Asset          = $null
+                        SourceRequest  = $assetUpdateRequest
+                        Attempts       = 1
+                        SleptSeconds   = 0
+                        ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                        StatusCode     = $null
+                        Error          = $_.Exception.Message
+                    }
+                }
+            }
+        }
+
+        $AssetUpdateRequestsByIndex = @{}
+        foreach ($assetUpdateRequest in @($AssetUpdateRequests)) {
+            $AssetUpdateRequestsByIndex[[int]$assetUpdateRequest.Index] = $assetUpdateRequest
+        }
+
+        foreach ($assetUpdateResult in @($AssetUpdateResults | Sort-Object Index)) {
+            $assetUpdateRequest = $AssetUpdateRequestsByIndex[[int]$assetUpdateResult.Index]
+            $UpdateAsset = $assetUpdateRequest.SourceAsset
+            if ($assetUpdateResult.Status -eq 'updated' -and $assetUpdateResult.Asset) {
+                $UpdateAsset.HuduObject = $assetUpdateResult.Asset
+                $UpdateAsset.Imported = "Created-By-Script"
+            } else {
+                $UpdateAsset.Imported = "Update-Failed"
+                Write-Host "Failed to populate $($UpdateAsset.Name): $($assetUpdateResult.Error)" -ForegroundColor Red
+            }
+        }
+
+        $assetUpdateSucceeded = @($AssetUpdateResults | Where-Object { $_.Status -eq 'updated' -and $_.Asset }).Count
+        $assetUpdateFailed = @($AssetUpdateResults | Where-Object { $_.Status -ne 'updated' -or -not $_.Asset }).Count
+        Write-Host "Flexible asset content update commits complete: $assetUpdateSucceeded/$($AssetUpdateRequests.Count) updated, $assetUpdateFailed failed." -ForegroundColor Cyan
+        if ($assetUpdateFailed -gt 0) {
+            Write-Host "Flexible asset content population had $assetUpdateFailed failed commit(s). Review AssetContentCommitResults.json before trusting this section as complete." -ForegroundColor Red
+        }
+
+        $AssetUpdateResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetContentCommitResults.json"
         if ($true -eq $UploadFieldsArePresent){
             Write-Host "One or more Upload fields were present on the assets, they will be processed during wrap-up" -ForegroundColor Yellow
         }
