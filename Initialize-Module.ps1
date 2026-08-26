@@ -604,9 +604,10 @@ if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { 
 $requiredHuduVersion = ([version]"2.44.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
-
+if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){
 $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
 $MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
+}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
 $UseFastAssetCommit = $UseFastAssetCommit ?? $true
