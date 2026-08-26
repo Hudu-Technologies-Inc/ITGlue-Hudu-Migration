@@ -439,8 +439,17 @@ if ($true -eq $AutoDownloadITGlueExport) {
         TimeoutMinutes = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)
     }
 
+    [string]$executionContextLanguage =  $ExecutionContext.SessionState.LanguageMode
+
     try {
         $ITGlueExportRunInBackground = [bool]($ITGlueExportRunInBackground ?? $environmentSettings.ITGlueExportRunInBackground ?? $true)
+        if ("FullLanguage" -ieq $executionContextLanguage) {
+            write-host "Background IT Glue export is allowed for your system."
+        } else {
+            write-host "Background IT Glue export is not allowed for your system. If export isnt present, we'll just download in the foreground (slightly slower)" -ForegroundColor Yellow  
+            $ITGlueExportRunInBackground = $false
+        }
+
         if ($ITGlueExportRunInBackground -and -not (Test-ITGlueExportPathHasContent -Path $ITGlueExportPath)) {
             $ITGlueExportBootstrapJob = Start-ITGlueExportBootstrapJob `
                 -ExportParameters $autoExportParams `
@@ -590,10 +599,13 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\NetworkInformation.ps1
 . $PSScriptRoot\Public\PreFlightTests.ps1
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
+. $PSScriptRoot\Public\Invoke-FastHuduRequestBatch.ps1
 . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastLabelCommit.ps1
+. $PSScriptRoot\Public\Invoke-FastAssetCommit.ps1
+. $PSScriptRoot\Public\Invoke-FastFlexibleAssetFieldPreparation.ps1
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
@@ -601,11 +613,14 @@ if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { 
 $requiredHuduVersion = ([version]"2.44.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
-
-$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
-$MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
+if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){
+$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 3))
+$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
+$MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
+}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
+$UseFastAssetCommit = $UseFastAssetCommit ?? $true
 $UseFastRelationCommit = $UseFastRelationCommit ?? $true
 $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true
 $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
