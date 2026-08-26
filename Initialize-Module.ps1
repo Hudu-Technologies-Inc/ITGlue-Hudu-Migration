@@ -590,6 +590,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\NetworkInformation.ps1
 . $PSScriptRoot\Public\PreFlightTests.ps1
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
+. $PSScriptRoot\Public\Invoke-FastHuduRequestBatch.ps1
 . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
