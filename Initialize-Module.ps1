@@ -439,8 +439,17 @@ if ($true -eq $AutoDownloadITGlueExport) {
         TimeoutMinutes = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)
     }
 
+    [string]$executionContextLanguage =  $ExecutionContext.SessionState.LanguageMode
+
     try {
         $ITGlueExportRunInBackground = [bool]($ITGlueExportRunInBackground ?? $environmentSettings.ITGlueExportRunInBackground ?? $true)
+        if ("FullLanguage" -ieq $executionContextLanguage) {
+            write-host "Background IT Glue export is allowed for your system."
+        } else {
+            write-host "Background IT Glue export is not allowed for your system." -ForegroundColor Yellow  
+            $ITGlueExportRunInBackground = $false
+        }
+
         if ($ITGlueExportRunInBackground -and -not (Test-ITGlueExportPathHasContent -Path $ITGlueExportPath)) {
             $ITGlueExportBootstrapJob = Start-ITGlueExportBootstrapJob `
                 -ExportParameters $autoExportParams `
