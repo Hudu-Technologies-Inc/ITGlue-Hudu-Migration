@@ -18,6 +18,7 @@ $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12,
 $MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
 $UseFastAssetCommit = $UseFastAssetCommit ?? $true
+$UseFastRelationCommit = $UseFastRelationCommit ?? $true
 $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
 
 function Stop-ITGlueExportBootstrapJobIfRunning {
@@ -1747,239 +1748,149 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         #We now need to loop through all Assets again updating the assets to their final version
         
         $AssetUpdateRequests = [System.Collections.ArrayList]@()
+        $AssetPreparationSourcesByIndex = @{}
         $assetUpdateIndex = 0
 
-        # foreach ($UpdateAsset in $MatchedAssets | where-object {$_.ITGObject.attributes.archived -ne $true}) {
-        foreach ($UpdateAsset in $MatchedAssets) {
-            Write-Host "Populating $($UpdateAsset.Name)"
-		
-            $AssetFields = @{ 
-                'Imported From ITGlue' = Get-Date -Format "o"
+        $AssetPreparationInputs = foreach ($UpdateAsset in $MatchedAssets) {
+            $AssetPreparationSourcesByIndex[$assetUpdateIndex] = $UpdateAsset
+            [pscustomobject]@{
+                PreparationIndex = $assetUpdateIndex
+                Name             = $UpdateAsset.Name
+                HuduID           = $UpdateAsset.HuduID
+                ITGID            = $UpdateAsset.ITGID
+                HuduObject       = $UpdateAsset.HuduObject
+                ITGObject        = $UpdateAsset.ITGObject
+                Imported         = $UpdateAsset.Imported
             }
-
-            $traits = $UpdateAsset.ITGObject.attributes.traits
-            $traits.PSObject.Properties | ForEach-Object {
-                # Find the corresponding field we are working on
-                $ITGParsed = $_.name
-                $ITGValues = $_.value
-                $field = $AllFields | Where-Object { $_.IGLayoutID -eq $UpdateAsset.ITGObject.attributes.'flexible-asset-type-id' -and $_.ITGParsedName -eq $ITGParsed }
-                if ($field) {
-                    $supported = $true
-                    if ($field.FieldType -eq "Date") {
-                        $raw = ($ITGValues.values ?? $ITGValues) -as [string]
-                        $ReturnData = Get-CoercedDate -InputDate $raw -Cutoff '1000-01-01' -OutputFormat 'MM/DD/YYYY'
-                        if (-not $ReturnData) {
-                            if ($field.HuduLayoutField.required) {
-                                $ReturnData = (Get-Date).ToString('MM/dd/yyyy', [CultureInfo]::InvariantCulture)
-                            } else {
-                                return
-                            }
-                        }
-                        $null = $AssetFields.add("$($field.HuduParsedName)", ("$ReturnData"))
-                    } elseif ($field.FieldType -eq "Tag") {
-                        switch ($field.FieldSubType) {
-                            "Checklists" {
-                                $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Procedure'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Procedure from $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later.";
-                                $supported = $true
-                            } "ChecklistTemplates" { 
-                                $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Procedure'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Procedure Template from $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later.";
-                                $supported = $true
-                            } "Contacts" {
-                                $ContactsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $MatchedContacts | Where-Object { $_.ITGID -eq $IDMatch.id }
-                                }
-                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $ContactsLinked -AssetName $UpdateAsset.Name
-                            } "Configurations" {
-                                $ConfigsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $MatchedConfigurations | Where-Object { $_.ITGID -eq $IDMatch.id }
-                                }
-                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $ConfigsLinked -AssetName $UpdateAsset.Name
-											
-                            } "Documents" { $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Article'; itg_to_id = $IDMatch.id}} ;Write-Host "Tags to Articles $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true
-                            } "Domains" {
-                                if ($true -ne $ImportDomains) {
-                                    Write-Host "Skipping website/domain tags for $($field.FieldName) in $($UpdateAsset.Name) because website migration is disabled." -ForegroundColor Yellow
-                                    $supported = $false
-                                } else {
-                                    $DomainsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                        $MatchedWebsites | Where-Object { $_.ITGID -eq $IDMatch.id -and -not [string]::IsNullOrWhiteSpace([string]$_.HuduID) }
-                                    }
-                                    $DomainsLinked | ForEach-Object {
-                                        if ($WebsiteRelation = New-HuduRelation -FromableType 'Asset' -ToableType 'Website' -FromableID $UpdateAsset.HuduID -ToableID $_.HuduID) {
-                                            Write-Host "Successully Created relation to $($WebsiteRelation.relation.name)"
-                                        } else {
-                                            Write-Host "Tags to Websites are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false
-                                    }}
-                                }
-                            } "Passwords" { 
-                                $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) { @{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'AssetPassword'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Password $($field.FieldName) in $($UpdateAsset.Name) has been recorded for later."; $supported = $true 
-                            } "Locations" {
-                                $LocationsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $MatchedLocations | Where-Object { $_.ITGID -eq $IDMatch.id }
-                                }
-                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $LocationsLinked -AssetName $UpdateAsset.Name
-                            } "Organizations" { 
-                                $RelationsToCreate += foreach ($IDMatch in $ITGValues.values) {@{hudu_from_id = $UpdateAsset.HuduID; relation_type = 'Company'; itg_to_id = $IDMatch.id}}; Write-Host "Tags to Companies $($field.FieldName) in $($UpdateAsset.Name) has been recorded later."; $supported = $true
-                            } "FlexibleAssetType" {	
-                                $AssetsLinked = foreach ($IDMatch in $ITGValues.values) {
-                                    $MatchedAssets | Where-Object { $_.ITGID -eq $IDMatch.id }
-                                }
-                                $null = Add-HuduAssetTagFieldValue -AssetFields $AssetFields -Field $field -LinkedItems $AssetsLinked -AssetName $UpdateAsset.Name
-                            } "SslCertificates" { 
-                                Write-Host "Tags to SSL Certificates are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
-                            } "Tickets" {
-                                Write-Host "Tags to Tickets are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false;
-                            } "AccountsUsers" {
-                                Write-Host "Tags to Account Users are not supported $($field.FieldName) in $($UpdateAsset.Name) will need to be manually migrated, Sorry!"; $supported = $false 
-                            }
-                        }
-                        # the only untaggable entities that are left now are entities that we are not creating or cannot create, so there isnt really a manual action to be taken
-                        # if ($Supported -eq $False) {
-                        #     $ManualLog = [PSCustomObject]@{
-                        #         Document_Name = $UpdateAsset.Name
-                        #         Type          = ($UpdateAsset.HuduObject.asset_type ?? "Asset") + " Field - Tag"
-                        #         Company_Name  = $UpdateAsset.HuduObject.company_name
-                        #         HuduID        = $UpdateAsset.HuduID
-                        #         Field_Name    = $($field.FieldName)
-                        #         Notes         = "Unsupported Tag Type Manual Tag Required"
-                        #         Action        = "Manually tag to Asset"
-                        #         Data          = $ITGValues.values.name -join ","
-                        #         Hudu_URL      = $UpdateAsset.HuduObject.url
-                        #         ITG_URL       = $UpdateAsset.ITGObject.attributes."resource-url"
-                        #     }; $null = $ManualActions.add($ManualLog);
-                        # }
-                    } elseif ($field.FieldType -eq "Password") {
-                        $PasswordIds = @(
-                            $ITGValues
-                            $ITGValues.values
-                        ) | ForEach-Object {
-                            if ($null -ne $_) {
-                                $candidate = if ($_.PSObject.Properties['id']) {
-                                    $_.id
-                                } elseif ($_.PSObject.Properties['resource-id']) {
-                                    $_.'resource-id'
-                                } elseif ($_.PSObject.Properties['resource_id']) {
-                                    $_.'resource_id'
-                                } elseif ($_ -is [string] -or $_.GetType().IsValueType) {
-                                    $_
-                                } else {
-                                    $null
-                                }
-
-                                if (-not [string]::IsNullOrWhiteSpace([string]$candidate)) {
-                                    [string]$candidate
-                                }
-                            }
-                        } | Select-Object -Unique
-
-                        $PasswordFieldWasSet = $false
-                        foreach ($PasswordId in $PasswordIds) {
-                            $ITGPassword = $null
-                            $ITGPasswordValue = $null
-                            $MigratedPasswordStatus = "Skipped"
-
-                            try {
-                                $ITGPassword = (Get-ITGluePasswords -id $PasswordId -include related_items).data
-                                $ITGPasswordValue = ($ITGPasswordsRaw | Where-Object { $_.id -eq $ITGPassword.id } | Select-Object -First 1).password
-
-                                if ($ITGPasswordValue) {
-                                    $NewPasswordObject = [pscustomobject]@{
-                                        Name        = "$($UpdateAsset.name) $($Field.fieldname) $($ITGPassword.Username) Password"
-                                        Username    = $ITGPassword.Username
-                                        URL         = $ITGPassword.url
-                                        ITGID       = $ITGPassword.id
-                                        Description = $ITGpassword.notes
-                                        CompanyId   = $UpdateAsset.HuduObject.company_id
-                                        Password    = $ITGPasswordValue
-                                    }
-
-                                    if (-not $PasswordFieldWasSet) {
-                                        $null = $AssetFields.add("$($field.HuduParsedName)", $ITGPasswordValue)
-                                        $PasswordFieldWasSet = $true
-                                        $MigratedPasswordStatus = "Into Asset"
-                                    } else {
-                                        $ManualLog = [PSCustomObject]@{
-                                            Document_Name = $UpdateAsset.Name
-                                            Type          = "Asset Field - Password"
-                                            Company_Name  = $UpdateAsset.HuduObject.company_name
-                                            HuduID        = $UpdateAsset.HuduID
-                                            Field_Name    = "$($field.HuduParsedName)"
-                                            Notes         = "Multiple embedded IT Glue passwords were found for one Hudu password field. The first value was added to the asset field."
-                                            Action        = "Manually review whether this additional password should be migrated elsewhere"
-                                            Data          = ($ITGPassword.attributes.'resource-url' -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                                            Hudu_URL      = $UpdateAsset.HuduObject.url
-                                            ITG_URL       = $UpdateAsset.ITGObject.attributes.'resource-url'
-                                        }; $null = $ManualActions.add($ManualLog)
-                                        $MigratedPasswordStatus = "Manual Review - Additional Embedded Password"
-                                    }
-                                }
-                            } catch {
-                                Write-Host "Error occured adding field, possible duplicate name" -ForegroundColor Red
-                                $ManualLog = [PSCustomObject]@{
-                                    Document_Name = $UpdateAsset.Name
-                                    Type          = "Asset Field - Password"
-                                    Company_Name  = $UpdateAsset.HuduObject.company_name
-                                    HuduID        = $UpdateAsset.HuduID
-                                    Field_Name    = "$($field.HuduParsedName)"
-                                    Notes         = "Failed to add password to Asset with error $_"
-                                    Action        = "Manually add the password to the asset"
-                                    Data          = ($ITGPassword.attributes.'resource-url' -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                                    Hudu_URL      = $UpdateAsset.HuduObject.url
-                                    ITG_URL       = $UpdateAsset.ITGObject.attributes.'resource-url'
-                                }; $null = $ManualActions.add($ManualLog); $MigratedPasswordStatus = "Failed to add";
-                            }
-
-                            if ($ITGPassword) {
-                                $MigratedPassword = [PSCustomObject]@{
-                                    "Name"      = $ITGPassword.attributes.name
-                                    "ITGID"     = $ITGPassword.id
-                                    "HuduID"    = $UpdateAsset.HuduID
-                                    "Matched"   = $true
-                                    "ITGObject" = $ITGPassword
-                                    "Imported"  = $MigratedPasswordStatus
-                                }
-                                $null = $MatchedAssetPasswords.add($MigratedPassword)
-                            }
-                        }
-                    } elseif ($field.FieldType -eq "Number") {
-                        # This version won't cast doubles for 'number' fields. It expects only integers.
-                        $coerced = Get-CastIfNumeric ($_.value -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                        $null = $AssetFields.add("$($field.HuduParsedName)", [string]"$coerced")
-                    } elseif ($field.FieldType -ieq "Upload") {
-                        $UploadFieldsArePresent = $true
-                        return
-                    } else {
-                        $null = $AssetFields.add("$($field.HuduParsedName)", [string]"$($_.value)")
-                    }
-                } else {
-                    Write-Host "Warning $ITGParsed : $ITGValues Could not be added" -ForegroundColor Red
-                }
-            }
-            $CleanedAssetFields = @()
-
-            foreach ($entry in $AssetFields.GetEnumerator()) {
-                $fieldName = ($entry.Key -replace '_', ' ').Trim()
-                $value = $entry.Value
-
-                if ([string]::IsNullOrWhiteSpace($fieldName)) { continue }
-                if ($null -eq $value) { continue }
-                if ($value -is [string] -and [string]::IsNullOrWhiteSpace($value)) { continue }
-                if ($value -is [array] -and $value.Count -eq 0) { continue }
-                if ($value -is [string] -and $value.Trim() -in @('[]', '[,,]', '[,]', 'null')) { continue }
-
-                $CleanedAssetFields += @{ $fieldName = $value }
-            }
-            $null = $AssetUpdateRequests.Add([pscustomobject]@{
-                Index         = $assetUpdateIndex
-                AssetId       = [int]$UpdateAsset.HuduID
-                Name          = $UpdateAsset.name
-                CompanyId     = [int]$UpdateAsset.HuduObject.company_id
-                AssetLayoutId = [int]$UpdateAsset.HuduObject.asset_layout_id
-                Fields        = @($CleanedAssetFields)
-                SourceAsset   = $UpdateAsset
-            })
             $assetUpdateIndex++
         }
+
+        $AssetPreparationResults = if ($AssetPreparationInputs.Count -gt 0) {
+            Invoke-FastFlexibleAssetFieldPreparation `
+                -Assets @($AssetPreparationInputs) `
+                -AllFields @($AllFields) `
+                -MatchedContacts @($MatchedContacts) `
+                -MatchedConfigurations @($MatchedConfigurations) `
+                -MatchedWebsites @($MatchedWebsites) `
+                -MatchedLocations @($MatchedLocations) `
+                -MatchedAssets @($MatchedAssets) `
+                -ITGPasswordsRaw @($ITGPasswordsRaw) `
+                -ITGKey $ITGKey `
+                -ITGAPIEndpoint $ITGAPIEndpoint `
+                -CurrentVersion $CurrentVersion `
+                -ImportDomains ([bool]$ImportDomains) `
+                -ThrottleLimit $MigrationParallelismLimit
+        } else {
+            @()
+        }
+
+        $HuduRelationsToCreate = [System.Collections.ArrayList]@()
+        foreach ($assetPreparationResult in @($AssetPreparationResults | Sort-Object Index)) {
+            foreach ($message in @($assetPreparationResult.Messages)) {
+                $messageColor = if ($message -match '^(Warning|Skipping|Tags to .*not supported|Error)') { 'Yellow' } else { 'White' }
+                Write-Host $message -ForegroundColor $messageColor
+            }
+
+            if ($assetPreparationResult.Status -eq 'prepared' -and $assetPreparationResult.AssetUpdateRequest) {
+                $assetUpdateRequest = $assetPreparationResult.AssetUpdateRequest
+                $assetUpdateRequest.SourceAsset = $AssetPreparationSourcesByIndex[[int]$assetPreparationResult.Index]
+                $null = $AssetUpdateRequests.Add($assetUpdateRequest)
+            } else {
+                $UpdateAsset = $AssetPreparationSourcesByIndex[[int]$assetPreparationResult.Index]
+                if ($UpdateAsset) {
+                    $UpdateAsset.Imported = 'Preparation-Failed'
+                    Write-Host "Failed to prepare $($UpdateAsset.Name): $($assetPreparationResult.Error)" -ForegroundColor Red
+                } else {
+                    Write-Host "Failed to prepare flexible asset at index $($assetPreparationResult.Index): $($assetPreparationResult.Error)" -ForegroundColor Red
+                }
+            }
+
+            foreach ($relationToCreate in @($assetPreparationResult.RelationsToCreate)) {
+                $null = $RelationsToCreate.Add($relationToCreate)
+            }
+            foreach ($huduRelationToCreate in @($assetPreparationResult.HuduRelationsToCreate)) {
+                $null = $HuduRelationsToCreate.Add($huduRelationToCreate)
+            }
+            foreach ($manualAction in @($assetPreparationResult.ManualActions)) {
+                $null = $ManualActions.Add($manualAction)
+            }
+            foreach ($matchedAssetPassword in @($assetPreparationResult.MatchedAssetPasswords)) {
+                $null = $MatchedAssetPasswords.Add($matchedAssetPassword)
+            }
+            if ($assetPreparationResult.UploadFieldsArePresent) {
+                $UploadFieldsArePresent = $true
+            }
+        }
+
+        $assetPreparationSucceeded = @($AssetPreparationResults | Where-Object { $_.Status -eq 'prepared' -and $_.AssetUpdateRequest }).Count
+        $assetPreparationFailed = @($AssetPreparationResults | Where-Object { $_.Status -ne 'prepared' -or -not $_.AssetUpdateRequest }).Count
+        Write-Host "Flexible asset field preparation complete: $assetPreparationSucceeded/$($AssetPreparationInputs.Count) prepared, $assetPreparationFailed failed." -ForegroundColor Cyan
+        if ($assetPreparationFailed -gt 0) {
+            Write-Host "Flexible asset field preparation had $assetPreparationFailed failed item(s). Review AssetPreparationResults.json before trusting this section as complete." -ForegroundColor Red
+        }
+
+        $AssetPreparationResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetPreparationResults.json"
+
+        if ($UseFastRelationCommit -and -not (Get-Command -Name Invoke-FastHuduRelationCommit -ErrorAction SilentlyContinue)) {
+            $UseFastRelationCommit = $false
+        }
+
+        $HuduRelationCommitResults = if ($HuduRelationsToCreate.Count -gt 0 -and $UseFastRelationCommit) {
+            $fastRelationCommitParams = @{
+                Relations     = @($HuduRelationsToCreate)
+                ThrottleLimit = $MigrationParallelismLimit
+            }
+            if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+                $fastRelationCommitParams.CustomHeaders = $HuduFastCommitHeaders
+            }
+            Invoke-FastHuduRelationCommit @fastRelationCommitParams
+        } elseif ($HuduRelationsToCreate.Count -gt 0) {
+            foreach ($huduRelationToCreate in @($HuduRelationsToCreate)) {
+                $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                try {
+                    $WebsiteRelation = New-HuduRelation `
+                        -FromableType $huduRelationToCreate.FromableType `
+                        -ToableType $huduRelationToCreate.ToableType `
+                        -FromableID $huduRelationToCreate.FromableID `
+                        -ToableID $huduRelationToCreate.ToableID
+                    $stopwatch.Stop()
+                    [pscustomobject]@{
+                        Status         = if ($WebsiteRelation) { 'created' } else { 'failed' }
+                        Relation       = ($WebsiteRelation.relation ?? $WebsiteRelation)
+                        SourceRelation = $huduRelationToCreate
+                        Attempts       = 1
+                        SleptSeconds   = 0
+                        ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                        StatusCode     = $null
+                        Error          = $null
+                    }
+                } catch {
+                    $stopwatch.Stop()
+                    [pscustomobject]@{
+                        Status         = 'failed'
+                        Relation       = $null
+                        SourceRelation = $huduRelationToCreate
+                        Attempts       = 1
+                        SleptSeconds   = 0
+                        ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                        StatusCode     = $null
+                        Error          = $_.Exception.Message
+                    }
+                }
+            }
+        } else {
+            @()
+        }
+
+        if ($HuduRelationsToCreate.Count -gt 0) {
+            $huduRelationCreated = @($HuduRelationCommitResults | Where-Object { $_.Status -eq 'created' -and $_.Relation }).Count
+            $huduRelationFailed = @($HuduRelationCommitResults | Where-Object { $_.Status -ne 'created' -or -not $_.Relation }).Count
+            Write-Host "Flexible asset website relation commits complete: $huduRelationCreated/$($HuduRelationsToCreate.Count) created, $huduRelationFailed failed." -ForegroundColor Cyan
+            if ($huduRelationFailed -gt 0) {
+                Write-Host "Flexible asset website relation creation had $huduRelationFailed failed commit(s). Review AssetWebsiteRelationCommitResults.json before trusting this section as complete." -ForegroundColor Red
+            }
+        }
+        $HuduRelationCommitResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetWebsiteRelationCommitResults.json"
 
         $AssetUpdateResults = if ($AssetUpdateRequests.Count -gt 0 -and $UseFastAssetCommit) {
             $fastAssetCommitParams = @{
