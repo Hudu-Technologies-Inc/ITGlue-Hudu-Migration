@@ -446,7 +446,7 @@ if ($true -eq $AutoDownloadITGlueExport) {
         if ("FullLanguage" -ieq $executionContextLanguage) {
             write-host "Background IT Glue export is allowed for your system."
         } else {
-            write-host "Background IT Glue export is not allowed for your system." -ForegroundColor Yellow  
+            write-host "Background IT Glue export is not allowed for your system. If export isnt present, we'll just download in the foreground (slightly slower)" -ForegroundColor Yellow  
             $ITGlueExportRunInBackground = $false
         }
 
