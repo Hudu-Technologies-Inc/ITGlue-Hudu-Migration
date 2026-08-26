@@ -195,3 +195,141 @@ function Add-HuduMigrationLabel {
         }
     }
 }
+
+function Add-HuduMigrationLabels {
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Labels,
+
+        [hashtable]$LabelTypeCache,
+
+        [ValidateRange(1, 32)]
+        [int]$ThrottleLimit = 4,
+
+        [bool]$UseFastLabelCommit = $true,
+
+        [hashtable]$CustomHeaders = @{}
+    )
+
+    if (-not $Labels -or $Labels.Count -lt 1) {
+        return @()
+    }
+
+    if (-not $LabelTypeCache) {
+        $LabelTypeCache = @{}
+    }
+
+    $results = [System.Collections.ArrayList]@()
+    $labelsToCreate = [System.Collections.ArrayList]@()
+    $seenInBatch = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($label in @($Labels)) {
+        $labelName = [string]$label.LabelName
+        $recordType = Get-HuduMigrationCanonicalLabelRecordType -RecordType ([string]$label.RecordType)
+        $recordId = [int]($label.RecordId ?? 0)
+        $recordName = [string]$label.RecordName
+        $color = [string]($label.Color ?? "$(Get-RandomHexColor)")
+
+        if ([string]::IsNullOrWhiteSpace($labelName) -or [string]::IsNullOrWhiteSpace($recordType) -or $recordId -lt 1) {
+            continue
+        }
+
+        $cacheKey = "$($recordType.ToLowerInvariant())|$($labelName.ToLowerInvariant())"
+        if ($LabelTypeCache.ContainsKey($cacheKey)) {
+            $cacheEntry = $LabelTypeCache[$cacheKey]
+        } else {
+            $labelType = Get-HuduMigrationLabelType -Name $labelName -RecordType $recordType -Color $color
+            if ($null -eq $labelType -or $null -eq $labelType.id) {
+                $null = $results.Add([pscustomobject]@{
+                    LabelName  = $labelName
+                    LabelTypeId = $null
+                    RecordType  = $recordType
+                    RecordId    = $recordId
+                    RecordName  = $recordName
+                    Status      = 'Failed'
+                    Error       = 'Unable to resolve or create label type.'
+                })
+                continue
+            }
+            $cacheEntry = New-HuduMigrationLabelCacheEntry -LabelType $labelType -RecordType $recordType
+            $LabelTypeCache[$cacheKey] = $cacheEntry
+        }
+
+        $batchKey = "$($cacheEntry.LabelType.id)|$recordType|$recordId"
+        if ($cacheEntry.ExistingLabelableIds.Contains([string]$recordId) -or -not $seenInBatch.Add($batchKey)) {
+            $null = $results.Add([pscustomobject]@{
+                LabelName  = $labelName
+                LabelTypeId = $cacheEntry.LabelType.id
+                RecordType  = $recordType
+                RecordId    = $recordId
+                RecordName  = $recordName
+                Status      = 'AlreadyExists'
+            })
+            continue
+        }
+
+        $null = $labelsToCreate.Add([pscustomobject]@{
+            LabelName   = $labelName
+            LabelTypeId = $cacheEntry.LabelType.id
+            RecordType  = $recordType
+            RecordId    = $recordId
+            RecordName  = $recordName
+            CacheEntry  = $cacheEntry
+        })
+    }
+
+    $labelCommitResults = if ($labelsToCreate.Count -gt 0 -and $UseFastLabelCommit) {
+        if (-not (Get-Command -Name Invoke-FastHuduLabelCommit -ErrorAction SilentlyContinue)) {
+            . $PSScriptRoot\Invoke-FastLabelCommit.ps1
+        }
+        $fastLabelCommitParams = @{
+            LabelRequests = @($labelsToCreate)
+            ThrottleLimit = $ThrottleLimit
+        }
+        if ($CustomHeaders -and $CustomHeaders.Count -gt 0) {
+            $fastLabelCommitParams.CustomHeaders = $CustomHeaders
+        }
+        Invoke-FastHuduLabelCommit @fastLabelCommitParams
+    } else {
+        foreach ($labelToCreate in @($labelsToCreate)) {
+            try {
+                [pscustomobject]@{
+                    Status       = 'Created'
+                    LabelRequest = $labelToCreate
+                    HuduLabel    = New-HuduLabel -LabelTypeId $labelToCreate.LabelTypeId -Labelable_Type $labelToCreate.RecordType -Labelable_Id $labelToCreate.RecordId -ErrorAction Stop
+                    Error        = $null
+                }
+            } catch {
+                [pscustomobject]@{
+                    Status       = 'Failed'
+                    LabelRequest = $labelToCreate
+                    HuduLabel    = $null
+                    Error        = $_.Exception.Message
+                }
+            }
+        }
+    }
+
+    foreach ($commitResult in @($labelCommitResults)) {
+        $labelRequest = $commitResult.LabelRequest
+        if ($commitResult.Status -eq 'Created' -and $commitResult.HuduLabel) {
+            [void]$labelRequest.CacheEntry.ExistingLabelableIds.Add([string]$labelRequest.RecordId)
+        }
+
+        $null = $results.Add([pscustomobject]@{
+            LabelName             = $labelRequest.LabelName
+            LabelTypeId           = $labelRequest.LabelTypeId
+            RecordType            = $labelRequest.RecordType
+            RecordId              = $labelRequest.RecordId
+            RecordName            = $labelRequest.RecordName
+            Status                = $commitResult.Status
+            HuduLabel             = $commitResult.HuduLabel
+            Error                 = $commitResult.Error
+            commit_attempts       = $commitResult.Attempts
+            commit_elapsed_seconds = $commitResult.ElapsedSeconds
+            commit_slept_seconds  = $commitResult.SleptSeconds
+        })
+    }
+
+    return @($results.ToArray())
+}

@@ -713,6 +713,13 @@ if (-not $MatchedPasswords -and (Test-Path -LiteralPath "$MigrationLogs\Password
 if (-not $MatchedWebsites -and (Test-Path -LiteralPath "$MigrationLogs\websites.json")) {$MatchedWebsites = (Get-Content -path "$MigrationLogs\websites.json" | ConvertFrom-json -depth 100) }
 if (-not $MatchedAssetLayoutFields -and (Test-Path -LiteralPath "$MigrationLogs\AssetLayoutsFields.json")) {$MatchedAssetLayoutFields = (Get-Content -path "$MigrationLogs\AssetLayoutsFields.json" | ConvertFrom-json -depth 100) }
 if (-not $RelationsToCreate -and (Test-Path -LiteralPath "$MigrationLogs\RelationsToCreate.json")) {$RelationsToCreate = (Get-Content -path "$MigrationLogs\RelationsToCreate.json" | ConvertFrom-json -depth 100) }
+$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
+$MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
+$UseFastRelationCommit = $UseFastRelationCommit ?? $true
+$HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
+if ($UseFastRelationCommit -and -not (Get-Command -Name Invoke-FastHuduRelationCommit -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
+}
 if (-not $matchedChecklists -and (Test-Path -LiteralPath "$MigrationLogs\Checklists.json")) {$matchedChecklists = (Get-Content -path "$MigrationLogs\Checklists.json" | ConvertFrom-json -depth 100) }
 
 $script:UnknownITGlueRelationTypeCounts = @{}
@@ -862,17 +869,53 @@ $AllRelationsToCreate =
 
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
 write-host "Creating approximately $($AllRelationsToCreate.count) relations"
-$__relIdx = 0; $__relTotal = $AllRelationsToCreate.count
-$NewRelationsCreated = @(
+$RelationCommitResults = if ($UseFastRelationCommit) {
+    $fastRelationCommitParams = @{
+        Relations     = @($AllRelationsToCreate)
+        ThrottleLimit = $MigrationParallelismLimit
+    }
+    if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+        $fastRelationCommitParams.CustomHeaders = $HuduFastCommitHeaders
+    }
+    Invoke-FastHuduRelationCommit @fastRelationCommitParams
+} else {
+    $__relIdx = 0; $__relTotal = $AllRelationsToCreate.count
     $AllRelationsToCreate | ForEach-Object {
         $__relIdx++
         if ($__relIdx % 100 -eq 0 -or $__relIdx -eq $__relTotal) { Write-Host "  ...creating relation $__relIdx of $__relTotal" }
-        New-HuduRelation -FromableType $_.FromableType -FromableID $_.FromableID -ToableType $_.ToableType -ToableID $_.ToableID
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            $relation = New-HuduRelation -FromableType $_.FromableType -FromableID $_.FromableID -ToableType $_.ToableType -ToableID $_.ToableID
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = if ($relation) { 'created' } else { 'skipped' }
+                Relation       = $relation
+                SourceRelation = $_
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+            }
+        } catch {
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = 'failed'
+                Relation       = $null
+                SourceRelation = $_
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+                Error          = $_.Exception.Message
+            }
+        }
     }
-)
+}
+$NewRelationsCreated = @($RelationCommitResults | Where-Object { $_.Relation } | ForEach-Object { $_.Relation })
 
 $AllRelationsToCreate | ConvertTo-Json -Depth 75 | Out-File (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) 'relations-to-create.json')
 $NewRelationsCreated | ConvertTo-Json -Depth 75 | Out-File (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) 'relations-created.json')
+$RelationCommitResults | ConvertTo-Json -Depth 75 | Out-File (Join-Path $($MigrationLogs ?? $settings.MigrationLogs) 'relation-commit-results.json')
 
 if ($script:UnknownITGlueRelationTypeCounts -and $script:UnknownITGlueRelationTypeCounts.Count -gt 0) {
     $UnknownRelationTypes = $script:UnknownITGlueRelationTypeCounts.GetEnumerator() |

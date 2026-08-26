@@ -14,6 +14,10 @@ $FirstTimeLoad = 1
 $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
+$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? [math]::Min(12, [math]::Max(2, [Environment]::ProcessorCount - 1)))
+$MigrationParallelismLimit = [math]::Min(12, [math]::Max(2, $MigrationParallelismLimit))
+$UseFastLabelCommit = $UseFastLabelCommit ?? $true
+$HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
 
 function Stop-ITGlueExportBootstrapJobIfRunning {
     if (-not $ITGlueExportBootstrapJob) {
@@ -573,10 +577,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 $primaryLocations = $matchedlocations | Where-Object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
 if ($primaryLocations -and $primaryLocations.count -gt 0) {
     $LocationLabelTypeCache = @{}
-    $LocationLabelResults = foreach ($primaryLocation in $primaryLocations) {
-        write-host "Adding label for primary location $($primaryLocation.Name) for $($primaryLocation.CompanyName) in Hudu" -ForegroundColor DarkCyan
-        Add-HuduMigrationLabel -LabelName "Primary $LocImportAssetLayoutName" -RecordType "Asset" -RecordId $primaryLocation.HuduObject.id -RecordName $primaryLocation.Name -LabelTypeCache $LocationLabelTypeCache
+    $LocationLabelRequests = foreach ($primaryLocation in $primaryLocations) {
+        [pscustomobject]@{
+            LabelName  = "Primary $LocImportAssetLayoutName"
+            RecordType = 'Asset'
+            RecordId   = $primaryLocation.HuduObject.id
+            RecordName = $primaryLocation.Name
+        }
     }
+    $LocationLabelResults = Add-HuduMigrationLabels -Labels $LocationLabelRequests -LabelTypeCache $LocationLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
     $LocationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\LocationLabels.json"
 } else {
     $primaryLocations = @()
@@ -1036,14 +1045,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 }
 
 $ConfigLabelTypeCache = @{}
-$ConfigurationLabelResults = @()
+$ConfigurationLabelRequests = @()
 foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
     $configurationStatusColor = if ($configurationstatus -ilike "active*") { 'green' } elseif ($configurationstatus -ilike "inactive*") { 'red' } else { "$(Get-RandomHexColor)" }
     foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-        write-host "Adding label for configuration status $($configurationstatus) for $($ConfigLabel.Name) in Hudu" -ForegroundColor DarkCyan
-        $ConfigurationLabelResults += Add-HuduMigrationLabel -LabelName $configurationstatus -RecordType "Asset" -RecordId $ConfigLabel.HuduObject.id -RecordName $ConfigLabel.Name -LabelTypeCache $ConfigLabelTypeCache -Color $configurationStatusColor
+        $ConfigurationLabelRequests += [pscustomobject]@{
+            LabelName  = $configurationstatus
+            RecordType = 'Asset'
+            RecordId   = $ConfigLabel.HuduObject.id
+            RecordName = $ConfigLabel.Name
+            Color      = $configurationStatusColor
+        }
     }
 }
+$ConfigurationLabelResults = Add-HuduMigrationLabels -Labels $ConfigurationLabelRequests -LabelTypeCache $ConfigLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $ConfigurationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ConfigurationLabels.json"
 
 
@@ -1212,10 +1227,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
 }
 
 $ContactLabelTypeCache = @{}
-$ContactLabelResults = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-    write-host "Adding label for Primary Contact $($importantContact.Name) for $($importantContact.CompanyName) in Hudu" -ForegroundColor DarkCyan
-    Add-HuduMigrationLabel -LabelName "Important $ConImportAssetLayoutName" -RecordType "Asset" -RecordId $importantContact.HuduObject.id -RecordName $importantContact.Name -LabelTypeCache $ContactLabelTypeCache
+$ContactLabelRequests = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+    [pscustomobject]@{
+        LabelName  = "Important $ConImportAssetLayoutName"
+        RecordType = 'Asset'
+        RecordId   = $importantContact.HuduObject.id
+        RecordName = $importantContact.Name
+    }
 }
+$ContactLabelResults = Add-HuduMigrationLabels -Labels $ContactLabelRequests -LabelTypeCache $ContactLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $ContactLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ContactLabels.json"
 
 	
@@ -2427,15 +2447,20 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 }
 
 $PasswordLabelTypeCache = @{}
-$PasswordLabelResults = @()
+$PasswordLabelRequests = @()
 foreach ($passwordType in $( $($MatchedPasswords | Where-Object { $null -ne $_.huduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'password-category-name' | Select-Object -Unique)) {
     if ([string]::IsNullOrWhiteSpace([string]$passwordType)) { continue }
 
     foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-        write-host "Adding label for Password $($labelablePassword.Name) as $($passwordType) in Hudu" -ForegroundColor DarkCyan
-        $PasswordLabelResults += Add-HuduMigrationLabel -LabelName $passwordType -RecordType "AssetPassword" -RecordId $labelablePassword.HuduObject.id -RecordName $labelablePassword.Name -LabelTypeCache $PasswordLabelTypeCache
+        $PasswordLabelRequests += [pscustomobject]@{
+            LabelName  = $passwordType
+            RecordType = 'AssetPassword'
+            RecordId   = $labelablePassword.HuduObject.id
+            RecordName = $labelablePassword.Name
+        }
     }
 }
+$PasswordLabelResults = Add-HuduMigrationLabels -Labels $PasswordLabelRequests -LabelTypeCache $PasswordLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $PasswordLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\PasswordLabels.json"
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
@@ -2519,13 +2544,21 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
 }
 
 $ArticleContentCommitCandidates = @($MatchedArticles | Where-Object { $_ -and ($_.HuduID ?? $_.id) })
+$UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
+if ($UseFastArticleContentCommit -and -not (Get-Command -Name Invoke-FastHuduArticleContentCommit -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
+}
 
-$articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
+$preparedArticleCommits = [System.Collections.ArrayList]@()
+$articlePreCommitFailures = [System.Collections.ArrayList]@()
+$articleCommitIndex = 0
+
+foreach ($articleFound in $ArticleContentCommitCandidates) {
     $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
     if ($null -eq $localArticleContent) {
         $message = "Local article HTML was not found for '$($articleFound.name)' at '$($articleFound.LocalContentPath)'. Refusing to use Hudu-returned content as a fallback."
         Write-Warning $message
-        [pscustomobject]@{
+        $null = $articlePreCommitFailures.Add([pscustomobject]@{
             status             = 'failed'
             article_id         = $articleFound.HuduID ?? $articleFound.id
             article_name       = $articleFound.name
@@ -2533,7 +2566,7 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
             source_content_path = $articleFound.LocalContentPath
             replacement_sets   = @()
             error              = $message
-        }
+        })
         continue
     }
 
@@ -2557,7 +2590,7 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
     $finalContentPath = $articleFound.LocalContentPath
 
     $status = if ($UpdatedContent.Changed -or $standaloneAttachmentNoteApplied) { 'replaced' } else { 'committed' }
-    Write-Host "Committing Article $($articleFound.name) from local HTML ($status)" -ForegroundColor 'Green'
+    Write-Host "Preparing Article $($articleFound.name) from local HTML for commit ($status)" -ForegroundColor 'Green'
     try {
         $finalContentPath = Set-HuduArticleLocalContent -Article $articleFound -Content $finalArticleContent -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
         $ArticleSplat = @{
@@ -2576,28 +2609,23 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
             $ArticleSplat.CompanyId = $articleFound.company_id
         }
 
-        $updatedArticle = Set-HuduArticle @ArticleSplat -ErrorAction Stop
-        $updatedArticleObject = $updatedArticle.article ?? $updatedArticle
-        $updatedArticleSummary = [pscustomobject]@{
-            id         = $updatedArticleObject.id ?? $ArticleSplat.Id
-            name       = $updatedArticleObject.name ?? $articleFound.name
-            company_id = $updatedArticleObject.company_id ?? $ArticleSplat.CompanyId
-            url        = $updatedArticleObject.url ?? $articleFound.HuduObject.url
-        }
-        $articleFound | Add-Member -MemberType NoteProperty -Name LocalContentCommittedAt -Value (Get-Date).ToString('o') -Force
-
-        [pscustomobject]@{
-            status             = $status
-            article_id         = $ArticleSplat.Id
-            article_name       = $articleFound.name
-            original_article   = $articleFound
-            updated_article    = $updatedArticleSummary
-            source_content_path = $finalContentPath
-            standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
-            replacement_sets   = $UpdatedContent.ReplacementSets
-        }
+        $null = $preparedArticleCommits.Add([pscustomobject]@{
+            Index                              = $articleCommitIndex
+            ArticleSplat                       = $ArticleSplat
+            ArticleId                          = $ArticleSplat.Id
+            ArticleName                        = $articleFound.name
+            Name                               = $ArticleSplat['Name']
+            CompanyId                          = $ArticleSplat['CompanyId']
+            Content                            = $finalArticleContent
+            OriginalArticle                    = $articleFound
+            SourceContentPath                  = $finalContentPath
+            ExpectedStatus                     = $status
+            StandaloneAttachmentNoteApplied    = $standaloneAttachmentNoteApplied
+            ReplacementSets                    = $UpdatedContent.ReplacementSets
+        })
+        $articleCommitIndex++
     } catch {
-        [pscustomobject]@{
+        $null = $articlePreCommitFailures.Add([pscustomobject]@{
             status             = 'failed'
             article_id         = $articleFound.HuduID ?? $articleFound.id
             article_name       = $articleFound.name
@@ -2607,9 +2635,129 @@ $articlesUpdated = foreach ($articleFound in $ArticleContentCommitCandidates) {
             standalone_attachment_note_applied = $standaloneAttachmentNoteApplied
             replacement_sets   = $UpdatedContent.ReplacementSets
             error              = $_.Exception.Message
+        })
+    }
+}
+
+$null = Start-MigrationJob -Name "Wrap-Up - Article Content Commit"
+try {
+    $articleCommitTransportResults = if ($preparedArticleCommits.Count -gt 0 -and $UseFastArticleContentCommit) {
+        $fastArticleCommitParams = @{
+            CommitRequests = @($preparedArticleCommits)
+            ThrottleLimit  = $MigrationParallelismLimit
+        }
+        if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+            $fastArticleCommitParams.CustomHeaders = $HuduFastCommitHeaders
+        }
+        Invoke-FastHuduArticleContentCommit @fastArticleCommitParams
+    } elseif ($preparedArticleCommits.Count -gt 0) {
+        foreach ($commitRequest in @($preparedArticleCommits)) {
+            $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                $articleSplat = $commitRequest.ArticleSplat
+                $updatedArticle = Set-HuduArticle @articleSplat -ErrorAction Stop
+                $stopwatch.Stop()
+                [pscustomobject]@{
+                    Status         = 'committed'
+                    Index          = $commitRequest.Index
+                    ArticleId      = $commitRequest.ArticleId
+                    ArticleName    = $commitRequest.ArticleName
+                    UpdatedArticle = $updatedArticle.article ?? $updatedArticle
+                    Attempts       = 1
+                    SleptSeconds   = 0
+                    ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    StatusCode     = 200
+                }
+            } catch {
+                $stopwatch.Stop()
+                [pscustomobject]@{
+                    Status         = 'failed'
+                    Index          = $commitRequest.Index
+                    ArticleId      = $commitRequest.ArticleId
+                    ArticleName    = $commitRequest.ArticleName
+                    UpdatedArticle = $null
+                    Attempts       = 1
+                    SleptSeconds   = 0
+                    ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    StatusCode     = $null
+                    Error          = $_.Exception.Message
+                }
+            }
+        }
+    } else {
+        @()
+    }
+} finally {
+    $null = Complete-MigrationJob -Name "Wrap-Up - Article Content Commit" -CompletedAt (Get-Date)
+}
+
+$articleCommitTransportResultsByIndex = @{}
+foreach ($commitResult in @($articleCommitTransportResults)) {
+    $articleCommitTransportResultsByIndex[[string]$commitResult.Index] = $commitResult
+}
+
+$articleCommitResults = foreach ($commitRequest in @($preparedArticleCommits | Sort-Object Index)) {
+    $commitResult = $articleCommitTransportResultsByIndex[[string]$commitRequest.Index]
+    if (-not $commitResult) {
+        [pscustomobject]@{
+            status                             = 'failed'
+            article_id                         = $commitRequest.ArticleId
+            article_name                       = $commitRequest.ArticleName
+            original_article                   = $commitRequest.OriginalArticle
+            source_content_path                = $commitRequest.SourceContentPath
+            attempted_changes                  = $commitRequest.Content
+            standalone_attachment_note_applied = $commitRequest.StandaloneAttachmentNoteApplied
+            replacement_sets                   = $commitRequest.ReplacementSets
+            error                              = 'No article commit result was returned.'
+        }
+        continue
+    }
+
+    if ($commitResult.Status -eq 'committed') {
+        $updatedArticleObject = $commitResult.UpdatedArticle.article ?? $commitResult.UpdatedArticle
+        $updatedArticleSummary = [pscustomobject]@{
+            id         = $updatedArticleObject.id ?? $commitRequest.ArticleId
+            name       = $updatedArticleObject.name ?? $commitRequest.ArticleName
+            company_id = $updatedArticleObject.company_id ?? $commitRequest.CompanyId
+            url        = $updatedArticleObject.url ?? $commitRequest.OriginalArticle.HuduObject.url
+        }
+        $commitRequest.OriginalArticle | Add-Member -MemberType NoteProperty -Name LocalContentCommittedAt -Value (Get-Date).ToString('o') -Force
+
+        [pscustomobject]@{
+            status                             = $commitRequest.ExpectedStatus
+            article_id                         = $commitRequest.ArticleId
+            article_name                       = $commitRequest.ArticleName
+            original_article                   = $commitRequest.OriginalArticle
+            updated_article                    = $updatedArticleSummary
+            source_content_path                = $commitRequest.SourceContentPath
+            standalone_attachment_note_applied = $commitRequest.StandaloneAttachmentNoteApplied
+            replacement_sets                   = $commitRequest.ReplacementSets
+            commit_attempts                    = $commitResult.Attempts
+            commit_elapsed_seconds            = $commitResult.ElapsedSeconds
+            commit_slept_seconds              = $commitResult.SleptSeconds
+            commit_mode                        = if ($UseFastArticleContentCommit) { 'direct-put' } else { 'set-huduarticle' }
+        }
+    } else {
+        [pscustomobject]@{
+            status                             = 'failed'
+            article_id                         = $commitRequest.ArticleId
+            article_name                       = $commitRequest.ArticleName
+            original_article                   = $commitRequest.OriginalArticle
+            source_content_path                = $commitRequest.SourceContentPath
+            attempted_changes                  = $commitRequest.Content
+            standalone_attachment_note_applied = $commitRequest.StandaloneAttachmentNoteApplied
+            replacement_sets                   = $commitRequest.ReplacementSets
+            error                              = $commitResult.Error
+            commit_attempts                    = $commitResult.Attempts
+            commit_elapsed_seconds            = $commitResult.ElapsedSeconds
+            commit_slept_seconds              = $commitResult.SleptSeconds
+            commit_status_code                 = $commitResult.StatusCode
+            commit_mode                        = if ($UseFastArticleContentCommit) { 'direct-put' } else { 'set-huduarticle' }
         }
     }
 }
+
+$articlesUpdated = @($articlePreCommitFailures.ToArray()) + @($articleCommitResults)
 
 $articlesUpdated | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\ReplacedArticlesURL.json"
 $MatchedArticles | ConvertTo-Json -Depth 100 | Out-File "$MigrationLogs\Articles.json"
@@ -2856,12 +3004,77 @@ $DocsCsv = import-csv "$ITGlueExportPath\documents.csv"
 $ArchivedPasswords = $MatchedPasswords | Where-Object {$_.itgobject.attributes.archived -eq $true}
 $ArchivedConfigurations = $MatchedConfigurations | Where-Object {$_.ITGObject.attributes.archived -eq $true}    
 $ArchivedAssets = $MatchedAssets | Where-Object {$_.ITGObject.attributes.archived -eq $true}
-
-$ptaresults = $ArchivedPasswords | ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduPasswordArchive -id $_.huduid -Archive $true}}
-$ctaresults = $ArchivedConfigurations |ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduAssetArchive -Id $_.huduid -CompanyId $_.huduobject.company_id -Archive $true}}
-$ataresults = $ArchivedAssets |ForEach-Object {if ($_.huduid -and $_.huduid -gt 0) {Set-HuduAssetArchive -Id $_.huduid -CompanyId $_.huduobject.company_id -Archive $true}}
 $documentsForArchive =  $($matchedarticles | Where-Object {@($($($DocsCsv) | Where-Object {$_.archived -ne "No"}) | ForEach-Object {"$($_.id)"}) -contains [string]($_.ITGID)})
-$documentArchiveResults = foreach ($doc in $documentsForArchive) {if ($doc.huduid -and $doc.huduid -gt 0) {Set-HuduArticleArchive -id $doc.huduid -Archive $true -confirm:$false}};
+
+$UseFastArchiveCommit = $UseFastArchiveCommit ?? $true
+if ($UseFastArchiveCommit -and -not (Get-Command -Name Invoke-FastHuduArchiveCommit -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
+}
+
+$archiveRequests = @(
+    $ArchivedPasswords | Where-Object { $_.huduid -and $_.huduid -gt 0 } | ForEach-Object {
+        [pscustomobject]@{ Group = 'passwords'; Type = 'AssetPassword'; Id = [int]$_.huduid; Source = $_ }
+    }
+    $ArchivedConfigurations | Where-Object { $_.huduid -and $_.huduid -gt 0 -and $_.huduobject.company_id } | ForEach-Object {
+        [pscustomobject]@{ Group = 'configs'; Type = 'Asset'; Id = [int]$_.huduid; CompanyId = [int]$_.huduobject.company_id; Source = $_ }
+    }
+    $ArchivedAssets | Where-Object { $_.huduid -and $_.huduid -gt 0 -and $_.huduobject.company_id } | ForEach-Object {
+        [pscustomobject]@{ Group = 'assets'; Type = 'Asset'; Id = [int]$_.huduid; CompanyId = [int]$_.huduobject.company_id; Source = $_ }
+    }
+    $documentsForArchive | Where-Object { $_.huduid -and $_.huduid -gt 0 } | ForEach-Object {
+        [pscustomobject]@{ Group = 'docs'; Type = 'Article'; Id = [int]$_.huduid; Source = $_ }
+    }
+)
+
+$archiveCommitResults = if ($UseFastArchiveCommit) {
+    $fastArchiveCommitParams = @{
+        ArchiveRequests = @($archiveRequests)
+        ThrottleLimit   = $MigrationParallelismLimit
+    }
+    if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
+        $fastArchiveCommitParams.CustomHeaders = $HuduFastCommitHeaders
+    }
+    Invoke-FastHuduArchiveCommit @fastArchiveCommitParams
+} else {
+    foreach ($archiveRequest in @($archiveRequests)) {
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            $archivedObject = switch ($archiveRequest.Type) {
+                'AssetPassword' { Set-HuduPasswordArchive -id $archiveRequest.Id -Archive $true }
+                'Asset' { Set-HuduAssetArchive -Id $archiveRequest.Id -CompanyId $archiveRequest.CompanyId -Archive $true }
+                'Article' { Set-HuduArticleArchive -id $archiveRequest.Id -Archive $true -confirm:$false }
+            }
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = if ($archivedObject) { 'archived' } else { 'skipped' }
+                ArchiveRequest = $archiveRequest
+                ArchivedObject = $archivedObject
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+            }
+        } catch {
+            $stopwatch.Stop()
+            [pscustomobject]@{
+                Status         = 'failed'
+                ArchiveRequest = $archiveRequest
+                ArchivedObject = $null
+                Attempts       = 1
+                SleptSeconds   = 0
+                ElapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                StatusCode     = $null
+                Error          = $_.Exception.Message
+            }
+        }
+    }
+}
+
+$ptaresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'passwords' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$ctaresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'configs' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$ataresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'assets' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$documentArchiveResults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'docs' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$archiveCommitResults | ConvertTo-Json -Depth 75 | Out-File $(join-path $settings.MigrationLogs "archive-commit-results.json")
 foreach ($obj in @(
     @{Name = "passwords";       Archived = $ptaresults ?? @() },
     @{Name = "configs";         Archived = $ctaresults ?? @() },
@@ -2935,6 +3148,10 @@ if ($JobDurationReport.Count -gt 0) {
         'Job Durations'
         '-------------------------------------------------------'
         $JobDurationSummary
+        '-------------------------------------------------------'
+        'Paralellism Settings'
+        '-------------------------------------------------------'
+        $ParalellismSettingsInfo        
     ) -join [Environment]::NewLine
 
     $JobDurationReport | ConvertTo-Json -Depth 5 | Out-File "$MigrationLogs\JobDurations.json" -Encoding utf8

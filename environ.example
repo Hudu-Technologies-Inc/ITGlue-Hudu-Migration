@@ -83,19 +83,17 @@ $ImportArticles                      = $true  # default true;
 $ImportPasswords                     = $true  # default true;
 $importPasswordFolders               = $true  # default true;
 
-$IncludeIgnoredFirstArticleDirectory = $true  # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
 $ImportConfigInterfaces              = $true  # default true;  this creates IPAM addresses + networks in Hudu
 $NonInteractive                      = $true  # Select $false for interactive steps, $true for noninteractive/no pauses (default)
 $skipIntegratorLayouts               = $true  # do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name
          
+$IncludeIgnoredFirstArticleDirectory = $true  # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
 $DisableWebsiteMonitoring            = $false # default false;
 $allowSettingFlagsAndTypes           = $false # Apply flags and flag types during the migration; requires Hudu 2.40+
 $ScopedMigration                     = $false # If you want to scope migration to just come companies, set to 2/$true  (default 1/$false)
 $MergedOrganizationTypes             = $false # if you want to merge vendors or other org types from ITG into a single organization, set to 2/$true (default 1/$false)
 $importChecklists                    = $false # default false; (requires JWT authentication)
 $GlobalPasswordFolderMode            = $false # or $true
-
-
 # these require JWT authentication to perform [default is 1/false; 2 for true]
 $PasswordFolderNameDelimiter = " - " # seperator when concatenating folders in squashed / flattened password folder
 $FolderNamingMode = "Name Based on Full Path with Delimiter" # how to name the password folders which get flattened in hudu.

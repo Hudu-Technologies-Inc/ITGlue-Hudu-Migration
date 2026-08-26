@@ -29,6 +29,14 @@ function Get-RandomHexColor {
     '#{0:X6}' -f [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(0x1000000)
 }
 
+function Get-ParalellismSettingsInfo {
+    param (
+        [int]$MigrationParallelismLimit=1
+    )
+    return @"
+MigrationParallelismLimit: $MigrationParallelismLimit
+"@
+}
 
 function Get-HuduAssetFieldLabel {
     param(
