@@ -203,7 +203,7 @@ function Add-HuduMigrationLabels {
 
         [hashtable]$LabelTypeCache,
 
-        [ValidateRange(1, 32)]
+        [ValidateRange(1, 240)]
         [int]$ThrottleLimit = 4,
 
         [bool]$UseFastLabelCommit = $true,

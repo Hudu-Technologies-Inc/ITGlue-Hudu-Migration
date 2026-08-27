@@ -5,11 +5,11 @@ function Invoke-FastHuduRelationCommit {
         [AllowEmptyCollection()]
         [object[]]$Relations,
 
-        [ValidateRange(1, 32)]
+        [ValidateRange(1, 240)]
         [int]$ThrottleLimit = 4,
 
         [ValidateRange(0, 5)]
-        [int]$MaxRetries = 1,
+        [int]$MaxRetries = 4,
 
         [hashtable]$CustomHeaders = @{}
     )

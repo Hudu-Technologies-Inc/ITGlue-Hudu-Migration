@@ -447,6 +447,473 @@ function Test-ITGlueResponseHasRelationData {
 
     return $false
 }
+function Get-ITGlueRelationMetadataCachePath {
+    $LogPath = $MigrationLogs ?? $settings.MigrationLogs
+    if ([string]::IsNullOrWhiteSpace([string]$LogPath)) {
+        return $null
+    }
+
+    return (Join-Path $LogPath 'itg-relation-metadata.json')
+}
+function New-ITGlueRelationMetadataCache {
+    param(
+        [string]$BaseUri
+    )
+
+    [pscustomobject]@{
+        SchemaVersion = 1
+        GeneratedAt   = (Get-Date).ToString('o')
+        BaseUri       = $BaseUri
+        Responses     = [pscustomobject]@{
+            Assets         = @()
+            Configurations = @()
+            Passwords      = @()
+            Contacts       = @()
+            Documents      = @()
+        }
+    }
+}
+function Read-ITGlueRelationMetadataCache {
+    param(
+        [string]$Path,
+        [string]$BaseUri
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    try {
+        $Cache = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 100
+        if ($Cache.SchemaVersion -ne 1) {
+            Write-Warning "Ignoring relation metadata cache because schema version '$($Cache.SchemaVersion)' is not supported."
+            return $null
+        }
+
+        if ($Cache.BaseUri -and $BaseUri -and $Cache.BaseUri.TrimEnd('/') -ne $BaseUri.TrimEnd('/')) {
+            Write-Warning "Ignoring relation metadata cache because it was generated for $($Cache.BaseUri), not $BaseUri."
+            return $null
+        }
+
+        return $Cache
+    }
+    catch {
+        Write-Warning "Could not load relation metadata cache at $Path`: $($_.Exception.Message)"
+        return $null
+    }
+}
+function Save-ITGlueRelationMetadataCache {
+    param(
+        $Cache,
+        [string]$Path
+    )
+
+    if (-not $Cache -or [string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+
+    $Directory = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($Directory) -and -not (Test-Path -LiteralPath $Directory -PathType Container -ErrorAction SilentlyContinue)) {
+        New-Item -Path $Directory -ItemType Directory -Force | Out-Null
+    }
+
+    $Cache.GeneratedAt = (Get-Date).ToString('o')
+    $Cache | ConvertTo-Json -Depth 100 | Out-File -LiteralPath $Path
+}
+function New-ITGlueRelationMetadataRequest {
+    param(
+        [string]$Kind,
+        $ItgId,
+        $OrganizationId
+    )
+
+    if ($null -eq $ItgId -or [string]::IsNullOrWhiteSpace([string]$ItgId)) {
+        return
+    }
+
+    [pscustomobject]@{
+        Kind           = $Kind
+        ItgId          = [string]$ItgId
+        OrganizationId = if ($OrganizationId) { [string]$OrganizationId } else { $null }
+        Key            = if ($OrganizationId) { "$Kind|$ItgId|$OrganizationId" } else { "$Kind|$ItgId" }
+    }
+}
+function Get-ITGlueRelationMetadataRequests {
+    $Requests = [System.Collections.ArrayList]@()
+    $Seen = @{}
+
+    $addRequest = {
+        param($Request)
+        if (-not $Request -or $Seen.ContainsKey($Request.Key)) {
+            return
+        }
+
+        $Seen[$Request.Key] = $true
+        [void]$Requests.Add($Request)
+    }
+
+    foreach ($Asset in @($MatchedAssets)) {
+        & $addRequest (New-ITGlueRelationMetadataRequest -Kind 'Assets' -ItgId ($Asset.ITGObject.id ?? $Asset.ITGID))
+    }
+
+    foreach ($Configuration in @($MatchedConfigurations)) {
+        & $addRequest (New-ITGlueRelationMetadataRequest -Kind 'Configurations' -ItgId ($Configuration.ITGObject.id ?? $Configuration.ITGID))
+    }
+
+    foreach ($Password in @($MatchedPasswords)) {
+        & $addRequest (New-ITGlueRelationMetadataRequest -Kind 'Passwords' -ItgId ($Password.ITGObject.id ?? $Password.ITGID))
+    }
+
+    foreach ($Contact in @($MatchedContacts)) {
+        & $addRequest (New-ITGlueRelationMetadataRequest -Kind 'Contacts' -ItgId ($Contact.ITGObject.id ?? $Contact.ITGID))
+    }
+
+    foreach ($Article in @($MatchedArticles)) {
+        $ArticleLookup = Get-ArticleLookupInfo -Article $Article
+        if ($ArticleLookup) {
+            & $addRequest (New-ITGlueRelationMetadataRequest -Kind 'Documents' -ItgId $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId)
+        }
+    }
+
+    return @($Requests)
+}
+function Get-ITGlueRelationMetadataRecordKey {
+    param(
+        $Record
+    )
+
+    if (-not $Record) {
+        return $null
+    }
+
+    if ($Record.OrganizationId) {
+        return "$($Record.Kind)|$($Record.ItgId)|$($Record.OrganizationId)"
+    }
+
+    return "$($Record.Kind)|$($Record.ItgId)"
+}
+function Get-ITGlueRelationMetadataCachedKeys {
+    param(
+        $Cache
+    )
+
+    $CachedKeys = @{}
+    if (-not $Cache -or -not $Cache.Responses) {
+        return $CachedKeys
+    }
+
+    foreach ($Kind in @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Documents')) {
+        foreach ($Record in @($Cache.Responses.$Kind)) {
+            if (-not $Record -or -not $Record.Response) {
+                continue
+            }
+
+            $Key = Get-ITGlueRelationMetadataRecordKey -Record $Record
+            if ($Key) {
+                $CachedKeys[$Key] = $true
+            }
+        }
+    }
+
+    return $CachedKeys
+}
+function Get-MissingITGlueRelationMetadataRequests {
+    param(
+        [array]$Requests,
+        $Cache
+    )
+
+    $CachedKeys = Get-ITGlueRelationMetadataCachedKeys -Cache $Cache
+    return @($Requests | Where-Object { -not $CachedKeys.ContainsKey($_.Key) })
+}
+function Test-ITGlueRelationMetadataCacheComplete {
+    param(
+        [array]$Requests,
+        $Cache,
+        [string]$Kind
+    )
+
+    $KindRequests = @($Requests | Where-Object { $_.Kind -eq $Kind })
+    if ($KindRequests.Count -eq 0) {
+        return $false
+    }
+
+    return (@(Get-MissingITGlueRelationMetadataRequests -Requests $KindRequests -Cache $Cache).Count -eq 0)
+}
+function Invoke-ITGlueRelationMetadataRequest {
+    param(
+        $Request,
+        [string]$ITGKey,
+        [string]$BaseUri
+    )
+
+    $headers = @{
+        'x-api-key'    = $ITGKey
+        'Content-Type' = 'application/vnd.api+json'
+    }
+
+    $base = $BaseUri.TrimEnd('/')
+    $lastError = $null
+    $candidateUris = switch ($Request.Kind) {
+        'Assets' {
+            "$base/flexible_assets/$($Request.ItgId)?include=related_items"
+        }
+        'Configurations' {
+            "$base/configurations/$($Request.ItgId)?include=related_items"
+        }
+        'Passwords' {
+            "$base/passwords/$($Request.ItgId)?include=related_items"
+        }
+        'Contacts' {
+            "$base/contacts/$($Request.ItgId)?include=related_items"
+        }
+        'Documents' {
+            @(
+                "$base/organizations/$($Request.OrganizationId)/relationships/documents/$($Request.ItgId)?include=related_items",
+                "$base/organizations/$($Request.OrganizationId)/documents/$($Request.ItgId)?include=related_items",
+                "$base/documents/$($Request.ItgId)?include=related_items",
+                "$base/organizations/$($Request.OrganizationId)/relationships/documents/$($Request.ItgId)"
+            ) | Select-Object -Unique
+        }
+        default {
+            @()
+        }
+    }
+
+    foreach ($uri in @($candidateUris)) {
+        try {
+            $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers
+            return [pscustomobject]@{
+                Kind           = $Request.Kind
+                ItgId          = [string]$Request.ItgId
+                OrganizationId = $Request.OrganizationId
+                Response       = $response
+                Error          = $null
+            }
+        }
+        catch {
+            $lastError = $_
+        }
+    }
+
+    [pscustomobject]@{
+        Kind           = $Request.Kind
+        ItgId          = [string]$Request.ItgId
+        OrganizationId = $Request.OrganizationId
+        Response       = $null
+        Error          = if ($lastError) { [string]$lastError.Exception.Message } else { 'No candidate URI was available.' }
+    }
+}
+function Invoke-ITGlueRelationMetadataPrefetch {
+    param(
+        [array]$Requests,
+        [string]$ITGKey,
+        [string]$BaseUri
+    )
+
+    foreach ($Request in @($Requests)) {
+        Invoke-ITGlueRelationMetadataRequest -Request $Request -ITGKey $ITGKey -BaseUri $BaseUri
+    }
+}
+function Start-ITGlueRelationMetadataPrefetchJob {
+    param(
+        [array]$Requests,
+        [string]$ITGKey,
+        [string]$BaseUri,
+        [int]$ThrottleLimit = 4
+    )
+
+    if (-not $Requests -or @($Requests).Count -eq 0) {
+        return @()
+    }
+
+    $ThrottleLimit = [math]::Max(1, [math]::Min($ThrottleLimit, @($Requests).Count))
+    $ChunkSize = [int][math]::Ceiling(@($Requests).Count / [double]$ThrottleLimit)
+    $Jobs = [System.Collections.ArrayList]@()
+
+    for ($i = 0; $i -lt @($Requests).Count; $i += $ChunkSize) {
+        $end = [math]::Min($i + $ChunkSize - 1, @($Requests).Count - 1)
+        $chunk = @($Requests[$i..$end])
+        $jobName = "ITGlueRelationMetadataPrefetch-$([guid]::NewGuid().ToString('N'))"
+        $job = Start-Job -Name $jobName -ArgumentList $chunk, $ITGKey, $BaseUri -ScriptBlock {
+            param(
+                [array]$Requests,
+                [string]$ITGKey,
+                [string]$BaseUri
+            )
+
+            function Invoke-ITGlueRelationMetadataRequestInJob {
+                param(
+                    $Request,
+                    [string]$ITGKey,
+                    [string]$BaseUri
+                )
+
+                $headers = @{
+                    'x-api-key'    = $ITGKey
+                    'Content-Type' = 'application/vnd.api+json'
+                }
+
+                $base = $BaseUri.TrimEnd('/')
+                $lastError = $null
+                $candidateUris = switch ($Request.Kind) {
+                    'Assets' {
+                        "$base/flexible_assets/$($Request.ItgId)?include=related_items"
+                    }
+                    'Configurations' {
+                        "$base/configurations/$($Request.ItgId)?include=related_items"
+                    }
+                    'Passwords' {
+                        "$base/passwords/$($Request.ItgId)?include=related_items"
+                    }
+                    'Contacts' {
+                        "$base/contacts/$($Request.ItgId)?include=related_items"
+                    }
+                    'Documents' {
+                        @(
+                            "$base/organizations/$($Request.OrganizationId)/relationships/documents/$($Request.ItgId)?include=related_items",
+                            "$base/organizations/$($Request.OrganizationId)/documents/$($Request.ItgId)?include=related_items",
+                            "$base/documents/$($Request.ItgId)?include=related_items",
+                            "$base/organizations/$($Request.OrganizationId)/relationships/documents/$($Request.ItgId)"
+                        ) | Select-Object -Unique
+                    }
+                    default {
+                        @()
+                    }
+                }
+
+                foreach ($uri in @($candidateUris)) {
+                    try {
+                        $response = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers
+                        return [pscustomobject]@{
+                            Kind           = $Request.Kind
+                            ItgId          = [string]$Request.ItgId
+                            OrganizationId = $Request.OrganizationId
+                            Response       = $response
+                            Error          = $null
+                        }
+                    }
+                    catch {
+                        $lastError = $_
+                    }
+                }
+
+                [pscustomobject]@{
+                    Kind           = $Request.Kind
+                    ItgId          = [string]$Request.ItgId
+                    OrganizationId = $Request.OrganizationId
+                    Response       = $null
+                    Error          = if ($lastError) { [string]$lastError.Exception.Message } else { 'No candidate URI was available.' }
+                }
+            }
+
+            foreach ($Request in @($Requests)) {
+                Invoke-ITGlueRelationMetadataRequestInJob -Request $Request -ITGKey $ITGKey -BaseUri $BaseUri
+            }
+        }
+        [void]$Jobs.Add($job)
+    }
+
+    return @($Jobs)
+}
+function Wait-ITGlueRelationMetadataPrefetchJob {
+    param(
+        [array]$Jobs,
+        [int]$StatusSeconds = 30,
+        [switch]$KeepJob
+    )
+
+    $Jobs = @($Jobs | Where-Object { $_ })
+    if ($Jobs.Count -eq 0) {
+        return @()
+    }
+
+    Write-Host "Waiting for $($Jobs.Count) background ITGlue relation metadata job(s)." -ForegroundColor Cyan
+    $waitStarted = Get-Date
+    while (@($Jobs | Where-Object { $_.State -in @('NotStarted', 'Running') }).Count -gt 0) {
+        $null = Wait-Job -Job $Jobs -Timeout $StatusSeconds
+        $elapsed = (Get-Date) - $waitStarted
+        $remaining = @($Jobs | Where-Object { $_.State -in @('NotStarted', 'Running') }).Count
+        if ($remaining -gt 0) {
+            Write-Host "  ...$remaining relation metadata job(s) still running after $($elapsed.ToString('hh\:mm\:ss'))" -ForegroundColor Yellow
+        }
+    }
+
+    $records = foreach ($Job in $Jobs) {
+        try {
+            Receive-Job -Job $Job -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "Relation metadata job $($Job.Id) failed: $($_.Exception.Message)"
+        }
+        finally {
+            if (-not $KeepJob) {
+                Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    return @($records)
+}
+function Merge-ITGlueRelationMetadataCache {
+    param(
+        $Cache,
+        [array]$Records,
+        [string]$BaseUri
+    )
+
+    if (-not $Cache) {
+        $Cache = New-ITGlueRelationMetadataCache -BaseUri $BaseUri
+    }
+
+    if (-not $Cache.Responses) {
+        $Cache | Add-Member -MemberType NoteProperty -Name Responses -Value ([pscustomobject]@{}) -Force
+    }
+
+    foreach ($Kind in @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Documents')) {
+        if (-not $Cache.Responses.PSObject.Properties[$Kind]) {
+            $Cache.Responses | Add-Member -MemberType NoteProperty -Name $Kind -Value @() -Force
+        }
+    }
+
+    foreach ($Record in @($Records)) {
+        if (-not $Record -or -not $Record.Kind) {
+            continue
+        }
+
+        if (-not $Cache.Responses.PSObject.Properties[$Record.Kind]) {
+            continue
+        }
+
+        $Cache.Responses.$($Record.Kind) = @($Cache.Responses.$($Record.Kind)) + @($Record)
+    }
+
+    return $Cache
+}
+function Get-ITGlueRelationMetadataResponses {
+    param(
+        $Cache,
+        [string]$Kind
+    )
+
+    if (-not $Cache -or -not $Cache.Responses -or -not $Cache.Responses.PSObject.Properties[$Kind]) {
+        return @()
+    }
+
+    $ResponseMap = [ordered]@{}
+    foreach ($Record in @($Cache.Responses.$Kind)) {
+        if (-not $Record -or -not $Record.Response) {
+            continue
+        }
+
+        $Key = Get-ITGlueRelationMetadataRecordKey -Record $Record
+        if ($Key) {
+            $ResponseMap[$Key] = $Record.Response
+        }
+    }
+
+    return @($ResponseMap.Values)
+}
 function Test-ITGlueRelationPointerOnly {
     param(
         $ITGlueRelationObject
@@ -732,48 +1199,134 @@ foreach ($DiagnosticFileName in @('unknown-relation-types.json', 'unresolved-rel
     }
 }
 
-write-host "refreshing $($MatchedAssets.count) assets"
-$__asIdx = 0; $__asTotal = $MatchedAssets.count
-$FreshITGAssets= $FreshITGAssets ?? $($MatchedAssets |ForEach-Object {
-    $__asIdx++
-    if ($__asIdx % 100 -eq 0 -or $__asIdx -eq $__asTotal) { Write-Host "  ...refreshed $__asIdx of $__asTotal assets" }
-    Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items})
+if (-not $FreshITGAssets -or -not $FreshConfigurations -or -not $FreshPasswords -or -not $FreshContacts -or -not $FreshDocuments) {
+    $RelationMetadataBaseUri = ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint ?? 'https://api.itglue.com')
+    $RelationMetadataCachePath = Get-ITGlueRelationMetadataCachePath
+    $RelationMetadataCache = Read-ITGlueRelationMetadataCache -Path $RelationMetadataCachePath -BaseUri $RelationMetadataBaseUri
+    $RelationMetadataRequests = @(Get-ITGlueRelationMetadataRequests)
+    $MissingRelationMetadataRequests = @(Get-MissingITGlueRelationMetadataRequests -Requests $RelationMetadataRequests -Cache $RelationMetadataCache)
+
+    if ($RelationMetadataCache) {
+        $CachedRelationMetadataCount = @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Documents') |
+            ForEach-Object { @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind $_).Count } |
+            Measure-Object -Sum |
+            Select-Object -ExpandProperty Sum
+        Write-Host "Loaded $CachedRelationMetadataCount cached ITGlue relation metadata response(s) from $RelationMetadataCachePath." -ForegroundColor Cyan
+    }
+
+    if ($MissingRelationMetadataRequests.Count -gt 0) {
+        [string]$relationMetadataLanguage = $ExecutionContext.SessionState.LanguageMode
+        $ITGlueRelationMetadataRunInBackground = $ITGlueRelationMetadataRunInBackground ?? $true
+        $CanRunITGlueRelationMetadataJobs = ("FullLanguage" -ieq $relationMetadataLanguage)
+
+        if (-not $CanRunITGlueRelationMetadataJobs) {
+            Write-Host "Background ITGlue relation metadata prefetch is not allowed in $relationMetadataLanguage. Falling back to inline refreshes where cache is incomplete." -ForegroundColor Yellow
+        }
+        elseif (-not $ITGlueRelationMetadataRunInBackground) {
+            Write-Host "Background ITGlue relation metadata prefetch is disabled. Falling back to inline refreshes where cache is incomplete." -ForegroundColor Yellow
+        }
+        elseif (-not $ITGKey) {
+            Write-Host "ITGlue relation metadata cache is incomplete, but ITGKey is not available for background prefetch. Falling back to inline refreshes." -ForegroundColor Yellow
+        }
+        else {
+            if (-not $ITGlueRelationMetadataPrefetchJob) {
+                $ITGlueRelationMetadataPrefetchJob = Start-ITGlueRelationMetadataPrefetchJob `
+                    -Requests $MissingRelationMetadataRequests `
+                    -ITGKey $ITGKey `
+                    -BaseUri $RelationMetadataBaseUri `
+                    -ThrottleLimit $MigrationParallelismLimit
+                Write-Host "Started $(@($ITGlueRelationMetadataPrefetchJob).Count) ITGlue relation metadata background job(s) for $($MissingRelationMetadataRequests.Count) uncached source object(s)." -ForegroundColor Green
+            }
+            else {
+                Write-Host "Using existing ITGlue relation metadata background job variable." -ForegroundColor Cyan
+            }
+
+            $RelationMetadataPrefetchRecords = @(Wait-ITGlueRelationMetadataPrefetchJob -Jobs @($ITGlueRelationMetadataPrefetchJob))
+            $ITGlueRelationMetadataPrefetchJob = $null
+            $RelationMetadataFailures = @($RelationMetadataPrefetchRecords | Where-Object { $_.Error })
+            if ($RelationMetadataFailures.Count -gt 0) {
+                Write-Warning "ITGlue relation metadata prefetch had $($RelationMetadataFailures.Count) failed lookup(s). Incomplete categories will use the original inline refresh path."
+            }
+
+            $RelationMetadataCache = Merge-ITGlueRelationMetadataCache -Cache $RelationMetadataCache -Records $RelationMetadataPrefetchRecords -BaseUri $RelationMetadataBaseUri
+            Save-ITGlueRelationMetadataCache -Cache $RelationMetadataCache -Path $RelationMetadataCachePath
+            Write-Host "Saved ITGlue relation metadata cache to $RelationMetadataCachePath." -ForegroundColor Green
+        }
+    }
+}
+
+if (-not $FreshITGAssets -and (Test-ITGlueRelationMetadataCacheComplete -Requests $RelationMetadataRequests -Cache $RelationMetadataCache -Kind 'Assets')) {
+    $FreshITGAssets = @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind 'Assets')
+    Write-Host "loaded $($FreshITGAssets.Count) assets from ITGlue relation metadata cache"
+}
+if (-not $FreshITGAssets) {
+    write-host "refreshing $($MatchedAssets.count) assets"
+    $__asIdx = 0; $__asTotal = $MatchedAssets.count
+    $FreshITGAssets= $($MatchedAssets |ForEach-Object {
+        $__asIdx++
+        if ($__asIdx % 100 -eq 0 -or $__asIdx -eq $__asTotal) { Write-Host "  ...refreshed $__asIdx of $__asTotal assets" }
+        Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items})
+}
 $RelatedAssets = $RelatedAssets ?? $($FreshITGAssets | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedConfigurations.count) configs"
-$__cfgIdx = 0; $__cfgTotal = $MatchedConfigurations.count
-$FreshConfigurations = $FreshConfigurations ?? $($MatchedConfigurations | ForEach-Object {
-    $__cfgIdx++
-    if ($__cfgIdx % 100 -eq 0 -or $__cfgIdx -eq $__cfgTotal) { Write-Host "  ...refreshed $__cfgIdx of $__cfgTotal configs" }
-    Get-ITGlueConfigurations -id $_.itgobject.id -include related_items})
+if (-not $FreshConfigurations -and (Test-ITGlueRelationMetadataCacheComplete -Requests $RelationMetadataRequests -Cache $RelationMetadataCache -Kind 'Configurations')) {
+    $FreshConfigurations = @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind 'Configurations')
+    Write-Host "loaded $($FreshConfigurations.Count) configs from ITGlue relation metadata cache"
+}
+if (-not $FreshConfigurations) {
+    write-host "refreshing $($MatchedConfigurations.count) configs"
+    $__cfgIdx = 0; $__cfgTotal = $MatchedConfigurations.count
+    $FreshConfigurations = $($MatchedConfigurations | ForEach-Object {
+        $__cfgIdx++
+        if ($__cfgIdx % 100 -eq 0 -or $__cfgIdx -eq $__cfgTotal) { Write-Host "  ...refreshed $__cfgIdx of $__cfgTotal configs" }
+        Get-ITGlueConfigurations -id $_.itgobject.id -include related_items})
+}
 $RelatedConfigurations = $RelatedConfigurations ?? $($FreshConfigurations | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedPasswords.count) passwords"
-$__pwIdx = 0; $__pwTotal = $MatchedPasswords.count
-$FreshPasswords = $FreshPasswords ?? $($MatchedPasswords | ForEach-Object {
-    $__pwIdx++
-    if ($__pwIdx % 100 -eq 0 -or $__pwIdx -eq $__pwTotal) { Write-Host "  ...refreshed $__pwIdx of $__pwTotal passwords" }
-    Get-ITGluePasswords -id $_.itgobject.id -include related_items})
+if (-not $FreshPasswords -and (Test-ITGlueRelationMetadataCacheComplete -Requests $RelationMetadataRequests -Cache $RelationMetadataCache -Kind 'Passwords')) {
+    $FreshPasswords = @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind 'Passwords')
+    Write-Host "loaded $($FreshPasswords.Count) passwords from ITGlue relation metadata cache"
+}
+if (-not $FreshPasswords) {
+    write-host "refreshing $($MatchedPasswords.count) passwords"
+    $__pwIdx = 0; $__pwTotal = $MatchedPasswords.count
+    $FreshPasswords = $($MatchedPasswords | ForEach-Object {
+        $__pwIdx++
+        if ($__pwIdx % 100 -eq 0 -or $__pwIdx -eq $__pwTotal) { Write-Host "  ...refreshed $__pwIdx of $__pwTotal passwords" }
+        Get-ITGluePasswords -id $_.itgobject.id -include related_items})
+}
 $RelatedPasswords = $RelatedPasswords ?? $($FreshPasswords | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedContacts.count) contacts"
-$__ctIdx = 0; $__ctTotal = $MatchedContacts.count
-$FreshContacts = $FreshContacts ?? $($MatchedContacts | ForEach-Object {
-    $__ctIdx++
-    if ($__ctIdx % 100 -eq 0 -or $__ctIdx -eq $__ctTotal) { Write-Host "  ...refreshed $__ctIdx of $__ctTotal contacts" }
-    Get-ITGlueContacts -id $_.ITGObject.id -include related_items})
+if (-not $FreshContacts -and (Test-ITGlueRelationMetadataCacheComplete -Requests $RelationMetadataRequests -Cache $RelationMetadataCache -Kind 'Contacts')) {
+    $FreshContacts = @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind 'Contacts')
+    Write-Host "loaded $($FreshContacts.Count) contacts from ITGlue relation metadata cache"
+}
+if (-not $FreshContacts) {
+    write-host "refreshing $($MatchedContacts.count) contacts"
+    $__ctIdx = 0; $__ctTotal = $MatchedContacts.count
+    $FreshContacts = $($MatchedContacts | ForEach-Object {
+        $__ctIdx++
+        if ($__ctIdx % 100 -eq 0 -or $__ctIdx -eq $__ctTotal) { Write-Host "  ...refreshed $__ctIdx of $__ctTotal contacts" }
+        Get-ITGlueContacts -id $_.ITGObject.id -include related_items})
+}
 $RelatedContacts = $RelatedContacts ?? $($FreshContacts | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedArticles.count) articles"
-$__arIdx = 0; $__arTotal = $MatchedArticles.count
-$FreshDocuments = $FreshDocuments ?? ($MatchedArticles | ForEach-Object {
-    $__arIdx++
-    if ($__arIdx % 100 -eq 0 -or $__arIdx -eq $__arTotal) { Write-Host "  ...refreshed $__arIdx of $__arTotal articles" }
-    $ArticleLookup = Get-ArticleLookupInfo -Article $_
-    if ($ArticleLookup) {
-        Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint)
-    }
-})
+if (-not $FreshDocuments -and (Test-ITGlueRelationMetadataCacheComplete -Requests $RelationMetadataRequests -Cache $RelationMetadataCache -Kind 'Documents')) {
+    $FreshDocuments = @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind 'Documents')
+    Write-Host "loaded $($FreshDocuments.Count) articles from ITGlue relation metadata cache"
+}
+if (-not $FreshDocuments) {
+    write-host "refreshing $($MatchedArticles.count) articles"
+    $__arIdx = 0; $__arTotal = $MatchedArticles.count
+    $FreshDocuments = ($MatchedArticles | ForEach-Object {
+        $__arIdx++
+        if ($__arIdx % 100 -eq 0 -or $__arIdx -eq $__arTotal) { Write-Host "  ...refreshed $__arIdx of $__arTotal articles" }
+        $ArticleLookup = Get-ArticleLookupInfo -Article $_
+        if ($ArticleLookup) {
+            Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint)
+        }
+    })
+}
 $RelatedDocuments = $RelatedDocuments ?? ($FreshDocuments | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
 write-host "mapping configs"

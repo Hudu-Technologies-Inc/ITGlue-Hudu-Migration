@@ -584,6 +584,7 @@ if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -o
     $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
     $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
 }
+if ($null -ne $ThreadCountOverride){$MigrationParallelismLimit = [int]$ThreadCountOverride}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
 $UseFastAssetCommit = $UseFastAssetCommit ?? $true
