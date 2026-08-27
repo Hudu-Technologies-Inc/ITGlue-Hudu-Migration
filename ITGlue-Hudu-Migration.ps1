@@ -15,9 +15,9 @@ $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){
-    $defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
-    $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
-    $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
+$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
+$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
+$MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
 }
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
 $UseFastAssetCommit = $UseFastAssetCommit ?? $true
@@ -71,12 +71,12 @@ if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
 
 write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
 $PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
-# . .\public\Check-LayoutCollisions.ps1
-# if ($PreflightCollisionFound) {
-#     Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
-#     Stop-ITGlueExportBootstrapJobIfRunning
-#     exit 1
-# }
+. .\public\Check-LayoutCollisions.ps1
+if ($PreflightCollisionFound) {
+    Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+}
 
 if ($ITGlueExportBootstrapJob) {
     try {
@@ -1277,7 +1277,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     # Match to existing layouts
     $MatchedLayouts = foreach ($ITGLayout in $FlexLayouts) {
         if ($skipIntegratorLayouts -and $true -eq $skipIntegratorLayouts){
-            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or  "$($ITGLayout.attributes.name)" -ilike "*(liongard)*" -or "$($ITGLayout.attributes.name)" -ilike "*datto*rmm*" -or "$($ITGLayout.attributes.name)" -ilike "*connectwise*"  -or "$($ITGLayout.attributes.name)" -ilike "*autotask*" ){
+            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or "$($ITGLayout.attributes.name)" -ilike "*(liongard)*" -or "$($ITGLayout.attributes.name)" -ilike "*datto*rmm*" -or "$($ITGLayout.attributes.name)" -ilike "*connectwise*"  -or "$($ITGLayout.attributes.name)" -ilike "*autotask*" ){
                 Write-warning "Skipping Integrator Layout $($ITGLayout.attributes.name)"
                 continue
             }
