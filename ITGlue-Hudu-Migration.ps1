@@ -434,6 +434,31 @@ if (-not ([string]::IsNullOrWhiteSpace($ItglueJWT)) -and ($true -eq $importPassw
     . $PSScriptRoot\Public\Preload-JWTOnlyItems.ps1
 }
 
+function Start-RelationMetadataPrefetchSection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Kinds,
+
+        [Parameter(Mandatory = $true)]
+        [string]$SectionName
+    )
+
+    if (-not (Get-Command -Name Start-ITGlueRelationMetadataPrefetchIfNeeded -ErrorAction SilentlyContinue)) {
+        . .\Get-MissingRelations.ps1 -FunctionsOnly
+    }
+
+    $newJobs = @(Start-ITGlueRelationMetadataPrefetchIfNeeded `
+        -ITGKey $ITGKey `
+        -BaseUri ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint ?? 'https://api.itglue.com') `
+        -ThrottleLimit $MigrationParallelismLimit `
+        -Kinds $Kinds)
+
+    if ($newJobs.Count -gt 0) {
+        $script:ITGlueRelationMetadataPrefetchJob = @($script:ITGlueRelationMetadataPrefetchJob) + $newJobs
+        Write-Host "Background relation metadata prefetch started for $SectionName." -ForegroundColor Green
+    }
+}
+
 ############################### Locations ###############################
 #Check for Location Resume
 if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
@@ -579,6 +604,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
 }
+
+Start-RelationMetadataPrefetchSection -Kinds @('Locations') -SectionName 'locations'
 
 # add labels for primary locations
 $primaryLocations = $matchedlocations | Where-Object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
@@ -1051,6 +1078,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
 }
 
+Start-RelationMetadataPrefetchSection -Kinds @('Configurations') -SectionName 'configurations'
+
 $ConfigLabelTypeCache = @{}
 $ConfigurationLabelRequests = @()
 foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
@@ -1232,6 +1261,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
 }
+
+Start-RelationMetadataPrefetchSection -Kinds @('Contacts') -SectionName 'contacts'
 
 $ContactLabelTypeCache = @{}
 $ContactLabelRequests = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
@@ -1987,6 +2018,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
     }
 }
 
+Start-RelationMetadataPrefetchSection -Kinds @('Assets') -SectionName 'flexible assets'
 
 ############################### Documents / Articles ###############################
 
@@ -2031,6 +2063,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
     }
 
 }
+
+Start-RelationMetadataPrefetchSection -Kinds @('Documents') -SectionName 'article documents'
 
 ############################### Documents / Articles Bodies ###############################
 
@@ -2538,6 +2572,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Passwords Finished. Continue?"  -DefaultResponse "continue to Document/Article Updates, please."
 }
+
+Start-RelationMetadataPrefetchSection -Kinds @('Passwords') -SectionName 'passwords'
 
 $PasswordLabelTypeCache = @{}
 $PasswordLabelRequests = @()

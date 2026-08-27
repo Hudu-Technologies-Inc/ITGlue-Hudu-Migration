@@ -1,4 +1,8 @@
 
+param(
+    [switch]$FunctionsOnly
+)
+
 function Get-RelatedToDoc {
     [CmdletBinding()]
     param (
@@ -469,6 +473,7 @@ function New-ITGlueRelationMetadataCache {
             Configurations = @()
             Passwords      = @()
             Contacts       = @()
+            Locations      = @()
             Documents      = @()
         }
     }
@@ -568,6 +573,10 @@ function Get-ITGlueRelationMetadataRequests {
         & $addRequest (New-ITGlueRelationMetadataRequest -Kind 'Contacts' -ItgId ($Contact.ITGObject.id ?? $Contact.ITGID))
     }
 
+    foreach ($Location in @($MatchedLocations)) {
+        & $addRequest (New-ITGlueRelationMetadataRequest -Kind 'Locations' -ItgId ($Location.ITGObject.id ?? $Location.ITGID))
+    }
+
     foreach ($Article in @($MatchedArticles)) {
         $ArticleLookup = Get-ArticleLookupInfo -Article $Article
         if ($ArticleLookup) {
@@ -602,7 +611,7 @@ function Get-ITGlueRelationMetadataCachedKeys {
         return $CachedKeys
     }
 
-    foreach ($Kind in @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Documents')) {
+    foreach ($Kind in @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Locations', 'Documents')) {
         foreach ($Record in @($Cache.Responses.$Kind)) {
             if (-not $Record -or -not $Record.Response) {
                 continue
@@ -666,6 +675,9 @@ function Invoke-ITGlueRelationMetadataRequest {
         }
         'Contacts' {
             "$base/contacts/$($Request.ItgId)?include=related_items"
+        }
+        'Locations' {
+            "$base/locations/$($Request.ItgId)?include=related_items"
         }
         'Documents' {
             @(
@@ -769,6 +781,9 @@ function Start-ITGlueRelationMetadataPrefetchJob {
                     'Contacts' {
                         "$base/contacts/$($Request.ItgId)?include=related_items"
                     }
+                    'Locations' {
+                        "$base/locations/$($Request.ItgId)?include=related_items"
+                    }
                     'Documents' {
                         @(
                             "$base/organizations/$($Request.OrganizationId)/relationships/documents/$($Request.ItgId)?include=related_items",
@@ -870,7 +885,7 @@ function Merge-ITGlueRelationMetadataCache {
         $Cache | Add-Member -MemberType NoteProperty -Name Responses -Value ([pscustomobject]@{}) -Force
     }
 
-    foreach ($Kind in @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Documents')) {
+    foreach ($Kind in @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Locations', 'Documents')) {
         if (-not $Cache.Responses.PSObject.Properties[$Kind]) {
             $Cache.Responses | Add-Member -MemberType NoteProperty -Name $Kind -Value @() -Force
         }
@@ -913,6 +928,54 @@ function Get-ITGlueRelationMetadataResponses {
     }
 
     return @($ResponseMap.Values)
+}
+function Start-ITGlueRelationMetadataPrefetchIfNeeded {
+    param(
+        [string]$ITGKey,
+        [string]$BaseUri = ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint ?? 'https://api.itglue.com'),
+        [int]$ThrottleLimit = 4,
+        [string[]]$Kinds
+    )
+
+    if (-not $ITGKey) {
+        Write-Host "ITGlue relation metadata prefetch was not started because ITGKey is not available." -ForegroundColor Yellow
+        return @()
+    }
+
+    [string]$relationMetadataLanguage = $ExecutionContext.SessionState.LanguageMode
+    if ("FullLanguage" -ine $relationMetadataLanguage) {
+        Write-Host "ITGlue relation metadata prefetch was not started because background jobs are not allowed in $relationMetadataLanguage." -ForegroundColor Yellow
+        return @()
+    }
+
+    $ITGlueRelationMetadataRunInBackground = $ITGlueRelationMetadataRunInBackground ?? $true
+    if (-not $ITGlueRelationMetadataRunInBackground) {
+        Write-Host "ITGlue relation metadata prefetch was not started because ITGlueRelationMetadataRunInBackground is disabled." -ForegroundColor Yellow
+        return @()
+    }
+
+    $RelationMetadataCachePath = Get-ITGlueRelationMetadataCachePath
+    $RelationMetadataCache = Read-ITGlueRelationMetadataCache -Path $RelationMetadataCachePath -BaseUri $BaseUri
+    $RelationMetadataRequests = @(Get-ITGlueRelationMetadataRequests)
+    if ($Kinds -and $Kinds.Count -gt 0) {
+        $RelationMetadataRequests = @($RelationMetadataRequests | Where-Object { $Kinds -contains $_.Kind })
+    }
+    $MissingRelationMetadataRequests = @(Get-MissingITGlueRelationMetadataRequests -Requests $RelationMetadataRequests -Cache $RelationMetadataCache)
+
+    if ($MissingRelationMetadataRequests.Count -eq 0) {
+        $kindLabel = if ($Kinds -and $Kinds.Count -gt 0) { $Kinds -join ', ' } else { 'current matched objects' }
+        Write-Host "ITGlue relation metadata cache is already complete for $kindLabel." -ForegroundColor Cyan
+        return @()
+    }
+
+    $jobs = Start-ITGlueRelationMetadataPrefetchJob `
+        -Requests $MissingRelationMetadataRequests `
+        -ITGKey $ITGKey `
+        -BaseUri $BaseUri `
+        -ThrottleLimit $ThrottleLimit
+
+    Write-Host "Started $(@($jobs).Count) ITGlue relation metadata background job(s) for $($MissingRelationMetadataRequests.Count) uncached source object(s)." -ForegroundColor Green
+    return @($jobs)
 }
 function Test-ITGlueRelationPointerOnly {
     param(
@@ -1167,6 +1230,10 @@ function Get-PasswordDocumentRelationObject {
     }
 }
 
+if ($FunctionsOnly) {
+    return
+}
+
 
 if (-not $MatchedAssets -and (Test-Path -LiteralPath "$MigrationLogs\Assets.json")) {$MatchedAssets = (Get-Content -path "$MigrationLogs\Assets.json" | ConvertFrom-json -depth 100) }
 if (-not $matchedConfigurations -and (Test-Path -LiteralPath "$MigrationLogs\Configurations.json")) {$matchedConfigurations = (Get-Content -path "$MigrationLogs\Configurations.json" | ConvertFrom-json -depth 100) }
@@ -1199,7 +1266,7 @@ foreach ($DiagnosticFileName in @('unknown-relation-types.json', 'unresolved-rel
     }
 }
 
-if (-not $FreshITGAssets -or -not $FreshConfigurations -or -not $FreshPasswords -or -not $FreshContacts -or -not $FreshDocuments) {
+if (-not $FreshITGAssets -or -not $FreshConfigurations -or -not $FreshPasswords -or -not $FreshContacts -or -not $FreshLocations -or -not $FreshDocuments) {
     $RelationMetadataBaseUri = ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint ?? 'https://api.itglue.com')
     $RelationMetadataCachePath = Get-ITGlueRelationMetadataCachePath
     $RelationMetadataCache = Read-ITGlueRelationMetadataCache -Path $RelationMetadataCachePath -BaseUri $RelationMetadataBaseUri
@@ -1207,7 +1274,7 @@ if (-not $FreshITGAssets -or -not $FreshConfigurations -or -not $FreshPasswords 
     $MissingRelationMetadataRequests = @(Get-MissingITGlueRelationMetadataRequests -Requests $RelationMetadataRequests -Cache $RelationMetadataCache)
 
     if ($RelationMetadataCache) {
-        $CachedRelationMetadataCount = @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Documents') |
+        $CachedRelationMetadataCount = @('Assets', 'Configurations', 'Passwords', 'Contacts', 'Locations', 'Documents') |
             ForEach-Object { @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind $_).Count } |
             Measure-Object -Sum |
             Select-Object -ExpandProperty Sum
@@ -1311,6 +1378,20 @@ if (-not $FreshContacts) {
 }
 $RelatedContacts = $RelatedContacts ?? $($FreshContacts | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
+if (-not $FreshLocations -and (Test-ITGlueRelationMetadataCacheComplete -Requests $RelationMetadataRequests -Cache $RelationMetadataCache -Kind 'Locations')) {
+    $FreshLocations = @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind 'Locations')
+    Write-Host "loaded $($FreshLocations.Count) locations from ITGlue relation metadata cache"
+}
+if (-not $FreshLocations) {
+    write-host "refreshing $($MatchedLocations.count) locations"
+    $__locIdx = 0; $__locTotal = $MatchedLocations.count
+    $FreshLocations = $($MatchedLocations | ForEach-Object {
+        $__locIdx++
+        if ($__locIdx % 100 -eq 0 -or $__locIdx -eq $__locTotal) { Write-Host "  ...refreshed $__locIdx of $__locTotal locations" }
+        Get-ITGlueLocations -id $_.ITGObject.id -include related_items})
+}
+$RelatedLocations = $RelatedLocations ?? $($FreshLocations | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
+
 if (-not $FreshDocuments -and (Test-ITGlueRelationMetadataCacheComplete -Requests $RelationMetadataRequests -Cache $RelationMetadataCache -Kind 'Documents')) {
     $FreshDocuments = @(Get-ITGlueRelationMetadataResponses -Cache $RelationMetadataCache -Kind 'Documents')
     Write-Host "loaded $($FreshDocuments.Count) articles from ITGlue relation metadata cache"
@@ -1403,6 +1484,7 @@ $ContactRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $Related
 $ConfigurationRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedConfigurations
 $AssetRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedAssets
 $PasswordRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedPasswords
+$LocationRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedLocations
 $PasswordDocumentRelationsToCreate = Get-PasswordDocumentRelationObject -MatchedPasswords $MatchedPasswords
 $TagFieldRelationsToCreate = Get-HuduRelationObjectFromTagFields -MatchedAssets $MatchedAssets -MatchedAssetLayoutFields $MatchedAssetLayoutFields
 $QueuedTagRelationsToCreate = $RelationsToCreate | ForEach-Object { Convert-QueuedTagRelationToHuduRelationObject -Relation $_ }
@@ -1412,6 +1494,7 @@ $AllRelationsToCreate =
     @($DocumentRelationsToCreate) +
     @($ContactRelationsToCreate) +
     @($PasswordRelationsToCreate) +
+    @($LocationRelationsToCreate) +
     @($PasswordDocumentRelationsToCreate) +
     @($TagFieldRelationsToCreate) +
     @($QueuedTagRelationsToCreate) +
