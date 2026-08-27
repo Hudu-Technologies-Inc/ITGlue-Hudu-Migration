@@ -30,3 +30,4 @@ masonz
 release/artifacts/2026*
 .DS_Store
 migration.ps1
+testdl.ps1

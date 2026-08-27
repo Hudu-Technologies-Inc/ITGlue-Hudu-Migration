@@ -437,6 +437,10 @@ if ($true -eq $AutoDownloadITGlueExport) {
         IncludeLogs    = [bool]($ITGlueExportIncludeLogs ?? $environmentSettings.ITGlueExportIncludeLogs ?? $false)
         PollSeconds    = [int]($ITGlueExportPollSeconds ?? $environmentSettings.ITGlueExportPollSeconds ?? 60)
         TimeoutMinutes = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)
+        StalledMinutes = [int]($ITGlueExportStalledMinutes ?? $environmentSettings.ITGlueExportStalledMinutes ?? 90)
+        AttributeNameStyle = [string]($ITGlueExportAttributeNameStyle ?? $environmentSettings.ITGlueExportAttributeNameStyle ?? 'Hyphen')
+        UseExistingExportOnly = [bool]($ITGlueExportUseExistingExportOnly ?? $environmentSettings.ITGlueExportUseExistingExportOnly ?? $false)
+        ExistingExportID = [Nullable[Int64]]($ITGlueExportExistingExportID ?? $environmentSettings.ITGlueExportExistingExportID ?? $null)
     }
 
     [string]$executionContextLanguage =  $ExecutionContext.SessionState.LanguageMode
@@ -614,7 +618,7 @@ $requiredHuduVersion = ([version]"2.44.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){
-$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 3))
+$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
 $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
 $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
 }
