@@ -15,9 +15,9 @@ $ScriptStartTime = $(Get-Date)
 $JobStartTime = $JobStartTime ?? @{}
 $MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){
-$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
-$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
-$MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
+    $defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
+    $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
+    $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
 }
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
 $UseFastAssetCommit = $UseFastAssetCommit ?? $true

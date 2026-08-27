@@ -424,23 +424,23 @@ $MigrationLogs = $environmentSettings.MigrationLogs
 $AutoDownloadITGlueExport = $AutoDownloadITGlueExport ?? $environmentSettings.AutoDownloadITGlueExport ?? $true
 if ($true -eq $AutoDownloadITGlueExport) {
     $autoExportParams = @{
-        ITGKey         = $ITGKey
-        ITGBaseURI     = $ITGAPIEndpoint
-        ExportPath     = $ITGlueExportPath
-        DownloadPath   = $ITGlueExportDownloadPath ?? $environmentSettings.ITGlueExportDownloadPath ?? $null
-        SevenZipPath   = $ITGlueExportSevenZipPath ?? $environmentSettings.ITGlueExportSevenZipPath ?? $null
-        ZipPassword    = $ITGlueExportZipPassword ?? $environmentSettings.ITGlueExportZipPassword ?? $null
-        DownloadFileNameTag = $HuduBaseDomain ?? $settings.HuduBaseDomain ?? $environmentSettings.HuduBaseDomain ?? $settings.ITGURL ?? $environmentSettings.ITGURL ?? $ITGAPIEndpoint
-        LogsPath       = $MigrationLogs
-        GenerateZipPassword = [bool]($ITGlueExportGenerateZipPassword ?? $environmentSettings.ITGlueExportGenerateZipPassword ?? $true)
-        ClearExistingExports = [bool]($ITGlueExportClearExistingExports ?? $environmentSettings.ITGlueExportClearExistingExports ?? $true)
-        IncludeLogs    = [bool]($ITGlueExportIncludeLogs ?? $environmentSettings.ITGlueExportIncludeLogs ?? $false)
-        PollSeconds    = [int]($ITGlueExportPollSeconds ?? $environmentSettings.ITGlueExportPollSeconds ?? 60)
-        TimeoutMinutes = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)
-        StalledMinutes = [int]($ITGlueExportStalledMinutes ?? $environmentSettings.ITGlueExportStalledMinutes ?? 90)
-        AttributeNameStyle = [string]($ITGlueExportAttributeNameStyle ?? $environmentSettings.ITGlueExportAttributeNameStyle ?? 'Hyphen')
-        UseExistingExportOnly = [bool]($ITGlueExportUseExistingExportOnly ?? $environmentSettings.ITGlueExportUseExistingExportOnly ?? $false)
-        ExistingExportID = [Nullable[Int64]]($ITGlueExportExistingExportID ?? $environmentSettings.ITGlueExportExistingExportID ?? $null)
+        ITGKey                  = $ITGKey
+        ITGBaseURI              = $ITGAPIEndpoint
+        ExportPath              = $ITGlueExportPath
+        DownloadPath            = $ITGlueExportDownloadPath ?? $environmentSettings.ITGlueExportDownloadPath ?? $null
+        SevenZipPath            = $ITGlueExportSevenZipPath ?? $environmentSettings.ITGlueExportSevenZipPath ?? $null
+        ZipPassword             = $ITGlueExportZipPassword ?? $environmentSettings.ITGlueExportZipPassword ?? $null
+        DownloadFileNameTag     = $HuduBaseDomain ?? $settings.HuduBaseDomain ?? $environmentSettings.HuduBaseDomain ?? $settings.ITGURL ?? $environmentSettings.ITGURL ?? $ITGAPIEndpoint
+        LogsPath                = $MigrationLogs
+        GenerateZipPassword     = [bool]($ITGlueExportGenerateZipPassword ?? $environmentSettings.ITGlueExportGenerateZipPassword ?? $false)
+        ClearExistingExports    = [bool]($ITGlueExportClearExistingExports ?? $environmentSettings.ITGlueExportClearExistingExports ?? $true)
+        IncludeLogs             = [bool]($ITGlueExportIncludeLogs ?? $environmentSettings.ITGlueExportIncludeLogs ?? $false)
+        PollSeconds             = [int]($ITGlueExportPollSeconds ?? $environmentSettings.ITGlueExportPollSeconds ?? 90)
+        TimeoutMinutes          = [int]($ITGlueExportTimeoutMinutes ?? $environmentSettings.ITGlueExportTimeoutMinutes ?? 240)
+        StalledMinutes          = [int]($ITGlueExportStalledMinutes ?? $environmentSettings.ITGlueExportStalledMinutes ?? 120)
+        AttributeNameStyle      = 'Hyphen'
+        UseExistingExportOnly   = [bool]($ITGlueExportUseExistingExportOnly ?? $environmentSettings.ITGlueExportUseExistingExportOnly ?? $false)
+        ExistingExportID        = [Nullable[Int64]]($ITGlueExportExistingExportID ?? $environmentSettings.ITGlueExportExistingExportID ?? $null)
     }
 
     [string]$executionContextLanguage =  $ExecutionContext.SessionState.LanguageMode
@@ -480,15 +480,8 @@ $passwordsCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportP
 $vaultedCSVPath = if (-not [string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) { Join-Path -Path $resolvedITGlueExportPath -ChildPath "vaulted" } else { $null }
 $passwordsCSVOptional = ($InitType -ne 'Full' -or ((2,$false) -contains $ImportPasswords -and (2,$false) -contains $ImportFlexibleAssets))
 $passwordsCSVOptionalReason = if ($InitType -ne 'Full') { "this is a Lite initialization, so password and flexible asset imports are not being configured" } else { "you have chosen to skip both flexible assets and passwords" }
-$passwordsCSVvalidated = $false
-$passwordsCSVFound = $false
-
-$VaultedPasswords = @()
-$possiblyVaultedPasswords = $false
-$uniqueVaultedOrgs = @()
-$userVaultedPasswordsDirPresent = $false
-$vaultCSVsPresent = @()
-$shouldRunVaultJob = $false
+$passwordsCSVvalidated = $false; $passwordsCSVFound = $false;
+$VaultedPasswords = @(); $possiblyVaultedPasswords = $false; $uniqueVaultedOrgs = @(); $userVaultedPasswordsDirPresent = $false; $vaultCSVsPresent = @(); $shouldRunVaultJob = $false;
 
 function Confirm-ITGlueExportPasswordCsv {
     [CmdletBinding()]
@@ -544,65 +537,33 @@ function Confirm-ITGlueExportPasswordCsv {
 }
 
 ############################### Functions ###############################
-# Import ImageMagick for Invoke-ImageTest Function (Disabled)
- . $PSScriptRoot\Private\Initialize-ImageMagik.ps1
-
-# Used to determine if a file is an image and what type of image
+. $PSScriptRoot\Private\Initialize-ImageMagik.ps1 # Used to determine image type (fallback) and convert if necessary
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
+. $PSScriptRoot\Private\Confirm-Import.ps1 # Confirm Object Import
+. $PSScriptRoot\Private\Import-Items.ps1 # Matches items from IT Glue to Hudu and queues items for threaded import
+. $PSScriptRoot\Private\Get-ImportMode.ps1 # Select Item Import Mode
+. $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1 # Get Flexible Asset Layout Option
+. $PSScriptRoot\Private\Import-ITGlueItems.ps1 # Fetch Items from ITGlue
+. $PSScriptRoot\Private\Find-MigratedItem.ps1 # Find migrated items 
+. $PSScriptRoot\Private\Get-FontAwesomeMap.ps1; $FontAwesomeUpgrade = Get-FontAwesomeMap; # Lookup table to upgrade from Font Awesome 4 to 5
+. $PSScriptRoot\Private\ConvertTo-HuduURL.ps1 # Add Replace URL functions
+. $PSScriptRoot\Public\Add-HuduRelation.ps1 # Add Hudu Relations Function
+. $PSScriptRoot\Public\Write-TimedMessage.ps1 # Add Timed (Noninteractive) Messages Helper
+. $PSScriptRoot\Public\Get-CastIfNumeric.ps1 # Add numeral casting, password folder fetching, and article stub starting helpers
+. $PSScriptRoot\Public\Start-ArticleStubs.ps1 # article starting helper
+. $PSScriptRoot\Public\ArticleContentLocalCache.ps1 # local cache for articles (since we commit fully-prepared articles last now)
+. $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1 # Article Attachment as image source helper
+. $PSScriptRoot\Public\Get-PasswordFolders.ps1 # Fetch password folders from Hudu
+. $PSScriptRoot\Public\Set-MigrationScope.ps1 # Add migration scope helper
+. $PSScriptRoot\Public\Get-Checklists.ps1 # Other JWT-Auth / Advanced Post-Run Imports
+. $PSScriptRoot\Public\Normalize-String.ps1 # Add String/Filename Normalization Helper, image Normalization helper
+. $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1 # initialization helper and field requirement helper, logging, selection helper
+. $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1 # determines if a field is always populated as a prerequisite for being required
+. $PSScriptRoot\Public\JWT-Auth.ps1 # JWT auth helpers
+. $PSScriptRoot\Public\NetworkInformation.ps1 # Network and IP Parsing Helpers
+. $PSScriptRoot\Public\PreFlightTests.ps1 # Pre-flight checks and validations before migration
+. $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1 # replacement of various attachment link references
 
-# Confirm Object Import
-. $PSScriptRoot\Private\Confirm-Import.ps1
-
-# Matches items from IT Glue to Hudu and creates new items in Hudu
-. $PSScriptRoot\Private\Import-Items.ps1
-
-# Select Item Import Mode
-. $PSScriptRoot\Private\Get-ImportMode.ps1
-
-# Get Flexible Asset Layout Option
-. $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1
-
-# Fetch Items from ITGlue
-. $PSScriptRoot\Private\Import-ITGlueItems.ps1
-
-# Find migrated items
-. $PSScriptRoot\Private\Find-MigratedItem.ps1
-
-# Lookup table to upgrade from Font Awesome 4 to 5
-. $PSScriptRoot\Private\Get-FontAwesomeMap.ps1
-$FontAwesomeUpgrade = Get-FontAwesomeMap
-
-# Add Replace URL functions
-. $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
-
-# Add Hudu Relations Function
-. $PSScriptRoot\Public\Add-HuduRelation.ps1
-
-# Add Timed (Noninteractive) Messages Helper
-. $PSScriptRoot\Public\Write-TimedMessage.ps1
-
-# Add numeral casting, password folder fetching, and article stub starting helpers
-. $PSScriptRoot\Public\Get-CastIfNumeric.ps1
-. $PSScriptRoot\Public\Start-ArticleStubs.ps1
-. $PSScriptRoot\Public\ArticleContentLocalCache.ps1
-. $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1
-. $PSScriptRoot\Public\Get-PasswordFolders.ps1
-
-# Add migration scope helper
-. $PSScriptRoot\Public\Set-MigrationScope.ps1
-
-# Other JWT-Auth / Advanced Post-Run Imports
-. $PSScriptRoot\Public\Get-Checklists.ps1
-
-# Add String/Filename Normalization Helper, image Normalization helper
-. $PSScriptRoot\Public\Normalize-String.ps1
-. $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1
-# initialization helper and field requirement helper, logging, selection helper
-. $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1
-. $PSScriptRoot\Public\JWT-Auth.ps1
-. $PSScriptRoot\Public\NetworkInformation.ps1
-. $PSScriptRoot\Public\PreFlightTests.ps1
-. $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1
 . $PSScriptRoot\Public\Invoke-FastHuduRequestBatch.ps1
 . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
@@ -610,6 +571,7 @@ $FontAwesomeUpgrade = Get-FontAwesomeMap
 . $PSScriptRoot\Public\Invoke-FastLabelCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastAssetCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastFlexibleAssetFieldPreparation.ps1
+
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
@@ -618,9 +580,9 @@ $requiredHuduVersion = ([version]"2.44.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){
-$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
-$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
-$MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
+    $defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
+    $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
+    $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
 }
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
