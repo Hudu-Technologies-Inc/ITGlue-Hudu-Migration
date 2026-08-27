@@ -1277,7 +1277,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     # Match to existing layouts
     $MatchedLayouts = foreach ($ITGLayout in $FlexLayouts) {
         if ($skipIntegratorLayouts -and $true -eq $skipIntegratorLayouts){
-            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or "$($ITGLayout.attributes.name)" -ilike "*(liongard)*" -or "$($ITGLayout.attributes.name)" -ilike "*datto*rmm*" -or "$($ITGLayout.attributes.name)" -ilike "*connectwise*"  -or "$($ITGLayout.attributes.name)" -ilike "*autotask*" ){
+            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or "$($ITGLayout.attributes.name)" -ilike "*(liongard)*" -or "$($ITGLayout.attributes.name)" -ilike "*datto*rmm*" -or "$($ITGLayout.attributes.name)" -ilike "*connectwise*"  -or "$($ITGLayout.attributes.name)" -ilike "*autotask*" -or "$($ITGLayout.attributes.name)" -match '^Office 365 Licenses \[[0-9a-f]{4}\]$' ){
                 Write-warning "Skipping Integrator Layout $($ITGLayout.attributes.name)"
                 continue
             }
@@ -1416,7 +1416,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
         foreach ($UpdateLayout in $MatchedLayouts) {
             if ($skipIntegratorLayouts -and $true -eq $skipIntegratorLayouts){
-                if ("$($UpdateLayout.Name)" -ilike "*(auto)*" -or "$($UpdateLayout.Name)" -ilike "*(liongard)*" -or "$($UpdateLayout.Name)" -ilike "*datto*rmm*" -or "$($UpdateLayout.Name)" -ilike "*connectwise*"  -or "$($UpdateLayout.Name)" -ilike "*autotask*" ){ 
+                if ("$($UpdateLayout.Name)" -ilike "*(auto)*" -or "$($UpdateLayout.Name)" -ilike "*(liongard)*" -or "$($UpdateLayout.Name)" -ilike "*datto*rmm*" -or "$($UpdateLayout.Name)" -ilike "*connectwise*"  -or "$($UpdateLayout.Name)" -ilike "*autotask*" -or "$($UpdateLayout.Name)" -match '^Office 365 Licenses \[[0-9a-f]{4}\]$' ){ 
                     Write-Host "Skipping Integrator Layout $($UpdateLayout.Name)" -ForegroundColor Yellow
                     continue
                 }
