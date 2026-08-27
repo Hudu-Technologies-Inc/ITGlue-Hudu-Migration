@@ -21,6 +21,30 @@ function Get-ITGlueExportDownloadUrl {
         Select-Object -First 1
 }
 
+function Get-ITGlueExportStatus {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Export
+    )
+
+    $candidates = @(
+        $Export.data.attributes.'export-status'
+        $Export.data.attributes.status
+        $Export.data.attributes.state
+        $Export.attributes.'export-status'
+        $Export.attributes.status
+        $Export.attributes.state
+        $Export.'export-status'
+        $Export.status
+        $Export.state
+    )
+
+    return $candidates |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Select-Object -First 1
+}
+
 function Get-ITGlueExportId {
     [CmdletBinding()]
     param(
@@ -38,6 +62,76 @@ function Get-ITGlueExportId {
     }
 
     return $null
+}
+
+function Get-ITGlueExportTimestamp {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Export,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('created-at', 'updated-at')]
+        [string]$Name
+    )
+
+    $candidates = @(
+        $Export.data.attributes.$Name
+        $Export.attributes.$Name
+        $Export.$Name
+    )
+
+    $rawValue = $candidates |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace([string]$rawValue)) {
+        return $null
+    }
+
+    try {
+        return [datetimeoffset]::Parse([string]$rawValue).LocalDateTime
+    } catch {
+        return $null
+    }
+}
+
+function Select-ITGlueExportRecordForPolling {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $ExportsResponse,
+
+        [AllowNull()]
+        [Nullable[datetime]]$QueuedAfter = $null
+    )
+
+    $records = @(Get-ITGlueExportRecords -ExportsResponse $ExportsResponse)
+    if ($records.Count -eq 0) {
+        return $null
+    }
+
+    if ($null -ne $QueuedAfter) {
+        $queueWindowStart = ([datetime]$QueuedAfter).AddMinutes(-2)
+        $records = @(
+            $records | Where-Object {
+                $createdAt = Get-ITGlueExportTimestamp -Export $_ -Name 'created-at'
+                $createdAt -and $createdAt -ge $queueWindowStart
+            }
+        )
+    }
+
+    if ($records.Count -eq 0) {
+        return $null
+    }
+
+    $records |
+        Sort-Object -Property @(
+            @{ Expression = { Get-ITGlueExportTimestamp -Export $_ -Name 'updated-at' }; Descending = $true }
+            @{ Expression = { Get-ITGlueExportTimestamp -Export $_ -Name 'created-at' }; Descending = $true }
+            @{ Expression = { Get-ITGlueExportId -Export $_ }; Descending = $true }
+        ) |
+        Select-Object -First 1
 }
 
 function Test-ITGlueExportPathHasContent {
@@ -197,23 +291,84 @@ function ConvertTo-SafeFileNamePart {
     return $safeValue
 }
 
+function Resolve-ITGlueExportBaseURI {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string]$ITGBaseURI
+    )
+
+    $candidates = @($ITGBaseURI)
+
+    if (Get-Command -Name Get-ITGlueBaseURI -ErrorAction SilentlyContinue) {
+        try {
+            $candidates += Get-ITGlueBaseURI
+        } catch {
+        }
+    }
+
+    $candidates += @(
+        $ITGAPIEndpoint
+        $settings.ITGAPIEndpoint
+        $environmentSettings.ITGAPIEndpoint
+    )
+
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace([string]$candidate)) {
+            continue
+        }
+
+        $resolved = ([string]$candidate).Trim()
+        if ($resolved -match '^\[(?<url>https?://[^\]]+)\]\(https?://[^\)]+\)$') {
+            $resolved = $Matches.url
+        }
+
+        $resolved = $resolved -replace '[\\/]+$', ''
+        if ($resolved -match '^https?://') {
+            return $resolved
+        }
+    }
+
+    throw "IT Glue API endpoint is blank. Set ITGAPIEndpoint in your environment or pass -ITGBaseURI, for example https://api.itglue.com."
+}
+
 function Get-ITGlueExport {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         [string]$ITGKey,
 
-        [Parameter(Mandatory = $true)]
-        [string]$ITGBaseURI
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
+        [string]$ITGBaseURI,
+
+        [ValidateRange(1, 100000)]
+        [int]$PageNumber = 1,
+
+        [ValidateRange(1, 1000)]
+        [int]$PageSize = 100,
+
+        [AllowNull()]
+        [string]$Sort = '-updated-at'
     )
 
+    $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
     $headers = @{
         'x-api-key'    = $ITGKey
         'Content-Type' = 'application/vnd.api+json'
         'Accept'       = 'application/vnd.api+json'
     }
 
-    Invoke-RestMethod -Uri "$($ITGBaseURI.TrimEnd('/'))/exports" -Method GET -Headers $headers -ErrorAction Stop
+    $queryParts = @(
+        "page[number]=$PageNumber"
+        "page[size]=$PageSize"
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Sort)) {
+        $queryParts += "sort=$([uri]::EscapeDataString($Sort))"
+    }
+
+    Invoke-RestMethod -Uri "$($ITGBaseURI.TrimEnd('/'))/exports?$($queryParts -join '&')" -Method GET -Headers $headers -ErrorAction Stop
 }
 
 Set-Alias -Name List-ITGlueExports -Value Get-ITGlueExport -ErrorAction SilentlyContinue
@@ -234,6 +389,21 @@ function Get-ITGlueExportRecords {
     }
 
     return @($ExportsResponse)
+}
+
+function Get-ITGlueLatestExport {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ITGKey,
+
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
+        [string]$ITGBaseURI
+    )
+
+    $exportsResponse = Get-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -PageNumber 1 -PageSize 1 -Sort '-updated-at'
+    Get-ITGlueExportRecords -ExportsResponse $exportsResponse | Select-Object -First 1
 }
 
 function Test-ITGlueExportAlreadyAvailableError {
@@ -269,10 +439,12 @@ function Get-ITGlueExportById {
         [Parameter(Mandatory = $true)]
         [Int64]$ExportID,
 
-        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
         [string]$ITGBaseURI
     )
 
+    $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
     $headers = @{
         'x-api-key'    = $ITGKey
         'Content-Type' = 'application/vnd.api+json'
@@ -293,10 +465,12 @@ function Remove-ITGlueExport {
         [Parameter(Mandatory = $true)]
         [Int64]$ExportID,
 
-        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
         [string]$ITGBaseURI
     )
 
+    $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
     if (-not $PSCmdlet.ShouldProcess("IT Glue export $ExportID", 'Delete')) {
         return
     }
@@ -316,10 +490,12 @@ function Clear-ITGlueExports {
         [Parameter(Mandatory = $true)]
         [string]$ITGKey,
 
-        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
         [string]$ITGBaseURI
     )
 
+    $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
     $exportsResponse = Get-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI
     $exports = @(Get-ITGlueExportRecords -ExportsResponse $exportsResponse)
     if ($exports.Count -eq 0) {
@@ -334,7 +510,7 @@ function Clear-ITGlueExports {
             continue
         }
 
-        if ($PSCmdlet.ShouldProcess("IT Glue export $exportId", 'Delete before queuing a new encrypted export')) {
+        if ($PSCmdlet.ShouldProcess("IT Glue export $exportId", 'Delete before queuing a new export')) {
             Remove-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ExportID $exportId
             Write-Host "Deleted existing IT Glue export $exportId." -ForegroundColor Yellow
             $exportId
@@ -350,7 +526,8 @@ function Start-ITGlueExport {
         [Parameter(Mandatory = $true)]
         [string]$ITGKey,
 
-        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
         [string]$ITGBaseURI,
 
         [AllowNull()]
@@ -372,36 +549,62 @@ function Start-ITGlueExport {
 
         [bool]$AllFlexibleAssets = $true,
 
-        [Int64[]]$FlexibleAssetTypeIDs = @()
+        [Int64[]]$FlexibleAssetTypeIDs = @(),
+
+        [ValidateSet('Hyphen', 'Snake')]
+        [string]$AttributeNameStyle = 'Hyphen'
     )
 
     if ($AllFlexibleAssets -and $FlexibleAssetTypeIDs.Count -gt 0) {
         throw "Use either -AllFlexibleAssets `$true or -FlexibleAssetTypeIDs, not both."
     }
 
+    $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
     $headers = @{
         'x-api-key'    = $ITGKey
         'Content-Type' = 'application/vnd.api+json'
         'Accept'       = 'application/vnd.api+json'
     }
 
+    $attributeNames = if ($AttributeNameStyle -eq 'Snake') {
+        @{
+            IncludeLogs          = 'include_logs'
+            CoreAssetTypes       = 'core_assets_types'
+            AllFlexibleAssets    = 'all_flexible_assets'
+            IncludePasswords     = 'include_passwords'
+            OrganizationID       = 'organization_id'
+            ZipPassword          = 'zip_password'
+            FlexibleAssetTypeIDs = 'flexible_assets_types'
+        }
+    } else {
+        @{
+            IncludeLogs          = 'include-logs'
+            CoreAssetTypes       = 'core-assets-types'
+            AllFlexibleAssets    = 'all-flexible-assets'
+            IncludePasswords     = 'include-passwords'
+            OrganizationID       = 'organization-id'
+            ZipPassword          = 'zip-password'
+            FlexibleAssetTypeIDs = 'flexible-assets-types'
+        }
+    }
+
     $attributes = [ordered]@{
-        'include-logs'        = $IncludeLogs
-        'core-assets-types'   = $CoreAssetTypes
-        'all-flexible-assets' = $AllFlexibleAssets
-        'include-passwords'   = $true
+        $attributeNames.IncludeLogs       = $IncludeLogs
+        $attributeNames.CoreAssetTypes    = $CoreAssetTypes
+        $attributeNames.AllFlexibleAssets = $AllFlexibleAssets
+        $attributeNames.IncludePasswords  = $true
     }
 
     if ($null -ne $OrganizationID) {
-        $attributes['organization-id'] = [Int64]$OrganizationID
+        $attributes[$attributeNames.OrganizationID] = [Int64]$OrganizationID
     }
 
     if (-not [string]::IsNullOrWhiteSpace($ZipPassword)) {
-        $attributes['zip-password'] = $ZipPassword
+        $attributes[$attributeNames.ZipPassword] = $ZipPassword
     }
 
     if (-not $AllFlexibleAssets -and $FlexibleAssetTypeIDs.Count -gt 0) {
-        $attributes['flexible-assets-types'] = @($FlexibleAssetTypeIDs)
+        $attributes[$attributeNames.FlexibleAssetTypeIDs] = @($FlexibleAssetTypeIDs)
     }
 
     $body = @{
@@ -416,6 +619,7 @@ function Start-ITGlueExport {
         return
     }
 
+    Write-Verbose "IT Glue export create payload: $body"
     Invoke-RestMethod -Uri "$($ITGBaseURI.TrimEnd('/'))/exports" -Method POST -Headers $headers -Body $body -ErrorAction Stop
 }
 
@@ -425,7 +629,8 @@ function Wait-ITGlueExport {
         [Parameter(Mandatory = $true)]
         [string]$ITGKey,
 
-        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
         [string]$ITGBaseURI,
 
         [AllowNull()]
@@ -435,16 +640,44 @@ function Wait-ITGlueExport {
         [int]$PollSeconds = 60,
 
         [ValidateRange(1, 1440)]
-        [int]$TimeoutMinutes = 240
+        [int]$TimeoutMinutes = 240,
+
+        [AllowNull()]
+        [Nullable[datetime]]$QueuedAfter = $null,
+
+        [ValidateRange(5, 1440)]
+        [int]$StalledMinutes = 90
     )
 
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
+    $failedStatuses = @(
+        'failed',
+        'failure',
+        'error',
+        'errored',
+        'cancelled',
+        'canceled'
+    )
 
     while ((Get-Date) -lt $deadline) {
-        $export = if ($null -ne $ExportID) {
+        $exportResponse = if ($null -ne $ExportID) {
             Get-ITGlueExportById -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ExportID $ExportID
         } else {
             Get-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI
+        }
+
+        $export = if ($null -ne $ExportID) {
+            $exportResponse
+        } else {
+            Select-ITGlueExportRecordForPolling -ExportsResponse $exportResponse -QueuedAfter $QueuedAfter
+        }
+
+        if ($null -eq $export) {
+            $queueText = if ($null -ne $QueuedAfter) { " created after $(([datetime]$QueuedAfter).ToString('s'))" } else { "" }
+            Write-Host "No IT Glue export record$queueText was found yet. Checking again in $PollSeconds seconds." -ForegroundColor Yellow
+            Start-Sleep -Seconds $PollSeconds
+            continue
         }
 
         $downloadUrl = Get-ITGlueExportDownloadUrl -Export $export
@@ -455,9 +688,30 @@ function Wait-ITGlueExport {
             }
         }
 
-        $status = $export.data.attributes.status ?? $export.data.attributes.'export-status' ?? $export.data.attributes.state
-        $statusText = if ($status) { " Current status: $status." } else { "" }
-        Write-Host "IT Glue export is not ready yet.$statusText Checking again in $PollSeconds seconds." -ForegroundColor Yellow
+        $status = Get-ITGlueExportStatus -Export $export
+        $exportRecordId = Get-ITGlueExportId -Export $export
+        $createdAt = Get-ITGlueExportTimestamp -Export $export -Name 'created-at'
+        $updatedAt = Get-ITGlueExportTimestamp -Export $export -Name 'updated-at'
+
+        if ($status -and ($failedStatuses -contains ([string]$status).ToLowerInvariant())) {
+            $idText = if ($null -ne $exportRecordId) { " $exportRecordId" } else { "" }
+            throw "IT Glue export$idText reported terminal status '$status' before a download URL was available."
+        }
+
+        $stalledAfter = (Get-Date).AddMinutes(-1 * $StalledMinutes)
+        if ($updatedAt -and $updatedAt -lt $stalledAfter) {
+            $idText = if ($null -ne $exportRecordId) { " $exportRecordId" } else { "" }
+            $statusText = if ($status) { " Status: $status." } else { "" }
+            throw "IT Glue export$idText appears stalled; updated-at is $($updatedAt.ToString('s')), which is older than $StalledMinutes minutes.$statusText"
+        }
+
+        $details = @()
+        if ($null -ne $exportRecordId) { $details += "id: $exportRecordId" }
+        if ($status) { $details += "status: $status" }
+        if ($createdAt) { $details += "created: $($createdAt.ToString('s'))" }
+        if ($updatedAt) { $details += "updated: $($updatedAt.ToString('s'))" }
+        $detailText = if ($details.Count -gt 0) { " ($($details -join '; '))" } else { "" }
+        Write-Host "IT Glue export is not ready yet$detailText. Checking again in $PollSeconds seconds." -ForegroundColor Yellow
         Start-Sleep -Seconds $PollSeconds
     }
 
@@ -532,7 +786,8 @@ function Ensure-ITGlueExportAvailable {
         [Parameter(Mandatory = $true)]
         [string]$ITGKey,
 
-        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [Alias('ITGAPIEndpoint')]
         [string]$ITGBaseURI,
 
         [Parameter(Mandatory = $true)]
@@ -563,13 +818,25 @@ function Ensure-ITGlueExportAvailable {
         [int]$PollSeconds = 60,
 
         [ValidateRange(1, 1440)]
-        [int]$TimeoutMinutes = 240
+        [int]$TimeoutMinutes = 240,
+
+        [ValidateRange(5, 1440)]
+        [int]$StalledMinutes = 90,
+
+        [ValidateSet('Hyphen', 'Snake')]
+        [string]$AttributeNameStyle = 'Hyphen',
+
+        [bool]$UseExistingExportOnly = $false,
+
+        [AllowNull()]
+        [Nullable[Int64]]$ExistingExportID = $null
     )
 
     if ([string]::IsNullOrWhiteSpace($ExportPath)) {
         throw "IT Glue export path is blank."
     }
 
+    $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
     if (Test-ITGlueExportPathHasContent -Path $ExportPath) {
         Write-Host "IT Glue export path already contains files at $ExportPath; skipping automatic export download." -ForegroundColor Green
         return [pscustomobject]@{
@@ -604,51 +871,78 @@ function Ensure-ITGlueExportAvailable {
         $DownloadPath = Join-Path -Path $exportParent -ChildPath "ITGlueExport-$safeTenantName-$safeTimestamp.zip"
     }
 
-    Write-Host "No extracted IT Glue export content was found at $ExportPath. Starting a full-tenant export." -ForegroundColor Yellow
+    Write-Host "No extracted IT Glue export content was found at $ExportPath. Preparing IT Glue export download/extract." -ForegroundColor Yellow
+    if ($true -ne $UseExistingExportOnly) {
+        Write-Host "Using IT Glue export attribute name style: $AttributeNameStyle." -ForegroundColor Cyan
+    }
     $startedExport = $null
     $exportId = $null
     $usedExistingExport = $false
     $clearedExportIds = @()
+    $queueRequestedAt = $null
 
-    if ($true -eq $ClearExistingExports) {
-        Write-Host "Clearing existing IT Glue exports before queueing a new encrypted export." -ForegroundColor Yellow
-        $clearedExportIds = @(Clear-ITGlueExports -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI)
-    } else {
-        Write-Host "Existing IT Glue exports will not be cleared before queueing. A duplicate export response may reuse an existing download." -ForegroundColor Yellow
-    }
-
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        try {
-            $startedExport = Start-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ZipPassword $ZipPassword -IncludeLogs $IncludeLogs
-            $exportId = Get-ITGlueExportId -Export $startedExport
+    if ($true -eq $UseExistingExportOnly) {
+        $usedExistingExport = $true
+        if ($null -ne $ExistingExportID) {
+            $exportId = [Int64]$ExistingExportID
+            Write-Host "Using existing IT Glue export id $exportId; no new export will be queued." -ForegroundColor Cyan
+        } else {
+            $latestExport = Get-ITGlueLatestExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI
+            $exportId = Get-ITGlueExportId -Export $latestExport
             if ($null -eq $exportId) {
-                Write-Warning "IT Glue did not return an export id. Falling back to export list polling."
-            } else {
-                Write-Host "IT Glue export queued with id $exportId." -ForegroundColor Green
+                throw "No existing IT Glue export id was found to download. Create an export in IT Glue first, or disable ITGlueExportUseExistingExportOnly."
             }
-            break
-        } catch {
-            if (-not (Test-ITGlueExportAlreadyAvailableError -ErrorRecord $_)) {
-                throw
-            }
+            Write-Host "Using latest existing IT Glue export id $exportId; no new export will be queued." -ForegroundColor Cyan
+        }
+    } else {
+        $exportProtectionText = if ([string]::IsNullOrWhiteSpace($ZipPassword)) { 'passwordless' } else { 'encrypted' }
+        if ($true -eq $ClearExistingExports) {
+            Write-Host "Clearing existing IT Glue exports before queueing a new $exportProtectionText export." -ForegroundColor Yellow
+            $clearedExportIds = @(Clear-ITGlueExports -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI)
+        } else {
+            Write-Host "Existing IT Glue exports will not be cleared before queueing. A duplicate export response may reuse an existing download." -ForegroundColor Yellow
+        }
 
-            if ($true -ne $ClearExistingExports) {
-                $usedExistingExport = $true
-                Write-Host "IT Glue reports a matching export is already available. Reusing the existing export download." -ForegroundColor Yellow
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                $queueRequestedAt = Get-Date
+                $startedExport = Start-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ZipPassword $ZipPassword -IncludeLogs $IncludeLogs -AttributeNameStyle $AttributeNameStyle
+                $exportId = Get-ITGlueExportId -Export $startedExport
+                if ($null -eq $exportId) {
+                    Write-Warning "IT Glue did not return an export id. Falling back to export list polling."
+                } else {
+                    Write-Host "IT Glue export queued with id $exportId." -ForegroundColor Green
+                }
                 break
-            }
+            } catch {
+                if (-not (Test-ITGlueExportAlreadyAvailableError -ErrorRecord $_)) {
+                    throw
+                }
 
-            if ($attempt -ge 3) {
-                throw "IT Glue still reports a matching export is already available after clearing existing exports. Wait a few minutes and retry, or set ITGlueExportClearExistingExports to `$false only if you know the existing export password matches this run."
-            }
+                if ($true -ne $ClearExistingExports) {
+                    $usedExistingExport = $true
+                    $queueRequestedAt = $null
+                    Write-Host "IT Glue reports a matching export is already available. Reusing the existing export download." -ForegroundColor Yellow
+                    break
+                }
 
-            Write-Warning "IT Glue still reports a matching export after cleanup. Waiting 15 seconds, clearing again, and retrying export queue attempt $($attempt + 1) of 3."
-            Start-Sleep -Seconds 15
-            $clearedExportIds += @(Clear-ITGlueExports -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI)
+                if ($attempt -ge 3) {
+                    $retryGuidance = if ([string]::IsNullOrWhiteSpace($ZipPassword)) {
+                        "Wait a few minutes and retry, or set ITGlueExportClearExistingExports to `$false only if you know the existing export is also passwordless."
+                    } else {
+                        "Wait a few minutes and retry, or set ITGlueExportClearExistingExports to `$false only if you know the existing export password matches this run."
+                    }
+                    throw "IT Glue still reports a matching export is already available after clearing existing exports. $retryGuidance"
+                }
+
+                Write-Warning "IT Glue still reports a matching export after cleanup. Waiting 15 seconds, clearing again, and retrying export queue attempt $($attempt + 1) of 3."
+                Start-Sleep -Seconds 15
+                $clearedExportIds += @(Clear-ITGlueExports -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI)
+            }
         }
     }
 
-    $readyExport = Wait-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ExportID $exportId -PollSeconds $PollSeconds -TimeoutMinutes $TimeoutMinutes
+    $readyExport = Wait-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ExportID $exportId -PollSeconds $PollSeconds -TimeoutMinutes $TimeoutMinutes -QueuedAfter $queueRequestedAt -StalledMinutes $StalledMinutes
     $archivePath = Save-ITGlueExportArchive -DownloadUrl $readyExport.DownloadUrl -OutputPath $DownloadPath
     $expandedPath = Expand-ITGlueExportArchive -ArchivePath $archivePath -DestinationPath $ExportPath -SevenZipPath $resolvedSevenZipPath -ZipPassword $ZipPassword
 
@@ -707,10 +1001,23 @@ function Wait-ITGlueExportBootstrapJob {
 
     Write-Host "Waiting for background IT Glue export job $($Job.Id) to finish." -ForegroundColor Cyan
     $waitStarted = Get-Date
+    $lastReceivedCount = 0
     while ($Job.State -in @('NotStarted', 'Running')) {
         $completedJob = Wait-Job -Job $Job -Timeout $StatusSeconds
         if ($completedJob) {
             break
+        }
+
+        $jobOutput = @(Receive-Job -Job $Job -Keep -ErrorAction SilentlyContinue)
+        if ($jobOutput.Count -gt $lastReceivedCount) {
+            $newJobOutput = @($jobOutput[$lastReceivedCount..($jobOutput.Count - 1)])
+            foreach ($item in $newJobOutput) {
+                $message = if ($item -is [string]) { $item } else { ($item | Out-String).Trim() }
+                if (-not [string]::IsNullOrWhiteSpace($message)) {
+                    Write-Host "[IT Glue export job] $message" -ForegroundColor DarkCyan
+                }
+            }
+            $lastReceivedCount = $jobOutput.Count
         }
 
         $elapsed = (Get-Date) - $waitStarted

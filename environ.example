@@ -25,8 +25,7 @@ $settings = @{
     ITGURL                  = "https://changeme.itglue.com"    # Note- Keep this URL Format. No trailing slashes, please
     ITGAPIEndpoint          = "https://api.itglue.com"         # Note- Keep this URL Format. No trailing slashes, please
     InternalCompany         = "changeme inc."
-    ITGlueExportPath        = "c:\tmp\export" # Absolute path to export, or desired export location for automatic download/extract
-    ITGlueExportRunInBackground = $true # Start automatic export/download/extract while pre-flight checks run
+    ITGlueExportPath        = "c:\tmp\export" # Absolute path to extracted export, or desired export location for automatic download/extract
 
     # If $true, internal-company documents stay under that company instead of Hudu Global KB
     PlaceInternalDocsInInternalCompany = $false
