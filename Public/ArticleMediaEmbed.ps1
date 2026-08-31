@@ -26,6 +26,24 @@ function Get-HuduStandaloneArticleFileKind {
     return $null
 }
 
+function Normalize-HuduStandaloneArticleFileName {
+    param(
+        [AllowNull()]
+        [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
+
+    $leafName = [IO.Path]::GetFileName($Name.Trim())
+    try {
+        $leafName = [System.Uri]::UnescapeDataString($leafName)
+    } catch {
+        # Keep the original leaf name if the export contains malformed escape sequences.
+    }
+
+    return $leafName.Trim().ToLowerInvariant()
+}
+
 function Get-ITGlueArticleStandaloneFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -60,14 +78,21 @@ function Get-ITGlueArticleStandaloneFile {
     if ($candidateFiles.Count -lt 1) { return $null }
 
     $articleFileName = [IO.Path]::GetFileName([string]$Article.name)
+    $normalizedArticleFileName = Normalize-HuduStandaloneArticleFileName -Name $articleFileName
     $matchingMediaFiles = if (-not [string]::IsNullOrWhiteSpace($articleFileName)) {
-        @($candidateFiles | Where-Object { $_.File.Name -ieq $articleFileName })
+        @($candidateFiles | Where-Object {
+            (Normalize-HuduStandaloneArticleFileName -Name $_.File.Name) -eq $normalizedArticleFileName
+        })
     } else {
         @()
     }
 
     if ($RequireTitleFileName) {
-        if ($candidateFiles.Count -eq 1 -and $matchingMediaFiles.Count -eq 1) { return $matchingMediaFiles[0] }
+        if ($matchingMediaFiles.Count -eq 1) { return $matchingMediaFiles[0] }
+        if ($candidateFiles.Count -eq 1) {
+            Write-Verbose "Using the only standalone attachment '$($candidateFiles[0].File.Name)' for image article '$($Article.name)' even though the exported filename does not exactly match the article title."
+            return $candidateFiles[0]
+        }
         return $null
     }
 
@@ -630,7 +655,24 @@ function New-HuduArticleStandaloneImagePhoto {
     )
 
     $standaloneFile = Get-ITGlueArticleStandaloneFile -Article $Article -ExportPath $ExportPath -Kinds @('Image') -RequireTitleFileName
-    if (-not $standaloneFile) { return $null }
+    if (-not $standaloneFile) {
+        $articleIdForDiagnostics = [string]($Article.ITGID ?? $Article.id)
+        $articleAttachmentPath = Join-Path -Path $ExportPath -ChildPath "attachments\documents\$articleIdForDiagnostics"
+        if (Test-Path -LiteralPath $articleAttachmentPath -PathType Container) {
+            $imageCandidates = @(
+                Get-ChildItem -LiteralPath $articleAttachmentPath -Recurse -File -ErrorAction SilentlyContinue |
+                    Where-Object { (Get-HuduStandaloneArticleFileKind -Path $_.FullName) -eq 'Image' }
+            )
+            if ($imageCandidates.Count -gt 1) {
+                Write-Warning "Skipping standalone image photo conversion for '$($Article.name)' because multiple image attachments were found and none uniquely matched the article title: $((@($imageCandidates | Select-Object -First 10 -ExpandProperty Name)) -join ', ')"
+            } else {
+                Write-Warning "Skipping standalone image photo conversion for '$($Article.name)' because no supported image attachment matched the article title."
+            }
+        } else {
+            Write-Warning "Skipping standalone image photo conversion for '$($Article.name)' because attachment folder '$articleAttachmentPath' was not found."
+        }
+        return $null
+    }
 
     if (-not (Get-Command -Name New-HuduPhoto -ErrorAction SilentlyContinue)) {
         Write-Warning "Skipping standalone image photo conversion for '$($Article.name)' because New-HuduPhoto is unavailable."

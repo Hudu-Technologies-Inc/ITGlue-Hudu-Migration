@@ -592,7 +592,7 @@ if ($primaryLocations -and $primaryLocations.count -gt 0) {
             RecordName = $primaryLocation.Name
         }
     }
-    $LocationLabelResults = Add-HuduMigrationLabels -Labels $LocationLabelRequests -LabelTypeCache $LocationLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+    $LocationLabelResults = Add-HuduMigrationLabels -Labels @($LocationLabelRequests) -LabelTypeCache $LocationLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
     $LocationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\LocationLabels.json"
 } else {
     $primaryLocations = @()
@@ -1065,7 +1065,7 @@ foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $n
         }
     }
 }
-$ConfigurationLabelResults = Add-HuduMigrationLabels -Labels $ConfigurationLabelRequests -LabelTypeCache $ConfigLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+$ConfigurationLabelResults = Add-HuduMigrationLabels -Labels @($ConfigurationLabelRequests) -LabelTypeCache $ConfigLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $ConfigurationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ConfigurationLabels.json"
 
 
@@ -1242,7 +1242,7 @@ $ContactLabelRequests = foreach ($importantContact in $($MatchedContacts | Where
         RecordName = $importantContact.Name
     }
 }
-$ContactLabelResults = Add-HuduMigrationLabels -Labels $ContactLabelRequests -LabelTypeCache $ContactLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+$ContactLabelResults = Add-HuduMigrationLabels -Labels @($ContactLabelRequests) -LabelTypeCache $ContactLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $ContactLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ContactLabels.json"
 
 	
@@ -2553,7 +2553,7 @@ foreach ($passwordType in $( $($MatchedPasswords | Where-Object { $null -ne $_.h
         }
     }
 }
-$PasswordLabelResults = Add-HuduMigrationLabels -Labels $PasswordLabelRequests -LabelTypeCache $PasswordLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+$PasswordLabelResults = Add-HuduMigrationLabels -Labels @($PasswordLabelRequests) -LabelTypeCache $PasswordLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
 $PasswordLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\PasswordLabels.json"
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
