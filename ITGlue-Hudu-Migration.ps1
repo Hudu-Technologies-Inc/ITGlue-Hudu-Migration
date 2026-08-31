@@ -2687,6 +2687,8 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
             $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoCreated -Value $true -Force
             $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoId -Value $standaloneImagePhoto.PhotoId -Force
             $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFile -Value $standaloneImagePhoto.File.FullName -Force
+            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFolderId -Value $standaloneImagePhoto.FolderId -Force
+            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFolderPath -Value $standaloneImagePhoto.FolderPath -Force
             $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticleArchiveOriginal -Value $true -Force
             $null = $StandaloneImageArticlePhotoResults.Add($standaloneImagePhoto)
             Write-Host "Converted standalone image article '$($articleFound.name)' to Hudu photo '$($standaloneImagePhoto.File.Name)'; original article will be archived." -ForegroundColor Cyan

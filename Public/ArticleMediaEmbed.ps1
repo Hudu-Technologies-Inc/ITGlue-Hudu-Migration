@@ -118,6 +118,415 @@ function ConvertTo-HuduMediaEmbedRelativeUrl {
     return $trimmedUrl
 }
 
+function Get-HuduStandaloneObjectPropertyValue {
+    param(
+        [AllowNull()]
+        [object]$Object,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Names
+    )
+
+    if ($null -eq $Object) { return $null }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        foreach ($name in $Names) {
+            if ($Object.Contains($name) -and $null -ne $Object[$name]) {
+                return $Object[$name]
+            }
+        }
+    }
+
+    foreach ($name in $Names) {
+        if ($null -ne $Object.PSObject.Properties[$name] -and $null -ne $Object.$name) {
+            return $Object.$name
+        }
+    }
+
+    return $null
+}
+
+function Get-HuduStandaloneFolderObject {
+    param(
+        [AllowNull()]
+        [object]$Folder
+    )
+
+    if ($null -eq $Folder) { return $null }
+    if ($Folder -is [System.Collections.IDictionary] -and $Folder.Contains('folder') -and $null -ne $Folder['folder']) {
+        return $Folder['folder']
+    }
+    if ($null -ne $Folder.PSObject.Properties['folder'] -and $null -ne $Folder.folder) {
+        return $Folder.folder
+    }
+
+    return $Folder
+}
+
+function Get-HuduStandaloneFolderId {
+    param(
+        [AllowNull()]
+        [object]$Folder
+    )
+
+    return Get-HuduStandaloneObjectPropertyValue -Object (Get-HuduStandaloneFolderObject -Folder $Folder) -Names @('id', 'Id')
+}
+
+function Get-HuduStandaloneFolderParentId {
+    param(
+        [AllowNull()]
+        [object]$Folder
+    )
+
+    return Get-HuduStandaloneObjectPropertyValue -Object (Get-HuduStandaloneFolderObject -Folder $Folder) -Names @('parent_folder_id', 'ParentFolderId', 'parentId')
+}
+
+function Get-HuduStandaloneFolderCompanyId {
+    param(
+        [AllowNull()]
+        [object]$Folder
+    )
+
+    return Get-HuduStandaloneObjectPropertyValue -Object (Get-HuduStandaloneFolderObject -Folder $Folder) -Names @('company_id', 'CompanyId')
+}
+
+function Get-HuduStandaloneFolderType {
+    param(
+        [AllowNull()]
+        [object]$Folder
+    )
+
+    return [string](Get-HuduStandaloneObjectPropertyValue -Object (Get-HuduStandaloneFolderObject -Folder $Folder) -Names @('folder_type', 'FolderType'))
+}
+
+function Test-HuduStandaloneSameFolderParent {
+    param(
+        [AllowNull()]
+        [object]$A,
+
+        [AllowNull()]
+        [object]$B
+    )
+
+    $aIsRoot = $null -eq $A -or [string]$A -eq '' -or [string]$A -eq '0'
+    $bIsRoot = $null -eq $B -or [string]$B -eq '' -or [string]$B -eq '0'
+
+    if ($aIsRoot -or $bIsRoot) { return $aIsRoot -and $bIsRoot }
+
+    return [string]$A -eq [string]$B
+}
+
+function Add-HuduStandalonePhotoFoldersToCache {
+    param(
+        [AllowNull()]
+        [array]$Folders
+    )
+
+    if ($null -eq $script:StandaloneImageArticlePhotoFolders) {
+        $script:StandaloneImageArticlePhotoFolders = @()
+    }
+
+    foreach ($folder in @($Folders)) {
+        $folderObject = Get-HuduStandaloneFolderObject -Folder $folder
+        if ($null -eq $folderObject) { continue }
+
+        $folderId = Get-HuduStandaloneFolderId -Folder $folderObject
+        if ($null -ne $folderId) {
+            $existingIndex = -1
+            for ($i = 0; $i -lt $script:StandaloneImageArticlePhotoFolders.Count; $i++) {
+                $existingId = Get-HuduStandaloneFolderId -Folder $script:StandaloneImageArticlePhotoFolders[$i]
+                if ([string]$existingId -eq [string]$folderId) {
+                    $existingIndex = $i
+                    break
+                }
+            }
+
+            if ($existingIndex -ge 0) {
+                $script:StandaloneImageArticlePhotoFolders[$existingIndex] = $folderObject
+                continue
+            }
+        }
+
+        $script:StandaloneImageArticlePhotoFolders += @($folderObject)
+    }
+}
+
+function Get-HuduStandalonePhotoFoldersForCache {
+    param(
+        [AllowNull()]
+        [object]$CompanyId
+    )
+
+    if (-not (Get-Command -Name Get-HuduFolders -ErrorAction SilentlyContinue)) { return @() }
+
+    $results = [System.Collections.Generic.List[object]]::new()
+    foreach ($folderType in @('article', 'photo')) {
+        try {
+            $folders = if ($null -ne $CompanyId) {
+                Get-HuduFolders -CompanyId ([int]$CompanyId) -folderType $folderType
+            } else {
+                Get-HuduFolders -folderType $folderType
+            }
+
+            foreach ($folder in @($folders)) { $results.Add($folder) }
+        } catch {
+            Write-Verbose "Could not load $folderType folders for standalone image photo conversion: $($_.Exception.Message)"
+        }
+    }
+
+    if ($results.Count -lt 1) {
+        try {
+            $folders = if ($null -ne $CompanyId) {
+                Get-HuduFolders -CompanyId ([int]$CompanyId)
+            } else {
+                Get-HuduFolders
+            }
+
+            foreach ($folder in @($folders)) { $results.Add($folder) }
+        } catch {
+            Write-Verbose "Could not load folders for standalone image photo conversion: $($_.Exception.Message)"
+        }
+    }
+
+    return $results.ToArray()
+}
+
+function Initialize-HuduStandalonePhotoFolderCache {
+    param(
+        [AllowNull()]
+        [object]$CompanyId
+    )
+
+    if ($null -eq $script:StandaloneImageArticlePhotoFolders) {
+        $script:StandaloneImageArticlePhotoFolders = @()
+    }
+    if ($null -eq $script:StandaloneImageArticlePhotoFolderCacheKeys) {
+        $script:StandaloneImageArticlePhotoFolderCacheKeys = @{}
+    }
+
+    $cacheKey = if ($null -ne $CompanyId) { "company:$CompanyId" } else { 'global' }
+    if ($script:StandaloneImageArticlePhotoFolderCacheKeys.ContainsKey($cacheKey)) { return }
+
+    Add-HuduStandalonePhotoFoldersToCache -Folders @(Get-HuduStandalonePhotoFoldersForCache -CompanyId $CompanyId)
+    $script:StandaloneImageArticlePhotoFolderCacheKeys[$cacheKey] = $true
+}
+
+function Find-HuduStandaloneFolderInCache {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [AllowNull()]
+        [object]$CompanyId,
+
+        [AllowNull()]
+        [object]$ParentFolderId,
+
+        [string]$FolderType
+    )
+
+    $matches = @(
+        @($script:StandaloneImageArticlePhotoFolders) |
+            Where-Object {
+                $folder = Get-HuduStandaloneFolderObject -Folder $_
+                if ($null -eq $folder) {
+                    $false
+                } else {
+                    $candidateParentId = Get-HuduStandaloneFolderParentId -Folder $folder
+                    $candidateCompanyId = Get-HuduStandaloneFolderCompanyId -Folder $folder
+                    $candidateType = Get-HuduStandaloneFolderType -Folder $folder
+
+                    $folder.name -eq $Name -and
+                    [string]$candidateCompanyId -eq [string]$CompanyId -and
+                    (Test-HuduStandaloneSameFolderParent -A $candidateParentId -B $ParentFolderId) -and
+                    (
+                        [string]::IsNullOrWhiteSpace($FolderType) -or
+                        $candidateType -ieq $FolderType
+                    )
+                }
+            }
+    )
+
+    if ($matches.Count -gt 1) {
+        Write-Warning "Multiple $($FolderType ?? 'matching') folder matches found for '$Name' under parent '$($ParentFolderId ?? 'ROOT')'. Using first match."
+    }
+
+    return $matches | Select-Object -First 1
+}
+
+function Resolve-HuduStandalonePhotoFolderName {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [AllowNull()]
+        [object]$CompanyId,
+
+        [AllowNull()]
+        [object]$ParentFolderId
+    )
+
+    $existingPhoto = Find-HuduStandaloneFolderInCache -Name $Name -CompanyId $CompanyId -ParentFolderId $ParentFolderId -FolderType 'photo'
+    if ($existingPhoto) {
+        return [pscustomobject]@{
+            Name                = $Name
+            ExistingPhotoFolder = $existingPhoto
+        }
+    }
+
+    $sameNameCollision = Find-HuduStandaloneFolderInCache -Name $Name -CompanyId $CompanyId -ParentFolderId $ParentFolderId
+    if (-not $sameNameCollision) {
+        return [pscustomobject]@{
+            Name                = $Name
+            ExistingPhotoFolder = $null
+        }
+    }
+
+    for ($i = 0; $i -lt 100; $i++) {
+        $candidateName = if ($i -eq 0) { "$Name (Photos)" } else { "$Name (Photos) $($i + 1)" }
+        $candidatePhoto = Find-HuduStandaloneFolderInCache -Name $candidateName -CompanyId $CompanyId -ParentFolderId $ParentFolderId -FolderType 'photo'
+        if ($candidatePhoto) {
+            return [pscustomobject]@{
+                Name                = $candidateName
+                ExistingPhotoFolder = $candidatePhoto
+            }
+        }
+
+        $candidateCollision = Find-HuduStandaloneFolderInCache -Name $candidateName -CompanyId $CompanyId -ParentFolderId $ParentFolderId
+        if (-not $candidateCollision) {
+            return [pscustomobject]@{
+                Name                = $candidateName
+                ExistingPhotoFolder = $null
+            }
+        }
+    }
+
+    throw "Could not find an available photo folder name for '$Name'."
+}
+
+function Get-HuduStandaloneArticleFolderChain {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Article
+    )
+
+    $folderId = Get-HuduStandaloneObjectPropertyValue -Object $Article.HuduObject -Names @('folder_id', 'FolderId')
+    if ($null -eq $folderId) {
+        $folderId = Get-HuduStandaloneObjectPropertyValue -Object $Article -Names @('folder_id', 'FolderId', 'article_folder_id')
+    }
+    if ($null -eq $folderId -or [string]::IsNullOrWhiteSpace([string]$folderId) -or [string]$folderId -eq '0') {
+        return @()
+    }
+
+    $folderById = @{}
+    foreach ($folder in @($script:StandaloneImageArticlePhotoFolders)) {
+        $folderObject = Get-HuduStandaloneFolderObject -Folder $folder
+        $id = Get-HuduStandaloneFolderId -Folder $folderObject
+        if ($null -ne $folderObject -and $null -ne $id) {
+            $folderById[[string]$id] = $folderObject
+        }
+    }
+
+    $chain = @()
+    $seen = @{}
+    $currentId = [string]$folderId
+    while (-not [string]::IsNullOrWhiteSpace($currentId) -and $folderById.ContainsKey($currentId)) {
+        if ($seen.ContainsKey($currentId)) {
+            Write-Warning "Folder parent loop detected at folder ID $currentId."
+            break
+        }
+
+        $seen[$currentId] = $true
+        $folder = $folderById[$currentId]
+        $chain = @($folder) + $chain
+        $currentId = [string](Get-HuduStandaloneFolderParentId -Folder $folder)
+    }
+
+    return $chain
+}
+
+function Resolve-HuduStandaloneImagePhotoFolder {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Article,
+
+        [Parameter(Mandatory = $true)]
+        [int]$CompanyId
+    )
+
+    if (-not (Get-Command -Name Get-HuduFolders -ErrorAction SilentlyContinue) -or -not (Get-Command -Name New-HuduFolder -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    Initialize-HuduStandalonePhotoFolderCache -CompanyId $CompanyId
+    Initialize-HuduStandalonePhotoFolderCache -CompanyId $null
+
+    $chain = @(Get-HuduStandaloneArticleFolderChain -Article $Article)
+    if ($chain.Count -lt 1) { return $null }
+
+    $photoParentId = $null
+    $photoPathSegments = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($articleFolder in $chain) {
+        $articleFolderObject = Get-HuduStandaloneFolderObject -Folder $articleFolder
+        if ($null -eq $articleFolderObject -or [string]::IsNullOrWhiteSpace([string]$articleFolderObject.name)) {
+            continue
+        }
+
+        $nameResolution = Resolve-HuduStandalonePhotoFolderName -Name ([string]$articleFolderObject.name) -CompanyId $CompanyId -ParentFolderId $photoParentId
+        $photoFolderName = $nameResolution.Name
+
+        if ($nameResolution.ExistingPhotoFolder) {
+            $existingId = Get-HuduStandaloneFolderId -Folder $nameResolution.ExistingPhotoFolder
+            if ($null -eq $existingId) { return $null }
+            $photoParentId = [int]$existingId
+            $photoPathSegments.Add([string](Get-HuduStandaloneFolderObject -Folder $nameResolution.ExistingPhotoFolder).name)
+            continue
+        }
+
+        $createParams = @{
+            Name       = $photoFolderName
+            folderType = 'photo'
+            CompanyId  = $CompanyId
+        }
+        if ($photoParentId -is [int]) {
+            $createParams.ParentFolderId = [int]$photoParentId
+        }
+
+        try {
+            $created = New-HuduFolder @createParams
+        } catch {
+            Write-Warning "Could not create photo folder '$photoFolderName' for standalone image article '$($Article.name)': $($_.Exception.Message)"
+            return $null
+        }
+
+        $createdFolder = Get-HuduStandaloneFolderObject -Folder $created
+        $createdId = Get-HuduStandaloneFolderId -Folder $createdFolder
+        if ($null -eq $createdId) {
+            $createdData = Get-HuduStandaloneObjectPropertyValue -Object $created -Names @('data')
+            if ($createdData) {
+                $createdFolder = Get-HuduStandaloneFolderObject -Folder (@($createdData) | Select-Object -First 1)
+                $createdId = Get-HuduStandaloneFolderId -Folder $createdFolder
+            }
+        }
+        if ($null -eq $createdId) {
+            Write-Warning "New-HuduFolder returned no folder ID for standalone image article photo folder '$photoFolderName'."
+            return $null
+        }
+
+        $photoParentId = [int]$createdId
+        $photoPathSegments.Add([string]$photoFolderName)
+        Add-HuduStandalonePhotoFoldersToCache -Folders @($createdFolder)
+    }
+
+    if ($photoParentId -isnot [int]) { return $null }
+
+    return [pscustomobject]@{
+        FolderId = [int]$photoParentId
+        Path     = ($photoPathSegments -join '/')
+    }
+}
+
 function Resolve-HuduStandaloneImagePhotoCompanyId {
     param(
         [Parameter(Mandatory = $true)]
@@ -238,7 +647,7 @@ function New-HuduArticleStandaloneImagePhoto {
     }
 
     $companyId = Resolve-HuduStandaloneImagePhotoCompanyId -Article $Article -MatchedCompanies $MatchedCompanies
-    $folderId = [int]($Article.HuduObject.folder_id ?? $Article.folder_id ?? 0)
+    $photoFolder = Resolve-HuduStandaloneImagePhotoFolder -Article $Article -CompanyId $companyId
     $photoParams = @{
         Path           = $imageFile.FullName
         Caption        = [string]($Article.name ?? $imageFile.Name)
@@ -247,7 +656,9 @@ function New-HuduArticleStandaloneImagePhoto {
         CompanyId      = $companyId
     }
 
-    if ($folderId -gt 0) { $photoParams.FolderId = $folderId }
+    if ($photoFolder -and $photoFolder.FolderId -gt 0) {
+        $photoParams.FolderId = [int]$photoFolder.FolderId
+    }
 
     $photoResponse = New-HuduPhoto @photoParams
     $photo = $photoResponse.photo ?? $photoResponse
@@ -261,6 +672,8 @@ function New-HuduArticleStandaloneImagePhoto {
         ArticleId              = $articleId
         PhotoableType          = 'Company'
         PhotoableId            = $companyId
+        FolderId               = $photoFolder.FolderId
+        FolderPath             = $photoFolder.Path
         ArchiveOriginalArticle = $true
         Content                = "Converted standalone image article to Hudu photo: $($imageFile.Name)"
     }
