@@ -11,14 +11,9 @@ $FirstTimeLoad = 1
 
 # Use this to set the context of the script runs
 
-$ScriptStartTime = $(Get-Date)
-$JobStartTime = $JobStartTime ?? @{}
-$MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
-if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){
-$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2))
-$MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit)
-$MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit))
-}
+if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit));}
+$UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
+
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
 $UseFastAssetCommit = $UseFastAssetCommit ?? $true
 $UseFastRelationCommit = $UseFastRelationCommit ?? $true
@@ -141,24 +136,28 @@ if ($backups -notin @("Y", "y")) {
     exit 1
 }
 
-    if (Test-Path -Path "$MigrationLogs") {
-        if (-not ([string]::IsNullOrEmpty($guiSettingsDir)) -and (test-path $guiSettingsDir)){
-            Write-Host "Settings loaded from frontend, skipping path checks for logs/errors dir. Migration log dir was set to: $MigrationLogs; Gui settings at $guiSettingsDir" -ForegroundColor Green
-        } elseif ($ResumePrevious -eq $true) {
-            Write-Host "A previous attempt has been found job will be resumed from the last successful section" -ForegroundColor Green
-            $ResumeFound = $true
-        } else {
-            Write-Host "A previous attempt has been found, resume is disabled so this will be lost, if you haven't reverted to a snapshot, a resume is recommended" -ForegroundColor Red
-            Write-TimedMessage -Timeout 12 -Message "Press any key to continue or ctrl + c to quit and edit the ResumePrevious setting" -DefaultResponse "proceed with new migration, do not resume"
-            $ResumeFound = $false
-        }
+
+if (Test-Path -Path "$MigrationLogs") {
+    if (-not ([string]::IsNullOrEmpty($guiSettingsDir)) -and (test-path $guiSettingsDir)){
+        Write-Host "Settings loaded from frontend, skipping path checks for logs/errors dir. Migration log dir was set to: $MigrationLogs; Gui settings at $guiSettingsDir" -ForegroundColor Green
+    } elseif ($ResumePrevious -eq $true) {
+        Write-Host "A previous attempt has been found job will be resumed from the last successful section" -ForegroundColor Green
+        $ResumeFound = $true
     } else {
-        Write-Host "No previous runs found creating log directory"
-        $null = New-Item "$MigrationLogs" -ItemType "directory"
+        Write-Host "A previous attempt has been found, resume is disabled so this will be lost, if you haven't reverted to a snapshot, a resume is recommended" -ForegroundColor Red
+        Write-TimedMessage -Timeout 12 -Message "Press any key to continue or ctrl + c to quit and edit the ResumePrevious setting" -DefaultResponse "proceed with new migration, do not resume"
         $ResumeFound = $false
     }
+} else {
+    Write-Host "No previous runs found creating log directory"
+    $null = New-Item "$MigrationLogs" -ItemType "directory"
+    $ResumeFound = $false
+}
 
-
+$ScriptStartTime = $(Get-Date)
+Write-Host "Safety Tests have passed! Starting migration $ScriptStartTime"
+$JobStartTime = $JobStartTime ?? @{}
+$MigrationJobTimeline = $MigrationJobTimeline ?? [System.Collections.ArrayList]@()
 
 # Setup some variables
 $MatchedInterfaces = [System.Collections.ArrayList]@()
