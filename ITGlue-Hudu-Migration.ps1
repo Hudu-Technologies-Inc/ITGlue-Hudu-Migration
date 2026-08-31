@@ -575,37 +575,37 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 
     # Save the results to resume from if needed
     $($MatchedLocations ?? @()) | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Locations.json"
+    # add labels for primary locations
+    $primaryLocations = $matchedlocations | Where-Object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
+    if ($primaryLocations -and $primaryLocations.count -gt 0) {
+        $LocationLabelTypeCache = @{}
+        $LocationLabelRequests = foreach ($primaryLocation in $primaryLocations) {
+            [pscustomobject]@{
+                LabelName  = "Primary $LocImportAssetLayoutName"
+                RecordType = 'Asset'
+                RecordId   = $primaryLocation.HuduObject.id
+                RecordName = $primaryLocation.Name
+            }
+        }
+        $LocationLabelResults = Add-HuduMigrationLabels -Labels @($LocationLabelRequests) -LabelTypeCache $LocationLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+        $LocationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\LocationLabels.json"
+    } else {
+        $primaryLocations = @()
+        $LocationLabelResults = @()
+    }
+
+    $ITGLocationsHashTable = @{}
+    foreach ($ITGL in $($MatchedLocations ?? @())) {
+        $ITGLocationsHashTable["$($ITGL.itgid)"] = $ITGL
+    }
+    $LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
+    if ($null -ne $LocationLayout -and $null -ne $LocationLayout.id) {
+        try {set-huduassetlayout -id $LocationLayout.id -isLocation $true} catch {}
+    }
+
 
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
-}
-
-# add labels for primary locations
-$primaryLocations = $matchedlocations | Where-Object { $_.ITGObject.attributes.primary -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.Id }
-if ($primaryLocations -and $primaryLocations.count -gt 0) {
-    $LocationLabelTypeCache = @{}
-    $LocationLabelRequests = foreach ($primaryLocation in $primaryLocations) {
-        [pscustomobject]@{
-            LabelName  = "Primary $LocImportAssetLayoutName"
-            RecordType = 'Asset'
-            RecordId   = $primaryLocation.HuduObject.id
-            RecordName = $primaryLocation.Name
-        }
-    }
-    $LocationLabelResults = Add-HuduMigrationLabels -Labels @($LocationLabelRequests) -LabelTypeCache $LocationLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
-    $LocationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\LocationLabels.json"
-} else {
-    $primaryLocations = @()
-    $LocationLabelResults = @()
-}
-
-$ITGLocationsHashTable = @{}
-foreach ($ITGL in $($MatchedLocations ?? @())) {
-    $ITGLocationsHashTable["$($ITGL.itgid)"] = $ITGL
-}
-$LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
-if ($null -ne $LocationLayout -and $null -ne $LocationLayout.id) {
-    try {set-huduassetlayout -id $LocationLayout.id -isLocation $true} catch {}
 }
 
 ############################### Websites ###############################
@@ -1044,29 +1044,32 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         Write-Error "This should never have happened somehow you selected something other than 1 or 2."
         exit 1
     }
+    $ConfigLabelTypeCache = @{}
+    $ConfigurationLabelRequests = @()
+    foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
+        $configurationStatusColor = if ($configurationstatus -ilike "active*") { 'green' } elseif ($configurationstatus -ilike "inactive*") { 'red' } else { "$(Get-RandomHexColor)" }
+        foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+            $ConfigurationLabelRequests += [pscustomobject]@{
+                LabelName  = $configurationstatus
+                RecordType = 'Asset'
+                RecordId   = $ConfigLabel.HuduObject.id
+                RecordName = $ConfigLabel.Name
+                Color      = $configurationStatusColor
+            }
+        }
+    }
+    if ($null -ne $ConfigurationLabelRequests -and $ConfigurationLabelRequests.Count -gt 0) {
+        $ConfigurationLabelResults = Add-HuduMigrationLabels -Labels @($ConfigurationLabelRequests) -LabelTypeCache $ConfigLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+        $ConfigurationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ConfigurationLabels.json"
+    } else {
+        Write-Host "No configuration labels to add, skipping labels for configs."; $ConfigurationLabelResults = @();
+    }
 
     # Save the results to resume from if needed
     $MatchedConfigurations | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Configurations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Configurations Migrated Continue?"  -DefaultResponse "continue to Contacts, please."
 
 }
-
-$ConfigLabelTypeCache = @{}
-$ConfigurationLabelRequests = @()
-foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
-    $configurationStatusColor = if ($configurationstatus -ilike "active*") { 'green' } elseif ($configurationstatus -ilike "inactive*") { 'red' } else { "$(Get-RandomHexColor)" }
-    foreach ($ConfigLabel in $($MatchedConfigurations | Where-Object { $_.Itgobject.attributes.'configuration-status-name' -ieq $configurationstatus -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-        $ConfigurationLabelRequests += [pscustomobject]@{
-            LabelName  = $configurationstatus
-            RecordType = 'Asset'
-            RecordId   = $ConfigLabel.HuduObject.id
-            RecordName = $ConfigLabel.Name
-            Color      = $configurationStatusColor
-        }
-    }
-}
-$ConfigurationLabelResults = Add-HuduMigrationLabels -Labels @($ConfigurationLabelRequests) -LabelTypeCache $ConfigLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
-$ConfigurationLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ConfigurationLabels.json"
 
 
 ############################### Contacts ###############################
@@ -1226,24 +1229,27 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     #Import Locations
     $MatchedContacts = Import-Items @ConImportSplat
 
+    $ContactLabelTypeCache = @{}
+    $ContactLabelRequests = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+        [pscustomobject]@{
+            LabelName  = "Important $ConImportAssetLayoutName"
+            RecordType = 'Asset'
+            RecordId   = $importantContact.HuduObject.id
+            RecordName = $importantContact.Name
+        }
+    }
+    if ($null -ne $ContactLabelRequests -and $ContactLabelRequests.Count -gt 0) {
+        $ContactLabelResults = Add-HuduMigrationLabels -Labels @($ContactLabelRequests) -LabelTypeCache $ContactLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+        $ContactLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ContactLabels.json"
+    } else {
+        write-host "Skipping labels for contacts- none present."; $ContactLabelResults = @()
+    }
     Write-Host "Contacts Complete"
-
     $MatchedContacts | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Contacts.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
 }
 
-$ContactLabelTypeCache = @{}
-$ContactLabelRequests = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-    [pscustomobject]@{
-        LabelName  = "Important $ConImportAssetLayoutName"
-        RecordType = 'Asset'
-        RecordId   = $importantContact.HuduObject.id
-        RecordName = $importantContact.Name
-    }
-}
-$ContactLabelResults = Add-HuduMigrationLabels -Labels @($ContactLabelRequests) -LabelTypeCache $ContactLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
-$ContactLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ContactLabels.json"
 
 	
 ############################### Flexible Asset Layouts and Assets ###############################
@@ -2535,26 +2541,30 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     # Save the results to resume from if needed
     $MatchedPasswords | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Passwords.json"
     
+    $PasswordLabelTypeCache = @{}
+    $PasswordLabelRequests = @()
+    foreach ($passwordType in $( $($MatchedPasswords | Where-Object { $null -ne $_.huduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'password-category-name' | Select-Object -Unique)) {
+        if ([string]::IsNullOrWhiteSpace([string]$passwordType)) { continue }
+
+        foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
+            $PasswordLabelRequests += [pscustomobject]@{
+                LabelName  = $passwordType
+                RecordType = 'AssetPassword'
+                RecordId   = $labelablePassword.HuduObject.id
+                RecordName = $labelablePassword.Name
+            }
+        }
+    }
+    if ($null -ne $PasswordLabelRequests -and $PasswordLabelRequests.Count -gt 0) {
+        $PasswordLabelResults = Add-HuduMigrationLabels -Labels @($PasswordLabelRequests) -LabelTypeCache $PasswordLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
+        $PasswordLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\PasswordLabels.json"
+    } else {
+        Write-Host "No password labels to add. skipping."; $passwordLabelResults = @();
+    }
     $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Passwords Finished. Continue?"  -DefaultResponse "continue to Document/Article Updates, please."
 }
 
-$PasswordLabelTypeCache = @{}
-$PasswordLabelRequests = @()
-foreach ($passwordType in $( $($MatchedPasswords | Where-Object { $null -ne $_.huduObject -and $null -ne $_.HuduObject.id }).itgobject.attributes.'password-category-name' | Select-Object -Unique)) {
-    if ([string]::IsNullOrWhiteSpace([string]$passwordType)) { continue }
-
-    foreach ($labelablePassword in $($MatchedPasswords | Where-Object { $_.Itgobject.attributes.'password-category-name' -ieq $passwordType -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
-        $PasswordLabelRequests += [pscustomobject]@{
-            LabelName  = $passwordType
-            RecordType = 'AssetPassword'
-            RecordId   = $labelablePassword.HuduObject.id
-            RecordName = $labelablePassword.Name
-        }
-    }
-}
-$PasswordLabelResults = Add-HuduMigrationLabels -Labels @($PasswordLabelRequests) -LabelTypeCache $PasswordLabelTypeCache -ThrottleLimit $MigrationParallelismLimit -UseFastLabelCommit $UseFastLabelCommit -CustomHeaders $HuduFastCommitHeaders
-$PasswordLabelResults | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\PasswordLabels.json"
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
 
@@ -2681,20 +2691,29 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
     $finalArticleContent = $UpdatedContent.Content
     $standaloneAttachmentNoteApplied = $false
     if ($finalArticleContent -eq 'Empty Document in IT Glue Export - Please Check IT Glue' -and $articleFound.name -ilike '*.*') {
-        $standaloneImagePhoto = New-HuduArticleStandaloneImagePhoto -Article $articleFound -ExportPath $ITGlueExportPath -MatchedCompanies $MatchedCompanies
-        if ($standaloneImagePhoto) {
-            $finalArticleContent = $standaloneImagePhoto.Content
-            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoCreated -Value $true -Force
-            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoId -Value $standaloneImagePhoto.PhotoId -Force
-            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFile -Value $standaloneImagePhoto.File.FullName -Force
-            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFolderId -Value $standaloneImagePhoto.FolderId -Force
-            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFolderPath -Value $standaloneImagePhoto.FolderPath -Force
-            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticleArchiveOriginal -Value $true -Force
-            $null = $StandaloneImageArticlePhotoResults.Add($standaloneImagePhoto)
-            Write-Host "Converted standalone image article '$($articleFound.name)' to Hudu photo '$($standaloneImagePhoto.File.Name)'; original article will be archived." -ForegroundColor Cyan
-        } elseif ($standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath) {
-            $finalArticleContent = $standaloneMediaEmbed.Content
-            Write-Host "Embedded standalone $($standaloneMediaEmbed.Kind.ToLowerInvariant()) upload '$($standaloneMediaEmbed.File.Name)' in article $($articleFound.name)." -ForegroundColor Cyan
+        $standaloneArticleFileKind = Get-HuduStandaloneArticleFileKind -Path ([string]$articleFound.name)
+        if ($standaloneArticleFileKind -eq 'Image') {
+            $standaloneImagePhoto = New-HuduArticleStandaloneImagePhoto -Article $articleFound -ExportPath $ITGlueExportPath -MatchedCompanies $MatchedCompanies
+            if ($standaloneImagePhoto) {
+                $finalArticleContent = $standaloneImagePhoto.Content
+                $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoCreated -Value $true -Force
+                $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoId -Value $standaloneImagePhoto.PhotoId -Force
+                $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFile -Value $standaloneImagePhoto.File.FullName -Force
+                $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFolderId -Value $standaloneImagePhoto.FolderId -Force
+                $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFolderPath -Value $standaloneImagePhoto.FolderPath -Force
+                $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticleArchiveOriginal -Value $true -Force
+                $null = $StandaloneImageArticlePhotoResults.Add($standaloneImagePhoto)
+                Write-Host "Converted standalone image article '$($articleFound.name)' to Hudu photo '$($standaloneImagePhoto.File.Name)'; original article will be archived." -ForegroundColor Cyan
+            } else {
+                $finalArticleContent = "Please see attached file, $($articleFound.name)"
+            }
+        } elseif ($standaloneArticleFileKind -in @('Audio', 'Video')) {
+            if ($standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath) {
+                $finalArticleContent = $standaloneMediaEmbed.Content
+                Write-Host "Embedded standalone $($standaloneMediaEmbed.Kind.ToLowerInvariant()) upload '$($standaloneMediaEmbed.File.Name)' in article $($articleFound.name)." -ForegroundColor Cyan
+            } else {
+                $finalArticleContent = "Please see attached file, $($articleFound.name)"
+            }
         } else {
             $finalArticleContent = "Please see attached file, $($articleFound.name)"
         }
