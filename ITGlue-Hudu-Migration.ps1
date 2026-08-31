@@ -120,14 +120,17 @@ if ($diskSpaceCheck.EnumerationErrorCount -gt 0) {
 }
 
 $estimateParams = @{
-    ExportPath  = $ITGlueExportPath
-    ITGBaseURI  = $ITGAPIEndpoint
+    ExportPath         = $ITGlueExportPath
+    ITGBaseURI         = $ITGAPIEndpoint
+    CommitWorkerCount  = $MigrationParallelismLimit
 }
 if ($false -eq $importPasswordFolders) {
     $estimateParams['PasswordFolderCount'] = 0
 }
 $estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
-Write-Host "Your Migration is estimated to finish some time around $($ScriptStartTime + $estimatedJobDuration) or about $($estimatedJobDuration.TotalHours) hours from now"
+$estimateGeneratedAt = Get-Date
+$estimatedCompletionAt = $estimateGeneratedAt + $estimatedJobDuration
+Write-Host "Your Migration is estimated to finish some time around $estimatedCompletionAt or about $($estimatedJobDuration.TotalHours) hours from now using $($estimateParams.CommitWorkerCount) commit worker(s)"
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
@@ -2638,6 +2641,9 @@ $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
 if ($UseFastArticleContentCommit -and -not (Get-Command -Name Invoke-FastHuduArticleContentCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
 }
+if (-not (Get-Command -Name New-HuduArticleStandaloneMediaEmbed -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\ArticleMediaEmbed.ps1
+}
 
 $preparedArticleCommits = [System.Collections.ArrayList]@()
 $articlePreCommitFailures = [System.Collections.ArrayList]@()
@@ -2674,7 +2680,13 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
     $finalArticleContent = $UpdatedContent.Content
     $standaloneAttachmentNoteApplied = $false
     if ($finalArticleContent -eq 'Empty Document in IT Glue Export - Please Check IT Glue' -and $articleFound.name -ilike '*.*') {
-        $finalArticleContent = "Please see attached file, $($articleFound.name)"
+        $standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath
+        if ($standaloneMediaEmbed) {
+            $finalArticleContent = $standaloneMediaEmbed.Content
+            Write-Host "Embedded standalone $($standaloneMediaEmbed.Kind.ToLowerInvariant()) upload '$($standaloneMediaEmbed.File.Name)' in article $($articleFound.name)." -ForegroundColor Cyan
+        } else {
+            $finalArticleContent = "Please see attached file, $($articleFound.name)"
+        }
         $standaloneAttachmentNoteApplied = $true
     }
     $finalContentPath = $articleFound.LocalContentPath
@@ -3222,6 +3234,8 @@ $migratedItems = [ordered]@{
     'Hudu Global Process Templates Migrated'     = $GlobalProcessTemplatesMigrated
     'Hudu Company Process Templates Migrated'    = $CompanyProcessTemplatesMigrated
     'Hudu Process Runs Migrated'                 = $ProcessRunsMigrated
+    'Manual Actions Count'                       = $($ManualActions.GetEnumerator() | Measure-Object).count
+    'Manual Action Categories'                   = $($ManualActions.GetEnumerator().type | Select-Object -Unique | Measure-Object).count
 }
 
 $archivedItems = [ordered]@{
@@ -3230,7 +3244,7 @@ $archivedItems = [ordered]@{
     'Assets Archived'          = $ataresults.count ?? 0
     'Documents Archived'       = $documentArchiveResults.count ?? 0
 }
-$MigrationSummary = "$(Format-MigrationSummary -ScriptStartTime $ScriptStartTime -CompletedAt $CompletedAt -Duration $Duration -DebugFolder ($debugFolder ?? "$PSScriptRoot\debug") -MigrationLogs ($MigrationLogs ?? "$PSScriptRoot\debug\logs") -migratedItems $migratedItems -archivedItems $archivedItems)"
+$MigrationSummary = "$(Format-MigrationSummary -ScriptStartTime $ScriptStartTime -CompletedAt $CompletedAt -Duration $Duration -DebugFolder ($debugFolder ?? "$PSScriptRoot\debug") -MigrationLogs ($MigrationLogs ?? "$PSScriptRoot\debug\logs") -EstimatedCompletionAt $estimatedCompletionAt -EstimatedDuration $estimatedJobDuration -EstimateCommitWorkerCount $estimateParams.CommitWorkerCount -migratedItems $migratedItems -archivedItems $archivedItems)"
 if ($JobDurationReport.Count -gt 0) {
     $MigrationSummary = @(
         $MigrationSummary
