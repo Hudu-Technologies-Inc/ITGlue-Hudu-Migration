@@ -594,10 +594,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
         $LocationLabelResults = @()
     }
 
-    $ITGLocationsHashTable = @{}
-    foreach ($ITGL in $($MatchedLocations ?? @())) {
-        $ITGLocationsHashTable["$($ITGL.itgid)"] = $ITGL
-    }
+
     $LocationLayout = Get-HuduAssetLayouts -name $LocImportAssetLayoutName
     if ($null -ne $LocationLayout -and $null -ne $LocationLayout.id) {
         try {set-huduassetlayout -id $LocationLayout.id -isLocation $true} catch {}
@@ -606,6 +603,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
 
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
+}
+$ITGLocationsHashTable = @{}
+foreach ($ITGL in $($MatchedLocations ?? @())) {
+    $ITGLocationsHashTable["$($ITGL.itgid)"] = $ITGL
 }
 
 ############################### Websites ###############################
@@ -1044,6 +1045,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         Write-Error "This should never have happened somehow you selected something other than 1 or 2."
         exit 1
     }
+
+    # Save the results to resume from if needed
+    $MatchedConfigurations | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Configurations.json"
     $ConfigLabelTypeCache = @{}
     $ConfigurationLabelRequests = @()
     foreach ($configurationstatus in $( $($MatchedConfigurations | Where-Object { $null -ne $_.HuduObject -and -not ([string]::IsNullOrWhiteSpace([string]$_.itgobject.attributes.'configuration-status-name')) -and $null -ne $_.HuduObject.id }).itgobject.attributes.'configuration-status-name' | Select-Object -Unique)) {
@@ -1064,9 +1068,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     } else {
         Write-Host "No configuration labels to add, skipping labels for configs."; $ConfigurationLabelResults = @();
     }
-
-    # Save the results to resume from if needed
-    $MatchedConfigurations | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Configurations.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Configurations Migrated Continue?"  -DefaultResponse "continue to Contacts, please."
 
 }
@@ -1229,6 +1230,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     #Import Locations
     $MatchedContacts = Import-Items @ConImportSplat
 
+    Write-Host "Contacts Complete"
+    $MatchedContacts | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Contacts.json"
     $ContactLabelTypeCache = @{}
     $ContactLabelRequests = foreach ($importantContact in $($MatchedContacts | Where-Object { $_.ITGObject.attributes.important -eq $true -and $null -ne $_.HuduObject -and $null -ne $_.HuduObject.id })) {
         [pscustomobject]@{
@@ -1244,8 +1247,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     } else {
         write-host "Skipping labels for contacts- none present."; $ContactLabelResults = @()
     }
-    Write-Host "Contacts Complete"
-    $MatchedContacts | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Contacts.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
 }
