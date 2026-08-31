@@ -2637,6 +2637,7 @@ $AttachmentUrlLookupForReplacement = if ($AttachmentUrlMapForReplacement -and $A
 }
 
 $ArticleContentCommitCandidates = @($MatchedArticles | Where-Object { $_ -and ($_.HuduID ?? $_.id) })
+$StandaloneImageArticlePhotoResults = [System.Collections.ArrayList]@()
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true
 if ($UseFastArticleContentCommit -and -not (Get-Command -Name Invoke-FastHuduArticleContentCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
@@ -2680,8 +2681,16 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
     $finalArticleContent = $UpdatedContent.Content
     $standaloneAttachmentNoteApplied = $false
     if ($finalArticleContent -eq 'Empty Document in IT Glue Export - Please Check IT Glue' -and $articleFound.name -ilike '*.*') {
-        $standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath
-        if ($standaloneMediaEmbed) {
+        $standaloneImagePhoto = New-HuduArticleStandaloneImagePhoto -Article $articleFound -ExportPath $ITGlueExportPath -MatchedCompanies $MatchedCompanies
+        if ($standaloneImagePhoto) {
+            $finalArticleContent = $standaloneImagePhoto.Content
+            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoCreated -Value $true -Force
+            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoId -Value $standaloneImagePhoto.PhotoId -Force
+            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticlePhotoFile -Value $standaloneImagePhoto.File.FullName -Force
+            $articleFound | Add-Member -MemberType NoteProperty -Name StandaloneImageArticleArchiveOriginal -Value $true -Force
+            $null = $StandaloneImageArticlePhotoResults.Add($standaloneImagePhoto)
+            Write-Host "Converted standalone image article '$($articleFound.name)' to Hudu photo '$($standaloneImagePhoto.File.Name)'; original article will be archived." -ForegroundColor Cyan
+        } elseif ($standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath) {
             $finalArticleContent = $standaloneMediaEmbed.Content
             Write-Host "Embedded standalone $($standaloneMediaEmbed.Kind.ToLowerInvariant()) upload '$($standaloneMediaEmbed.File.Name)' in article $($articleFound.name)." -ForegroundColor Cyan
         } else {
@@ -3107,10 +3116,29 @@ $ArchivedPasswords = $MatchedPasswords | Where-Object {$_.itgobject.attributes.a
 $ArchivedConfigurations = $MatchedConfigurations | Where-Object {$_.ITGObject.attributes.archived -eq $true}    
 $ArchivedAssets = $MatchedAssets | Where-Object {$_.ITGObject.attributes.archived -eq $true}
 $documentsForArchive =  $($matchedarticles | Where-Object {@($($($DocsCsv) | Where-Object {$_.archived -ne "No"}) | ForEach-Object {"$($_.id)"}) -contains [string]($_.ITGID)})
+$standaloneImageArticlesForArchive = @($matchedarticles | Where-Object { $true -eq $_.StandaloneImageArticleArchiveOriginal })
 
 $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true
 if ($UseFastArchiveCommit -and -not (Get-Command -Name Invoke-FastHuduArchiveCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastArchiveCommit.ps1
+}
+
+$documentsForArchiveByHuduId = [ordered]@{}
+foreach ($documentForArchive in @($standaloneImageArticlesForArchive)) {
+    if ($documentForArchive.huduid -and $documentForArchive.huduid -gt 0) {
+        $documentsForArchiveByHuduId[[string]$documentForArchive.huduid] = [pscustomobject]@{
+            Source = $documentForArchive
+            Reason = 'StandaloneImagePhoto'
+        }
+    }
+}
+foreach ($documentForArchive in @($documentsForArchive)) {
+    if ($documentForArchive.huduid -and $documentForArchive.huduid -gt 0 -and -not $documentsForArchiveByHuduId.Contains([string]$documentForArchive.huduid)) {
+        $documentsForArchiveByHuduId[[string]$documentForArchive.huduid] = [pscustomobject]@{
+            Source = $documentForArchive
+            Reason = 'ITGlueArchivedDocument'
+        }
+    }
 }
 
 $archiveRequests = @(
@@ -3123,8 +3151,8 @@ $archiveRequests = @(
     $ArchivedAssets | Where-Object { $_.huduid -and $_.huduid -gt 0 -and $_.huduobject.company_id } | ForEach-Object {
         [pscustomobject]@{ Group = 'assets'; Type = 'Asset'; Id = [int]$_.huduid; CompanyId = [int]$_.huduobject.company_id; Source = $_ }
     }
-    $documentsForArchive | Where-Object { $_.huduid -and $_.huduid -gt 0 } | ForEach-Object {
-        [pscustomobject]@{ Group = 'docs'; Type = 'Article'; Id = [int]$_.huduid; Source = $_ }
+    $documentsForArchiveByHuduId.Values | ForEach-Object {
+        [pscustomobject]@{ Group = 'docs'; Type = 'Article'; Id = [int]$_.Source.huduid; Source = $_.Source; Reason = $_.Reason }
     }
 )
 
@@ -3176,6 +3204,7 @@ $ptaresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -
 $ctaresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'configs' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
 $ataresults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'assets' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
 $documentArchiveResults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'docs' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
+$standaloneImageArticleArchiveResults = @($archiveCommitResults | Where-Object { $_.ArchiveRequest.Group -eq 'docs' -and $_.ArchiveRequest.Reason -eq 'StandaloneImagePhoto' -and $_.ArchivedObject } | ForEach-Object { $_.ArchivedObject })
 $archiveCommitResults | ConvertTo-Json -Depth 75 | Out-File $(join-path $settings.MigrationLogs "archive-commit-results.json")
 foreach ($obj in @(
     @{Name = "passwords";       Archived = $ptaresults ?? @() },
@@ -3223,6 +3252,7 @@ $migratedItems = [ordered]@{
     'Layouts Migrated'                           = Get-SafeCount $($MatchedLayouts | where-object {[int]($_.HuduID) -gt 0})
     'Assets Migrated'                            = Get-SafeCount $($MatchedAssets | where-object {[int]($_.HuduID) -gt 0})
     'Articles Migrated'                          = Get-SafeCount $($MatchedArticles | where-object {[int]($_.HuduID) -gt 0})
+    'Standalone Image Articles Converted To Photos' = Get-SafeCount $($MatchedArticles | Where-Object { $true -eq $_.StandaloneImageArticlePhotoCreated })
     'Passwords Migrated'                         = Get-SafeCount $MatchedPasswords
     'Password Folders Migrated'                  = Get-SafeCount $($MatchedPasswordFolders | where-object {[int]($_.HuduPasswordFolder.ID) -gt 0})
     'Passwords From Vault'                       = $VaultedPasswords.count ?? 0
@@ -3243,6 +3273,7 @@ $archivedItems = [ordered]@{
     'Configurations Archived'  = $ctaresults.count ?? 0
     'Assets Archived'          = $ataresults.count ?? 0
     'Documents Archived'       = $documentArchiveResults.count ?? 0
+    'Standalone Image Articles Archived' = $standaloneImageArticleArchiveResults.count ?? 0
 }
 $MigrationSummary = "$(Format-MigrationSummary -ScriptStartTime $ScriptStartTime -CompletedAt $CompletedAt -Duration $Duration -DebugFolder ($debugFolder ?? "$PSScriptRoot\debug") -MigrationLogs ($MigrationLogs ?? "$PSScriptRoot\debug\logs") -EstimatedCompletionAt $estimatedCompletionAt -EstimatedDuration $estimatedJobDuration -EstimateCommitWorkerCount $estimateParams.CommitWorkerCount -migratedItems $migratedItems -archivedItems $archivedItems)"
 if ($JobDurationReport.Count -gt 0) {
