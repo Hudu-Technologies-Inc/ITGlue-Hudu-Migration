@@ -838,6 +838,9 @@ function Format-MigrationSummary {
 
         [string]$DebugFolder = "$PSScriptRoot\debug",
         [string]$MigrationLogs = "$PSScriptRoot\debug\logs",
+        [Nullable[datetime]]$EstimatedCompletionAt = $null,
+        [Nullable[timespan]]$EstimatedDuration = $null,
+        [Nullable[int]]$EstimateCommitWorkerCount = $null,
         $migratedItems,
         $archivedItems
     )
@@ -859,6 +862,16 @@ function Format-MigrationSummary {
     $lines.Add("Started At:   $ScriptStartTime")
     $lines.Add("Completed At: $CompletedAt")
     $lines.Add("Duration:     $($Duration.ToString('hh\:mm\:ss'))")
+    if ($PSBoundParameters.ContainsKey('EstimatedCompletionAt') -and $null -ne $EstimatedCompletionAt) {
+        $estimateDelta = $CompletedAt - [datetime]$EstimatedCompletionAt
+        $estimateDeltaLabel = if ($estimateDelta.TotalSeconds -gt 0) { 'late' } elseif ($estimateDelta.TotalSeconds -lt 0) { 'early' } else { 'exact' }
+        $estimateDeltaDuration = $estimateDelta.Duration()
+        $estimateDurationText = if ($PSBoundParameters.ContainsKey('EstimatedDuration') -and $null -ne $EstimatedDuration) { " ($(([timespan]$EstimatedDuration).ToString('hh\:mm\:ss')) estimated duration)" } else { '' }
+        $estimateWorkerText = if ($PSBoundParameters.ContainsKey('EstimateCommitWorkerCount') -and $null -ne $EstimateCommitWorkerCount) { " using $EstimateCommitWorkerCount commit worker(s)" } else { '' }
+
+        $lines.Add("Estimated Finish: $EstimatedCompletionAt$estimateDurationText$estimateWorkerText")
+        $lines.Add("Estimate Was: $($estimateDeltaDuration.ToString('hh\:mm\:ss')) $estimateDeltaLabel")
+    }
     $lines.Add("Git Info:     $(Get-GitCheckoutInfo)")
     $lines.Add("Hudu Host:    $(Get-HuduBaseurl)")
     $lines.Add("Hudu Version: $($CurrentVersion ?? ([version]$(Get-HuduAppInfo).version))")

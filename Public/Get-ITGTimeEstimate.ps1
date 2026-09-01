@@ -11,6 +11,12 @@ function Get-ITGlueMigrationETA {
         [Alias('ITGAPIEndpoint')]
         [string] $ITGBaseURI,
 
+        [ValidateRange(1, 32)]
+        [int] $CommitWorkerCount = 1,
+
+        [ValidateRange(0.1, 1.0)]
+        [double] $CommitWorkerEfficiency = 0.80,
+
         [double] $Buffer = 1.0,
         [switch] $Detailed
     )
@@ -196,6 +202,34 @@ function Get-ITGlueMigrationETA {
             Region     = 'default'
             Multiplier = 1.00
         }
+    }
+
+    function Get-EffectiveCommitWorkerCount {
+        param(
+            [int] $WorkerCount,
+            [double] $Efficiency
+        )
+
+        $workers = [math]::Max(1, [int]$WorkerCount)
+        if ($workers -eq 1) { return 1.0 }
+
+        return [math]::Max(1.0, 1.0 + (([double]$workers - 1.0) * [double]$Efficiency))
+    }
+
+    function Get-WorkerAdjustedSeconds {
+        param(
+            [double] $Seconds,
+            [double] $CommitRatio = 1.0,
+            [double] $EffectiveWorkers = 1.0
+        )
+
+        if ($Seconds -le 0) { return 0.0 }
+
+        $boundedCommitRatio = [math]::Min(1.0, [math]::Max(0.0, $CommitRatio))
+        $serialSeconds = $Seconds * (1.0 - $boundedCommitRatio)
+        $commitSeconds = ($Seconds * $boundedCommitRatio) / [math]::Max(1.0, $EffectiveWorkers)
+
+        return $serialSeconds + $commitSeconds
     }
 
     function Get-ArchivedRowCount {
@@ -453,31 +487,33 @@ function Get-ITGlueMigrationETA {
     # Estimate
     # ------------------------------------------------------------
 
+    $effectiveCommitWorkers = Get-EffectiveCommitWorkerCount -WorkerCount $CommitWorkerCount -Efficiency $CommitWorkerEfficiency
+
     $parts = [ordered]@{
         Companies =
             $companies * $coef.Company
 
         Locations =
-            $locations * $coef.Location
+            Get-WorkerAdjustedSeconds -Seconds ($locations * $coef.Location) -CommitRatio 0.80 -EffectiveWorkers $effectiveCommitWorkers
 
         Websites =
             $websites * $coef.Website
 
         Configurations =
-            $configurations * $coef.Configuration
+            Get-WorkerAdjustedSeconds -Seconds ($configurations * $coef.Configuration) -CommitRatio 0.80 -EffectiveWorkers $effectiveCommitWorkers
 
         Contacts =
-            $contacts * $coef.Contact
+            Get-WorkerAdjustedSeconds -Seconds ($contacts * $coef.Contact) -CommitRatio 0.80 -EffectiveWorkers $effectiveCommitWorkers
 
         FlexibleAssets =
-            $flexibleAssets * $coef.FlexibleAsset
+            Get-WorkerAdjustedSeconds -Seconds ($flexibleAssets * $coef.FlexibleAsset) -CommitRatio 0.85 -EffectiveWorkers $effectiveCommitWorkers
 
         FlexibleLayouts =
             $flexibleLayouts * $coef.FlexibleLayout
 
         Articles =
             ($articles * $coef.ArticleStub) +
-            ($articles * $coef.ArticleContent) +
+            (Get-WorkerAdjustedSeconds -Seconds ($articles * $coef.ArticleContent) -CommitRatio 1.0 -EffectiveWorkers $effectiveCommitWorkers) +
             ($documents.Count * $coef.DocumentFile) +
             ($documents.MB * $coef.DocumentMB)
 
@@ -499,14 +535,14 @@ function Get-ITGlueMigrationETA {
 
         Labels =
             ($labelTypeCount * $coef.LabelType) +
-            ($labelCount * $coef.Label)
+            (Get-WorkerAdjustedSeconds -Seconds ($labelCount * $coef.Label) -CommitRatio 1.0 -EffectiveWorkers $effectiveCommitWorkers)
 
         Relations =
             ($relationSourceObjects * $coef.RelationSourceObject) +
-            ($estimatedRelationCount * $coef.RelationCreate)
+            (Get-WorkerAdjustedSeconds -Seconds ($estimatedRelationCount * $coef.RelationCreate) -CommitRatio 1.0 -EffectiveWorkers $effectiveCommitWorkers)
 
         Archiving =
-            $archivedRows * $coef.ArchiveItem
+            Get-WorkerAdjustedSeconds -Seconds ($archivedRows * $coef.ArchiveItem) -CommitRatio 1.0 -EffectiveWorkers $effectiveCommitWorkers
     }
 
     $rawSeconds = Get-Sum $parts.Values
@@ -536,6 +572,9 @@ function Get-ITGlueMigrationETA {
         EndpointRegion            = $endpointAdjustment.Region
         EndpointMultiplier        = $endpointAdjustment.Multiplier
         EffectiveBuffer           = $effectiveBuffer
+        CommitWorkerCount         = $CommitWorkerCount
+        CommitWorkerEfficiency    = $CommitWorkerEfficiency
+        EffectiveCommitWorkers    = [math]::Round($effectiveCommitWorkers, 2)
         ITGBaseURI                = $ITGBaseURI
 
         Companies                 = $companies
