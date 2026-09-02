@@ -11,7 +11,7 @@ function Get-ITGlueMigrationETA {
         [Alias('ITGAPIEndpoint')]
         [string] $ITGBaseURI,
 
-        [ValidateRange(1, 32)]
+        [ValidateRange(1, 196)]
         [int] $CommitWorkerCount = 1,
 
         [ValidateRange(0.1, 1.0)]

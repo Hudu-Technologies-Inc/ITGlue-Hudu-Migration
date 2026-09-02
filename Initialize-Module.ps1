@@ -555,6 +555,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1 # Article Attachment as image source helper
 . $PSScriptRoot\Public\Get-PasswordFolders.ps1 # Fetch password folders from Hudu
 . $PSScriptRoot\Public\Set-MigrationScope.ps1 # Add migration scope helper
+. $PSScriptRoot\Public\Get-ITGlueDocuments.ps1 # Fetch IT Glue document metadata from organization relationship endpoints
 . $PSScriptRoot\Public\Get-Checklists.ps1 # Other JWT-Auth / Advanced Post-Run Imports
 . $PSScriptRoot\Public\Normalize-String.ps1 # Add String/Filename Normalization Helper, image Normalization helper
 . $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1 # initialization helper and field requirement helper, logging, selection helper
@@ -576,10 +577,11 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
-$requiredHuduVersion = ([version]"2.44.0")
+$requiredHuduVersion = ([version]"2.45.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit));}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
+if ($null -ne $ParalellismOverride -and $ParalellismOverride -is [int] -and $ParalellismOverride -ge 2) {$MigrationParallelismLimit = $ParalellismOverride; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;}
 write-host $ParalellismSettingsInfo

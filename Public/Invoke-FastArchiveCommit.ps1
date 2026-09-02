@@ -5,11 +5,11 @@ function Invoke-FastHuduArchiveCommit {
         [AllowEmptyCollection()]
         [object[]]$ArchiveRequests,
 
-        [ValidateRange(1, 32)]
+        [ValidateRange(1, 196)]
         [int]$ThrottleLimit = 4,
 
         [ValidateRange(0, 5)]
-        [int]$MaxRetries = 1,
+        [int]$MaxRetries = 2,
 
         [hashtable]$CustomHeaders = @{}
     )

@@ -24,7 +24,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         [version]$CurrentVersion = [version]'2.44.0',
         [bool]$ImportDomains = $true,
 
-        [ValidateRange(1, 32)]
+        [ValidateRange(1, 196)]
         [int]$ThrottleLimit = 4
     )
 

@@ -13,6 +13,7 @@ $FirstTimeLoad = 1
 
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit));}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
+if ($null -ne $ParalellismOverride -and $ParalellismOverride -is [int] -and $ParalellismOverride -ge 2) {$MigrationParallelismLimit = $ParalellismOverride; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;}
 
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
 $UseFastAssetCommit = $UseFastAssetCommit ?? $true
