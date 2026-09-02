@@ -89,11 +89,48 @@ function Get-ITGlueExportTimestamp {
         return $null
     }
 
+    if ($rawValue -is [datetimeoffset]) {
+        return $rawValue.UtcDateTime
+    }
+
+    if ($rawValue -is [datetime]) {
+        if ($rawValue.Kind -eq [DateTimeKind]::Unspecified) {
+            return [datetime]::SpecifyKind($rawValue, [DateTimeKind]::Utc)
+        }
+
+        return $rawValue.ToUniversalTime()
+    }
+
     try {
-        return [datetimeoffset]::Parse([string]$rawValue).LocalDateTime
+        $dateStyles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        return [datetimeoffset]::Parse([string]$rawValue, [System.Globalization.CultureInfo]::InvariantCulture, $dateStyles).UtcDateTime
     } catch {
         return $null
     }
+}
+
+function ConvertTo-ITGlueExportUtcDateTime {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [datetime]$Value
+    )
+
+    if ($Value.Kind -eq [DateTimeKind]::Unspecified) {
+        return [datetime]::SpecifyKind($Value, [DateTimeKind]::Utc)
+    }
+
+    return $Value.ToUniversalTime()
+}
+
+function Format-ITGlueExportUtcTimestamp {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [datetime]$Value
+    )
+
+    (ConvertTo-ITGlueExportUtcDateTime -Value $Value).ToString("yyyy-MM-ddTHH:mm:ss'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
 function Select-ITGlueExportRecordForPolling {
@@ -112,7 +149,7 @@ function Select-ITGlueExportRecordForPolling {
     }
 
     if ($null -ne $QueuedAfter) {
-        $queueWindowStart = ([datetime]$QueuedAfter).AddMinutes(-2)
+        $queueWindowStart = (ConvertTo-ITGlueExportUtcDateTime -Value ([datetime]$QueuedAfter)).AddMinutes(-2)
         $records = @(
             $records | Where-Object {
                 $createdAt = Get-ITGlueExportTimestamp -Export $_ -Name 'created-at'
@@ -649,7 +686,7 @@ function Wait-ITGlueExport {
         [int]$StalledMinutes = 90
     )
 
-    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $deadline = [datetime]::UtcNow.AddMinutes($TimeoutMinutes)
     $ITGBaseURI = Resolve-ITGlueExportBaseURI -ITGBaseURI $ITGBaseURI
     $failedStatuses = @(
         'failed',
@@ -660,7 +697,7 @@ function Wait-ITGlueExport {
         'canceled'
     )
 
-    while ((Get-Date) -lt $deadline) {
+    while ([datetime]::UtcNow -lt $deadline) {
         $exportResponse = if ($null -ne $ExportID) {
             Get-ITGlueExportById -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ExportID $ExportID
         } else {
@@ -674,7 +711,7 @@ function Wait-ITGlueExport {
         }
 
         if ($null -eq $export) {
-            $queueText = if ($null -ne $QueuedAfter) { " created after $(([datetime]$QueuedAfter).ToString('s'))" } else { "" }
+            $queueText = if ($null -ne $QueuedAfter) { " created after $(Format-ITGlueExportUtcTimestamp -Value ([datetime]$QueuedAfter))" } else { "" }
             Write-Host "No IT Glue export record$queueText was found yet. Checking again in $PollSeconds seconds." -ForegroundColor Yellow
             Start-Sleep -Seconds $PollSeconds
             continue
@@ -698,18 +735,18 @@ function Wait-ITGlueExport {
             throw "IT Glue export$idText reported terminal status '$status' before a download URL was available."
         }
 
-        $stalledAfter = (Get-Date).AddMinutes(-1 * $StalledMinutes)
+        $stalledAfter = [datetime]::UtcNow.AddMinutes(-1 * $StalledMinutes)
         if ($updatedAt -and $updatedAt -lt $stalledAfter) {
             $idText = if ($null -ne $exportRecordId) { " $exportRecordId" } else { "" }
             $statusText = if ($status) { " Status: $status." } else { "" }
-            throw "IT Glue export$idText appears stalled; updated-at is $($updatedAt.ToString('s')), which is older than $StalledMinutes minutes.$statusText"
+            throw "IT Glue export$idText appears stalled; updated-at is $(Format-ITGlueExportUtcTimestamp -Value $updatedAt), which is older than $StalledMinutes minutes.$statusText"
         }
 
         $details = @()
         if ($null -ne $exportRecordId) { $details += "id: $exportRecordId" }
         if ($status) { $details += "status: $status" }
-        if ($createdAt) { $details += "created: $($createdAt.ToString('s'))" }
-        if ($updatedAt) { $details += "updated: $($updatedAt.ToString('s'))" }
+        if ($createdAt) { $details += "created: $(Format-ITGlueExportUtcTimestamp -Value $createdAt)" }
+        if ($updatedAt) { $details += "updated: $(Format-ITGlueExportUtcTimestamp -Value $updatedAt)" }
         $detailText = if ($details.Count -gt 0) { " ($($details -join '; '))" } else { "" }
         Write-Host "IT Glue export is not ready yet$detailText. Checking again in $PollSeconds seconds." -ForegroundColor Yellow
         Start-Sleep -Seconds $PollSeconds
@@ -905,7 +942,7 @@ function Ensure-ITGlueExportAvailable {
 
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
-                $queueRequestedAt = Get-Date
+                $queueRequestedAt = [datetime]::UtcNow
                 $startedExport = Start-ITGlueExport -ITGKey $ITGKey -ITGBaseURI $ITGBaseURI -ZipPassword $ZipPassword -IncludeLogs $IncludeLogs -AttributeNameStyle $AttributeNameStyle
                 $exportId = Get-ITGlueExportId -Export $startedExport
                 if ($null -eq $exportId) {
