@@ -948,6 +948,10 @@ function Start-PreloadedRelationDataJob {
         Write-Warning "Skipping $RelationType relation preload because ITGAPIEndpoint is blank."
         return
     }
+    if (-not (Get-Command -Name Start-Job -ErrorAction SilentlyContinue)) {
+        Write-Warning "Skipping $RelationType relation preload because this PowerShell host does not support background jobs."
+        return
+    }
 
     $objects = @($ItgObjects | Where-Object { $_ })
     if ($objects.Count -eq 0) {
@@ -986,27 +990,33 @@ function Start-PreloadedRelationDataJob {
         $MigrationLogs
     )
 
-    $job = Start-Job -Name $jobName -ArgumentList $jobArguments -ScriptBlock {
-        param(
-            [string]$HelperScriptPath,
-            [string]$RelationType,
-            [object[]]$Objects,
-            [string]$ITGKey,
-            [string]$ITGAPIEndpoint,
-            [string]$MigrationLogs
-        )
+    try {
+        $job = Start-Job -Name $jobName -ArgumentList $jobArguments -ErrorAction Stop -ScriptBlock {
+            param(
+                [string]$HelperScriptPath,
+                [string]$RelationType,
+                [object[]]$Objects,
+                [string]$ITGKey,
+                [string]$ITGAPIEndpoint,
+                [string]$MigrationLogs
+            )
 
-        try { Set-StrictMode -Off } catch {}
-        Import-Module ITGlueAPIv2 -ErrorAction Stop
-        if (Get-Command -Name Add-ITGlueBaseURI -ErrorAction SilentlyContinue) {
-            Add-ITGlueBaseURI -base_uri $ITGAPIEndpoint
-        }
-        if (Get-Command -Name Add-ITGlueAPIKey -ErrorAction SilentlyContinue) {
-            Add-ITGlueAPIKey $ITGKey
-        }
+            try { Set-StrictMode -Off } catch {}
+            Import-Module ITGlueAPIv2 -ErrorAction Stop
+            if (Get-Command -Name Add-ITGlueBaseURI -ErrorAction SilentlyContinue) {
+                Add-ITGlueBaseURI -base_uri $ITGAPIEndpoint
+            }
+            if (Get-Command -Name Add-ITGlueAPIKey -ErrorAction SilentlyContinue) {
+                Add-ITGlueAPIKey $ITGKey
+            }
 
-        . $HelperScriptPath
-        Get-PreloadedRelationData -RelationType $RelationType -ItgObjects $Objects -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs
+            . $HelperScriptPath
+            Get-PreloadedRelationData -RelationType $RelationType -ItgObjects $Objects -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs
+        }
+    }
+    catch {
+        Write-Warning "Skipping $RelationType relation preload because the background job could not be started: $($_.Exception.Message)"
+        return
     }
 
     $script:ITGlueRelationPreloadJobs[$RelationType] = $job
@@ -1023,6 +1033,13 @@ function Wait-PreloadedRelationDataJob {
         [int]$StatusSeconds = 60,
         [switch]$KeepJob
     )
+
+    foreach ($jobCommand in @('Get-Job', 'Wait-Job', 'Receive-Job')) {
+        if (-not (Get-Command -Name $jobCommand -ErrorAction SilentlyContinue)) {
+            Write-Warning "Cannot wait for $RelationType relation preload because this PowerShell host does not support $jobCommand."
+            return
+        }
+    }
 
     $job = if ($script:ITGlueRelationPreloadJobs) { $script:ITGlueRelationPreloadJobs[$RelationType] } else { $null }
     if (-not $job) {
