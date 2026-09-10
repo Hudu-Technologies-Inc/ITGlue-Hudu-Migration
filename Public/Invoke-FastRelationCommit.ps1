@@ -5,7 +5,7 @@ function Invoke-FastHuduRelationCommit {
         [AllowEmptyCollection()]
         [object[]]$Relations,
 
-        [ValidateRange(1, 32)]
+        [ValidateRange(1, 24)]
         [int]$ThrottleLimit = 4,
 
         [ValidateRange(0, 5)]
