@@ -41,10 +41,9 @@ try {Set-StrictMode -Off} catch {}
 
 $project_workdir=$project_workdir ?? "$PSScriptRoot"
 $debugFolder = if ([string]::IsNullOrWhiteSpace($debugFolder)) {Join-Path $project_workdir "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-ffff')"} else {$debugFolder}
-$errorsfolder = if ([string]::IsNullOrWhiteSpace($errorsfolder)) {Join-Path $debugFolder 'errors'} else {$errorsfolder}; $settings_folder = $settings_folder ?? $(join-path "$debugFolder" "settings");
-$logs_folder = $logs_folder ?? $(join-path "$debugFolder" "logs"); $script:ITG_ERRORS_DIRECTORY = $script:ITG_ERRORS_DIRECTORY ?? $errorsFolder;
+$errorsfolder = if ([string]::IsNullOrWhiteSpace($errorsfolder)) {Join-Path $debugFolder 'errors'} else {$errorsfolder}
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folder)) {$null = Get-EnsuredPath -Path $folder}
+foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folder, $script:ITG_ERRORS_DIRECTORY)) {$null = Get-EnsuredPath -Path $folder}
 
 
 ############################### Settings ###############################
@@ -564,7 +563,6 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\NetworkInformation.ps1 # Network and IP Parsing Helpers
 . $PSScriptRoot\Public\PreFlightTests.ps1 # Pre-flight checks and validations before migration
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1 # replacement of various attachment link references
-. $PSScriptRoot\Public\Get-PreloadedRelationData.ps1 # Background ITGlue relation metadata preload helpers
 
 . $PSScriptRoot\Public\Invoke-FastHuduRequestBatch.ps1
 . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1
@@ -582,6 +580,6 @@ $requiredHuduVersion = ([version]"2.44.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
-if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 16){$defaultMigrationParallelismLimit = [math]::Min(24, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(24, [math]::Max(2, $MigrationParallelismLimit));}
+if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit));}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
 write-host $ParalellismSettingsInfo
