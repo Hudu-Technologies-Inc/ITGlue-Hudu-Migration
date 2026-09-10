@@ -706,7 +706,10 @@ function Get-PreloadedRelationData {
         [Parameter(Mandatory=$true)]
         [validateset("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
         [string]$RelationType,
-        [System.Collections.ArrayList]$ItgObjects
+        [System.Collections.ArrayList]$ItgObjects,
+        [string]$ITGKey,
+        [string]$ITGAPIEndpoint,
+        [string]$MigrationLogs
     )
     $freshObjects = [System.Collections.ArrayList]@()
     switch ($RelationType){
@@ -736,6 +739,5 @@ function Get-PreloadedRelationData {
     }
     
     $RelatedObjects = $freshObjects | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ }
-
-    return $relatedObjects
+    $relatedObjects | convertto-json -depth 99 | out-file "$migrationLogs/RelationsPreload-$RelationType.json"
 }
