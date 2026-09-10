@@ -563,6 +563,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\NetworkInformation.ps1 # Network and IP Parsing Helpers
 . $PSScriptRoot\Public\PreFlightTests.ps1 # Pre-flight checks and validations before migration
 . $PSScriptRoot\Public\ReplaceAttachmentLinks.ps1 # replacement of various attachment link references
+. $PSScriptRoot\Public\Get-PreloadedRelationData.ps1 # Background ITGlue relation metadata preload helpers
 
 . $PSScriptRoot\Public\Invoke-FastHuduRequestBatch.ps1
 . $PSScriptRoot\Public\Invoke-FastArticleCommit.ps1

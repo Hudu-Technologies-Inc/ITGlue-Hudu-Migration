@@ -17,7 +17,45 @@ $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
 if ($UseFastRelationCommit -and -not (Get-Command -Name Invoke-FastHuduRelationCommit -ErrorAction SilentlyContinue)) {
     . $PSScriptRoot\Public\Invoke-FastRelationCommit.ps1
 }
+if (-not (Get-Command -Name Read-PreloadedRelationData -ErrorAction SilentlyContinue)) {
+    . $PSScriptRoot\Public\Get-PreloadedRelationData.ps1
+}
 if (-not $matchedChecklists -and (Test-Path -LiteralPath "$MigrationLogs\Checklists.json")) {$matchedChecklists = (Get-Content -path "$MigrationLogs\Checklists.json" | ConvertFrom-json -depth 100) }
+
+function Get-ITGlueRelationSourceData {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [string]$RelationType,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DisplayName,
+
+        [object[]]$ItgObjects = @(),
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$FetchItem
+    )
+
+    $objects = @($ItgObjects | Where-Object { $_ })
+    $preload = Read-PreloadedRelationData -RelationType $RelationType -MigrationLogs $MigrationLogs -WaitForJob -StatusSeconds 60
+    if ($preload.Found) {
+        Write-Host "Using preloaded relation metadata for $($preload.Data.Count) $DisplayName from $($preload.Path)" -ForegroundColor Green
+        return @($preload.Data)
+    }
+
+    Write-Host "refreshing $($objects.Count) $DisplayName"
+    $itemIndex = 0
+    $itemTotal = $objects.Count
+    foreach ($object in $objects) {
+        $itemIndex++
+        if ($itemIndex % 100 -eq 0 -or $itemIndex -eq $itemTotal) {
+            Write-Host "  ...refreshed $itemIndex of $itemTotal $DisplayName"
+        }
+
+        & $FetchItem $object
+    }
+}
 
 $script:UnknownITGlueRelationTypeCounts = @{}
 $script:UnresolvedITGlueRelationSamples = [System.Collections.ArrayList]@()
@@ -29,48 +67,55 @@ foreach ($DiagnosticFileName in @('unknown-relation-types.json', 'unresolved-rel
     }
 }
 
-write-host "refreshing $($MatchedAssets.count) assets"
-$__asIdx = 0; $__asTotal = $MatchedAssets.count
-$FreshITGAssets= $FreshITGAssets ?? $($MatchedAssets |ForEach-Object {
-    $__asIdx++
-    if ($__asIdx % 100 -eq 0 -or $__asIdx -eq $__asTotal) { Write-Host "  ...refreshed $__asIdx of $__asTotal assets" }
-    Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items})
+if ($null -eq $FreshITGAssets) {
+    $FreshITGAssets = Get-ITGlueRelationSourceData -RelationType Assets -DisplayName 'assets' -ItgObjects @($MatchedAssets) -FetchItem {
+        param($Item)
+        Get-ITGlueFlexibleAssets -id $Item.ITGObject.id -include related_items
+    }
+}
 $RelatedAssets = $RelatedAssets ?? $($FreshITGAssets | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedConfigurations.count) configs"
-$__cfgIdx = 0; $__cfgTotal = $MatchedConfigurations.count
-$FreshConfigurations = $FreshConfigurations ?? $($MatchedConfigurations | ForEach-Object {
-    $__cfgIdx++
-    if ($__cfgIdx % 100 -eq 0 -or $__cfgIdx -eq $__cfgTotal) { Write-Host "  ...refreshed $__cfgIdx of $__cfgTotal configs" }
-    Get-ITGlueConfigurations -id $_.itgobject.id -include related_items})
+if ($null -eq $FreshConfigurations) {
+    $FreshConfigurations = Get-ITGlueRelationSourceData -RelationType Configs -DisplayName 'configs' -ItgObjects @($MatchedConfigurations) -FetchItem {
+        param($Item)
+        Get-ITGlueConfigurations -id $Item.ITGObject.id -include related_items
+    }
+}
 $RelatedConfigurations = $RelatedConfigurations ?? $($FreshConfigurations | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedPasswords.count) passwords"
-$__pwIdx = 0; $__pwTotal = $MatchedPasswords.count
-$FreshPasswords = $FreshPasswords ?? $($MatchedPasswords | ForEach-Object {
-    $__pwIdx++
-    if ($__pwIdx % 100 -eq 0 -or $__pwIdx -eq $__pwTotal) { Write-Host "  ...refreshed $__pwIdx of $__pwTotal passwords" }
-    Get-ITGluePasswords -id $_.itgobject.id -include related_items})
+if ($null -eq $FreshPasswords) {
+    $FreshPasswords = Get-ITGlueRelationSourceData -RelationType Passwords -DisplayName 'passwords' -ItgObjects @($MatchedPasswords) -FetchItem {
+        param($Item)
+        Get-ITGluePasswords -id $Item.ITGObject.id -include related_items
+    }
+}
 $RelatedPasswords = $RelatedPasswords ?? $($FreshPasswords | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedContacts.count) contacts"
-$__ctIdx = 0; $__ctTotal = $MatchedContacts.count
-$FreshContacts = $FreshContacts ?? $($MatchedContacts | ForEach-Object {
-    $__ctIdx++
-    if ($__ctIdx % 100 -eq 0 -or $__ctIdx -eq $__ctTotal) { Write-Host "  ...refreshed $__ctIdx of $__ctTotal contacts" }
-    Get-ITGlueContacts -id $_.ITGObject.id -include related_items})
+if ($null -eq $FreshContacts) {
+    $FreshContacts = Get-ITGlueRelationSourceData -RelationType Contacts -DisplayName 'contacts' -ItgObjects @($MatchedContacts) -FetchItem {
+        param($Item)
+        Get-ITGlueContacts -id $Item.ITGObject.id -include related_items
+    }
+}
 $RelatedContacts = $RelatedContacts ?? $($FreshContacts | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
-write-host "refreshing $($MatchedArticles.count) articles"
-$__arIdx = 0; $__arTotal = $MatchedArticles.count
-$FreshDocuments = $FreshDocuments ?? ($MatchedArticles | ForEach-Object {
-    $__arIdx++
-    if ($__arIdx % 100 -eq 0 -or $__arIdx -eq $__arTotal) { Write-Host "  ...refreshed $__arIdx of $__arTotal articles" }
-    $ArticleLookup = Get-ArticleLookupInfo -Article $_
-    if ($ArticleLookup) {
-        Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint)
+if ($null -eq $FreshLocations) {
+    $FreshLocations = Get-ITGlueRelationSourceData -RelationType Locations -DisplayName 'locations' -ItgObjects @($MatchedLocations) -FetchItem {
+        param($Item)
+        Get-ITGlueLocations -id $Item.ITGObject.id -include related_items
     }
-})
+}
+$RelatedLocations = $RelatedLocations ?? $($FreshLocations | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
+
+if ($null -eq $FreshDocuments) {
+    $FreshDocuments = Get-ITGlueRelationSourceData -RelationType Articles -DisplayName 'articles' -ItgObjects @($MatchedArticles) -FetchItem {
+        param($Item)
+        $ArticleLookup = Get-ArticleLookupInfo -Article $Item
+        if ($ArticleLookup) {
+            Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint)
+        }
+    }
+}
 $RelatedDocuments = $RelatedDocuments ?? ($FreshDocuments | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
 
 write-host "mapping configs"
@@ -145,6 +190,7 @@ $MatchedChecklists | Where-Object { $_ -and $_.id -and $_.HuduProcedure } | ForE
 $DocumentRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedDocuments
 $ContactRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedContacts
 $ConfigurationRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedConfigurations
+$LocationRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedLocations
 $AssetRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedAssets
 $PasswordRelationsToCreate = Get-HuduRelationObject -ITGlueSourceObjects $RelatedPasswords
 $PasswordDocumentRelationsToCreate = Get-PasswordDocumentRelationObject -MatchedPasswords $MatchedPasswords
@@ -159,6 +205,7 @@ $AllRelationsToCreate =
     @($PasswordDocumentRelationsToCreate) +
     @($TagFieldRelationsToCreate) +
     @($QueuedTagRelationsToCreate) +
+    @($LocationRelationsToCreate) +
     @($ConfigurationRelationsToCreate) |
     Where-Object { $_ } |
     Sort-Object FromableType, FromableID, ToableType, ToableID -Unique

@@ -701,43 +701,423 @@ function Get-PasswordDocumentRelationObject {
 }
 
 
+function Get-RelationPreloadPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [string]$RelationType,
+
+        [string]$MigrationLogs
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        $MigrationLogs = $settings.MigrationLogs
+    }
+
+    Join-Path $MigrationLogs "RelationsPreload-$RelationType.json"
+}
+
+function Get-RelationPreloadStatusPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [string]$RelationType,
+
+        [string]$MigrationLogs
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        $MigrationLogs = $settings.MigrationLogs
+    }
+
+    Join-Path $MigrationLogs "RelationsPreload-$RelationType.status.json"
+}
+
+function Write-RelationPreloadStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [string]$RelationType,
+
+        [Parameter(Mandatory = $true)]
+        [string]$State,
+
+        [string]$MigrationLogs,
+        [datetime]$StartedAt,
+        [datetime]$FinishedAt,
+        [int]$FetchedCount = 0,
+        [int]$RelatedCount = 0,
+        [string]$ErrorMessage
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        $MigrationLogs = $settings.MigrationLogs
+    }
+
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        return
+    }
+
+    $status = [ordered]@{
+        RelationType = $RelationType
+        State        = $State
+        StartedAt    = if ($StartedAt) { $StartedAt.ToString('o') } else { $null }
+        FinishedAt   = if ($FinishedAt) { $FinishedAt.ToString('o') } else { $null }
+        FetchedCount = $FetchedCount
+        RelatedCount = $RelatedCount
+        Error        = $ErrorMessage
+    }
+
+    $statusPath = Get-RelationPreloadStatusPath -RelationType $RelationType -MigrationLogs $MigrationLogs
+    $status | ConvertTo-Json -Depth 10 | Out-File -LiteralPath $statusPath
+}
+
+function Initialize-ITGlueRelationPreloadApiContext {
+    param(
+        [string]$ITGKey,
+        [string]$ITGAPIEndpoint
+    )
+
+    if (-not (Get-Command -Name Get-ITGlueFlexibleAssets -ErrorAction SilentlyContinue)) {
+        Import-Module ITGlueAPIv2 -ErrorAction Stop
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ITGAPIEndpoint) -and (Get-Command -Name Add-ITGlueBaseURI -ErrorAction SilentlyContinue)) {
+        Add-ITGlueBaseURI -base_uri $ITGAPIEndpoint
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ITGKey) -and (Get-Command -Name Add-ITGlueAPIKey -ErrorAction SilentlyContinue)) {
+        Add-ITGlueAPIKey $ITGKey
+    }
+}
+
 function Get-PreloadedRelationData {
     param (
-        [Parameter(Mandatory=$true)]
-        [validateset("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
         [string]$RelationType,
-        [System.Collections.ArrayList]$ItgObjects,
+
+        [object[]]$ItgObjects = @(),
         [string]$ITGKey,
         [string]$ITGAPIEndpoint,
         [string]$MigrationLogs
     )
-    $freshObjects = [System.Collections.ArrayList]@()
-    switch ($RelationType){
-        'Assets' {
-            $freshObjects = $ItgObjects | foreach-object {Get-ITGlueFlexibleAssets -id $_.ITGObject.id -include related_items}
-        }
-        'Configs' {
-            $freshObjects = $ITGobjects | foreach-object {Get-ITGlueConfigurations -id $_.itgobject.id -include related_items}
-        }
-        'Locations' {
-            $freshObjects = $ITGobjects | foreach-object {get-itgluelocations -id $_.itgobject.id -include related_items}
-        }
-        'Contacts' {
-            $freshObjects = $ITGobjects | foreach-object {get-itgluecontacts -id $_.itgobject.id -include related_items}
-        }
-        'Articles' {
-            $freshObjects = $ITGobjects | foreach-object {
-                $ArticleLookup = Get-ArticleLookupInfo -Article $_
-                if ($ArticleLookup) {
-                    Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI ($ITGAPIEndpoint ?? $settings.ITGAPIEndpoint)
+
+    if ([string]::IsNullOrWhiteSpace($ITGAPIEndpoint)) {
+        $ITGAPIEndpoint = $settings.ITGAPIEndpoint
+    }
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        $MigrationLogs = $settings.MigrationLogs
+    }
+
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        throw "MigrationLogs is required to write preloaded relation data."
+    }
+
+    if (-not (Test-Path -LiteralPath $MigrationLogs -PathType Container -ErrorAction SilentlyContinue)) {
+        $null = New-Item -Path $MigrationLogs -ItemType Directory -Force
+    }
+
+    $startedAt = Get-Date
+    Write-RelationPreloadStatus -RelationType $RelationType -State 'Running' -MigrationLogs $MigrationLogs -StartedAt $startedAt
+
+    try {
+        Initialize-ITGlueRelationPreloadApiContext -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint
+
+        $objects = @($ItgObjects | Where-Object { $_ })
+        $objectIndex = 0
+        $objectTotal = $objects.Count
+        $freshObjects = foreach ($object in $objects) {
+            $objectIndex++
+            if ($objectIndex % 100 -eq 0 -or $objectIndex -eq $objectTotal) {
+                Write-Host "  ...preloaded $objectIndex of $objectTotal $RelationType relation source object(s)"
+            }
+
+            switch ($RelationType) {
+                'Assets' {
+                    Get-ITGlueFlexibleAssets -id $object.ITGObject.id -include related_items
+                }
+                'Configs' {
+                    Get-ITGlueConfigurations -id $object.ITGObject.id -include related_items
+                }
+                'Locations' {
+                    Get-ITGlueLocations -id $object.ITGObject.id -include related_items
+                }
+                'Contacts' {
+                    Get-ITGlueContacts -id $object.ITGObject.id -include related_items
+                }
+                'Articles' {
+                    $ArticleLookup = Get-ArticleLookupInfo -Article $object
+                    if ($ArticleLookup) {
+                        Get-RelatedToDoc -DocID $ArticleLookup.DocID -OrganizationId $ArticleLookup.OrganizationId -ITGKey $ITGKey -ITGlue_Base_URI $ITGAPIEndpoint
+                    }
+                }
+                'Passwords' {
+                    Get-ITGluePasswords -id $object.ITGObject.id -include related_items
+                }
+                'Procedures' {
+                    Write-Warning "Procedure relation preloading is not available through the ITGlue API key endpoints used by this migration."
                 }
             }
         }
-        'Passwords' {
-            $freshObjects = $ITGobjects | foreach-object {Get-ITGluePasswords -id $_.itgobject.id -include related_items}
+
+        $freshObjects = @($freshObjects | Where-Object { $_ })
+        $relatedObjects = @($freshObjects | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })
+        $preloadPath = Get-RelationPreloadPath -RelationType $RelationType -MigrationLogs $MigrationLogs
+        $tempPath = "$preloadPath.tmp"
+
+        ConvertTo-Json -InputObject $freshObjects -Depth 99 | Out-File -LiteralPath $tempPath
+        Move-Item -LiteralPath $tempPath -Destination $preloadPath -Force
+
+        $finishedAt = Get-Date
+        Write-RelationPreloadStatus -RelationType $RelationType -State 'Completed' -MigrationLogs $MigrationLogs -StartedAt $startedAt -FinishedAt $finishedAt -FetchedCount $freshObjects.Count -RelatedCount $relatedObjects.Count
+
+        [pscustomobject]@{
+            RelationType = $RelationType
+            Path         = $preloadPath
+            FetchedCount = $freshObjects.Count
+            RelatedCount = $relatedObjects.Count
         }
     }
-    
-    $RelatedObjects = $freshObjects | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ }
-    $relatedObjects | convertto-json -depth 99 | out-file "$migrationLogs/RelationsPreload-$RelationType.json"
+    catch {
+        $finishedAt = Get-Date
+        Write-RelationPreloadStatus -RelationType $RelationType -State 'Failed' -MigrationLogs $MigrationLogs -StartedAt $startedAt -FinishedAt $finishedAt -ErrorMessage $_.Exception.Message
+        throw
+    }
+}
+
+function Start-PreloadedRelationDataJob {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [string]$RelationType,
+
+        [object[]]$ItgObjects = @(),
+        [string]$ITGKey,
+        [string]$ITGAPIEndpoint,
+        [string]$MigrationLogs,
+        [string]$ScriptRoot = $PSScriptRoot,
+        [switch]$Force
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ITGKey)) {
+        $ITGKey = $settings.ITGKey
+    }
+    if ([string]::IsNullOrWhiteSpace($ITGAPIEndpoint)) {
+        $ITGAPIEndpoint = $settings.ITGAPIEndpoint
+    }
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        $MigrationLogs = $settings.MigrationLogs
+    }
+
+    $preloadEnabledSetting = Get-Variable -Name PreloadITGlueRelations -ValueOnly -ErrorAction SilentlyContinue
+    if ($false -eq $preloadEnabledSetting) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        Write-Warning "Skipping $RelationType relation preload because MigrationLogs is blank."
+        return
+    }
+
+    if (-not $script:ITGlueRelationPreloadJobs) {
+        $script:ITGlueRelationPreloadJobs = @{}
+    }
+    if (-not $script:ITGlueRelationPreloadForceCleared) {
+        $script:ITGlueRelationPreloadForceCleared = @{}
+    }
+
+    if ($Force -and -not $script:ITGlueRelationPreloadForceCleared.ContainsKey($RelationType)) {
+        foreach ($stalePath in @(
+            (Get-RelationPreloadPath -RelationType $RelationType -MigrationLogs $MigrationLogs),
+            (Get-RelationPreloadStatusPath -RelationType $RelationType -MigrationLogs $MigrationLogs)
+        )) {
+            if (Test-Path -LiteralPath $stalePath -PathType Leaf -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $stalePath -Force
+            }
+        }
+
+        $script:ITGlueRelationPreloadForceCleared[$RelationType] = $true
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ITGKey)) {
+        Write-Warning "Skipping $RelationType relation preload because ITGKey is blank."
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($ITGAPIEndpoint)) {
+        Write-Warning "Skipping $RelationType relation preload because ITGAPIEndpoint is blank."
+        return
+    }
+
+    $objects = @($ItgObjects | Where-Object { $_ })
+    if ($objects.Count -eq 0) {
+        Write-Host "Skipping $RelationType relation preload because there are no migrated source objects." -ForegroundColor DarkGray
+        return
+    }
+
+    $preloadPath = Get-RelationPreloadPath -RelationType $RelationType -MigrationLogs $MigrationLogs
+    if (Test-Path -LiteralPath $preloadPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        Write-Host "$RelationType relation preload already exists at $preloadPath" -ForegroundColor DarkGray
+        return
+    }
+
+    $existingJob = $script:ITGlueRelationPreloadJobs[$RelationType]
+    if ($existingJob -and $existingJob.State -in @('NotStarted', 'Running')) {
+        Write-Host "$RelationType relation preload job $($existingJob.Id) is already running." -ForegroundColor DarkGray
+        return $existingJob
+    }
+
+    $helperScriptPath = Join-Path $ScriptRoot 'Get-PreloadedRelationData.ps1'
+    if (-not (Test-Path -LiteralPath $helperScriptPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        $helperScriptPath = Join-Path (Split-Path -Parent $ScriptRoot) 'Public\Get-PreloadedRelationData.ps1'
+    }
+    if (-not (Test-Path -LiteralPath $helperScriptPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Write-Warning "Skipping $RelationType relation preload because helper script was not found."
+        return
+    }
+
+    $jobName = "ITGlueRelationPreload-$RelationType-$([guid]::NewGuid().ToString('N'))"
+    $jobArguments = [object[]]@(
+        $helperScriptPath
+        $RelationType
+        ,$objects
+        $ITGKey
+        $ITGAPIEndpoint
+        $MigrationLogs
+    )
+
+    $job = Start-Job -Name $jobName -ArgumentList $jobArguments -ScriptBlock {
+        param(
+            [string]$HelperScriptPath,
+            [string]$RelationType,
+            [object[]]$Objects,
+            [string]$ITGKey,
+            [string]$ITGAPIEndpoint,
+            [string]$MigrationLogs
+        )
+
+        try { Set-StrictMode -Off } catch {}
+        Import-Module ITGlueAPIv2 -ErrorAction Stop
+        if (Get-Command -Name Add-ITGlueBaseURI -ErrorAction SilentlyContinue) {
+            Add-ITGlueBaseURI -base_uri $ITGAPIEndpoint
+        }
+        if (Get-Command -Name Add-ITGlueAPIKey -ErrorAction SilentlyContinue) {
+            Add-ITGlueAPIKey $ITGKey
+        }
+
+        . $HelperScriptPath
+        Get-PreloadedRelationData -RelationType $RelationType -ItgObjects $Objects -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs
+    }
+
+    $script:ITGlueRelationPreloadJobs[$RelationType] = $job
+    Write-Host "Started $RelationType relation preload job $($job.Id) for $($objects.Count) ITGlue object(s)." -ForegroundColor Cyan
+    $job
+}
+
+function Wait-PreloadedRelationDataJob {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [string]$RelationType,
+
+        [int]$StatusSeconds = 60,
+        [switch]$KeepJob
+    )
+
+    $job = if ($script:ITGlueRelationPreloadJobs) { $script:ITGlueRelationPreloadJobs[$RelationType] } else { $null }
+    if (-not $job) {
+        $job = Get-Job -Name "ITGlueRelationPreload-$RelationType-*" -ErrorAction SilentlyContinue | Sort-Object Id -Descending | Select-Object -First 1
+    }
+    if (-not $job) {
+        return
+    }
+
+    $lastReceivedCount = 0
+    while ($job.State -in @('NotStarted', 'Running')) {
+        $completedJob = Wait-Job -Job $job -Timeout $StatusSeconds
+        $jobOutput = @(Receive-Job -Job $job -Keep -ErrorAction SilentlyContinue)
+        if ($jobOutput.Count -gt $lastReceivedCount) {
+            foreach ($item in @($jobOutput[$lastReceivedCount..($jobOutput.Count - 1)])) {
+                $message = if ($item -is [string]) { $item } else { ($item | Out-String).Trim() }
+                if (-not [string]::IsNullOrWhiteSpace($message)) {
+                    Write-Host "[relation preload:$RelationType] $message" -ForegroundColor DarkCyan
+                }
+            }
+            $lastReceivedCount = $jobOutput.Count
+        }
+        if ($completedJob) {
+            break
+        }
+
+        Write-Host "$RelationType relation preload job $($job.Id) is still $($job.State). Checking again in $StatusSeconds seconds." -ForegroundColor Yellow
+    }
+
+    try {
+        $jobOutput = @(Receive-Job -Job $job -ErrorAction Stop)
+        if ($jobOutput.Count -gt $lastReceivedCount) {
+            foreach ($item in @($jobOutput[$lastReceivedCount..($jobOutput.Count - 1)])) {
+                $message = if ($item -is [string]) { $item } else { ($item | Out-String).Trim() }
+                if (-not [string]::IsNullOrWhiteSpace($message)) {
+                    Write-Host "[relation preload:$RelationType] $message" -ForegroundColor DarkCyan
+                }
+            }
+        }
+    }
+    catch {
+        Write-Warning "$RelationType relation preload job $($job.Id) failed: $($_.Exception.Message)"
+    }
+
+    if (-not $KeepJob) {
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        if ($script:ITGlueRelationPreloadJobs -and $script:ITGlueRelationPreloadJobs.ContainsKey($RelationType)) {
+            $script:ITGlueRelationPreloadJobs.Remove($RelationType)
+        }
+    }
+}
+
+function Read-PreloadedRelationData {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Assets","Configs","Locations","Contacts","Articles","Passwords","Procedures")]
+        [string]$RelationType,
+
+        [string]$MigrationLogs,
+        [switch]$WaitForJob,
+        [int]$StatusSeconds = 60
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MigrationLogs)) {
+        $MigrationLogs = $settings.MigrationLogs
+    }
+
+    $preloadPath = Get-RelationPreloadPath -RelationType $RelationType -MigrationLogs $MigrationLogs
+    if (-not (Test-Path -LiteralPath $preloadPath -PathType Leaf -ErrorAction SilentlyContinue) -and $WaitForJob) {
+        Wait-PreloadedRelationDataJob -RelationType $RelationType -StatusSeconds $StatusSeconds
+    }
+
+    if (-not (Test-Path -LiteralPath $preloadPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{
+            Found = $false
+            Data  = @()
+            Path  = $preloadPath
+        }
+    }
+
+    try {
+        $raw = Get-Content -LiteralPath $preloadPath -Raw
+        $data = if ([string]::IsNullOrWhiteSpace($raw)) { @() } else { @(ConvertFrom-Json -InputObject $raw -Depth 100) }
+        return [pscustomobject]@{
+            Found = $true
+            Data  = $data
+            Path  = $preloadPath
+        }
+    }
+    catch {
+        Write-Warning "Could not load $RelationType preloaded relation data from $preloadPath. Falling back to live ITGlue refresh. $($_.Exception.Message)"
+        return [pscustomobject]@{
+            Found = $false
+            Data  = @()
+            Path  = $preloadPath
+        }
+    }
 }
