@@ -8,7 +8,7 @@ function Invoke-FastHuduAssetCommit {
         [ValidateSet('Create', 'Update')]
         [string]$Operation = 'Update',
 
-        [ValidateRange(1, 24)]
+        [ValidateRange(1, 32)]
         [int]$ThrottleLimit = 4,
 
         [ValidateRange(0, 5)]

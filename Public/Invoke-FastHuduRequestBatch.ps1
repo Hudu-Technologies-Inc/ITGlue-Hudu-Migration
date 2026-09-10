@@ -5,7 +5,7 @@ function Invoke-FastHuduRequestBatch {
         [AllowEmptyCollection()]
         [object[]]$Requests,
 
-        [ValidateRange(1, 24)]
+        [ValidateRange(1, 32)]
         [int]$ThrottleLimit = 4,
 
         [ValidateRange(0, 5)]
