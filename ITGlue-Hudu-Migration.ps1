@@ -1758,9 +1758,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         }
 
         $AssetCreateResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetCreateCommitResults.json"
-        Start-PreloadedRelationDataJob -RelationType Assets -ItgObjects @($MatchedAssets) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
-	
-	
         #We now need to loop through all Assets again updating the assets to their final version
         
         $AssetUpdateRequests = [System.Collections.ArrayList]@()
