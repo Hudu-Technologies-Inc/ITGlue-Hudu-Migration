@@ -301,7 +301,7 @@ function Get-HuduIdFromItglueObject {
             $FoundHuduObject = $MatchedChecklistsMap[$ITGObjectId].HuduProcedure
             $FoundHuduAssetType = 'Procedure'
         }
-                
+
     }
 
     if ($FoundHuduObject) {

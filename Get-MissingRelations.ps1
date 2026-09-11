@@ -1,7 +1,7 @@
 if (-not ($FirstTimeLoad -eq 1)) {
     # General Settings Load
     . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Lite'
-    
+
 }
 if (-not $MatchedAssets -and (Test-Path -LiteralPath "$MigrationLogs\Assets.json")) {$MatchedAssets = (Get-Content -path "$MigrationLogs\Assets.json" | ConvertFrom-json -depth 100) }
 if (-not $matchedConfigurations -and (Test-Path -LiteralPath "$MigrationLogs\Configurations.json")) {$matchedConfigurations = (Get-Content -path "$MigrationLogs\Configurations.json" | ConvertFrom-json -depth 100) }
