@@ -136,7 +136,7 @@ function CollectAndSaveSettings {
         $settings.MigrationLogs = "$settingsTop\HuduMigration\$instance\MigrationLogs"
     }
     # Ensure folder is created for settings file
-    if (!(Test-Path -Path "$settingsTop\HuduMigration\$instance")) { New-Item "$settingsTop\HuduMigration\$instance" -ItemType Directory }
+    try{if (!(Test-Path -Path "$settingsTop\HuduMigration\$instance")) { New-Item "$settingsTop\HuduMigration\$instance" -ItemType Directory }} catch {}
 
 
     # Verify settings, save or exit and retry
