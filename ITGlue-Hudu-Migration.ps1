@@ -11,7 +11,7 @@ $FirstTimeLoad = 1
 
 # Use this to set the context of the script runs
 
-if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 32){$defaultMigrationParallelismLimit = [math]::Min(32, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(32, [math]::Max(2, $MigrationParallelismLimit));}
+if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 16){$defaultMigrationParallelismLimit = [math]::Min(24, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(24, [math]::Max(2, $MigrationParallelismLimit));}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
 
 $UseFastLabelCommit = $UseFastLabelCommit ?? $true
@@ -604,6 +604,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Locations Migrated Continue?"  -DefaultResponse "continue to Websites, please."
 
 }
+Start-PreloadedRelationDataJob -RelationType Locations -ItgObjects @($MatchedLocations) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 $ITGLocationsHashTable = @{}
 foreach ($ITGL in $($MatchedLocations ?? @())) {
     $ITGLocationsHashTable["$($ITGL.itgid)"] = $ITGL
@@ -1071,6 +1072,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Configurations Migrated Continue?"  -DefaultResponse "continue to Contacts, please."
 
 }
+Start-PreloadedRelationDataJob -RelationType Configs -ItgObjects @($MatchedConfigurations) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 
 
 ############################### Contacts ###############################
@@ -1250,6 +1252,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Contacts Migrated Continue?"  -DefaultResponse "continue to Flexible Asset Layouts, please."
 
 }
+Start-PreloadedRelationDataJob -RelationType Contacts -ItgObjects @($MatchedContacts) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 
 
 	
@@ -1755,6 +1758,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         }
 
         $AssetCreateResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetCreateCommitResults.json"
+        Start-PreloadedRelationDataJob -RelationType Assets -ItgObjects @($MatchedAssets) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 	
 	
         #We now need to loop through all Assets again updating the assets to their final version
@@ -1993,6 +1997,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Assets Migrated Continue?" -DefaultResponse "continue to Documents/Articles, please."
     }
 }
+Start-PreloadedRelationDataJob -RelationType Assets -ItgObjects @($MatchedAssets) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 
 
 ############################### Documents / Articles ###############################
@@ -2033,11 +2038,13 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
 
     
     $MatchedArticles | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ArticleBase.json"
+    Start-PreloadedRelationDataJob -RelationType Articles -ItgObjects @($MatchedArticles) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
     $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Stub Articles Created Continue?"  -DefaultResponse "continue to Document/Article Bodies, please."
     }
 
 }
+Start-PreloadedRelationDataJob -RelationType Articles -ItgObjects @($MatchedArticles) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 
 ############################### Documents / Articles Bodies ###############################
 
@@ -2565,6 +2572,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
     Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Passwords Finished. Continue?"  -DefaultResponse "continue to Document/Article Updates, please."
 }
+Start-PreloadedRelationDataJob -RelationType Passwords -ItgObjects @($MatchedPasswords) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 
 
 ############################## Update ITGlue URLs on All Areas to Hudu #######################
