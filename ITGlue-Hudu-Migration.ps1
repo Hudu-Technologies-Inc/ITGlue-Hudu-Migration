@@ -2447,12 +2447,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
                         $validated_otp = "$($unmatchedPassword.ITGObject.attributes.otp_secret)".Trim().ToUpper()
                         if ($validated_otp) {
                             $isValidBase32 = $validated_otp -match '^[A-Z2-7]+$'
-                            $lengthOK = $validated_otp.Length -ge 16 -and $validated_otp.Length -le 80
+                            $lengthOK = $validated_otp.Length -ge 16 -and $validated_otp.Length -le 10000
 
                             $validated_otp = if ($isValidBase32 -and $lengthOK) { $validated_otp } else { $null }
 
                             if (-not ($isValidBase32 -and $lengthOK)) {
-                                Write-Warning "Invalid OTP secret for $($unmatchedPassword.ITGObject.attributes.name): $($unmatchedPassword.ITGObject.attributes.otp_secret)... valid base32? $isValidBase32 length ok? $lengthOK (min / max is 16 / 80 chars)"
+                                Write-Warning "Invalid OTP secret for $($unmatchedPassword.ITGObject.attributes.name): $($unmatchedPassword.ITGObject.attributes.otp_secret)... valid base32? $isValidBase32 length ok? $lengthOK (min / max is 16 / 10000 chars)"
                             }                            
                         }
 
