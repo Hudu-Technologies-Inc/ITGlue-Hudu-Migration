@@ -77,6 +77,13 @@ If you've already elected to run through setup, that is fine, but you will need 
 
 <img width="2784" height="1742" alt="image" src="https://github.com/user-attachments/assets/899a777f-c9a5-458a-a1c6-9a9c1fb21cf5" />
 
+> [!IMPORTANT]
+> Before Starting, **make sure that any core feature that you want to migrate objects for is enabled.**
+> ***Talk to your administrator if you are not authorized to check this or ensure they are turned on.***
+
+<img width="1161" height="1169" alt="image" src="https://github.com/user-attachments/assets/a5378e14-43fd-45d3-b094-7da96b4adffe" />
+
+
 **1. Make sure you are on a known-compatible Hudu version**
 
 This fork requires **Hudu `2.45.0` or newer**. Versions **`2.37.0`** and **`2.44.1`-`2.44.3`** are blocked. Upgrade self-hosted instances before running the migration.
@@ -142,8 +149,8 @@ Manual export still works as a legacy fallback. See [Addendum - Manual Export Le
 1. **Ensure the machine you're running the migration from has PowerShell 7+**
 You can [download newest powershell release here](https://github.com/powershell/powershell/releases)
 
->[!IMPORTANT]
->You must run the script using **PowerShell 7+** (`pwsh.exe`). It will _not_ run in **Windows PowerShell 5.x** (`powershell.exe`).
+> [!IMPORTANT]
+> You must run the script using **PowerShell 7+** (`pwsh.exe`). It will _not_ run in **Windows PowerShell 5.x** (`powershell.exe`).
 >
 >*Currently, the script has only been tested on x86_64 Windows systems. Although Windows ARM, macOS, and Linux have PowerShell available to them, the script has not been tested on those Operating Systems and is not recommended as the script has a lot of dependencies*
 
