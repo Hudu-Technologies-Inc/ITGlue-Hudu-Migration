@@ -346,6 +346,11 @@ Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can
 - Archived Assets will be archived even after migration
 - The initialization will prompt for multiple ITGlue domain names and will ATTEMPT (lightly tested) to rewrite ALL of them to the correct Hudu ones.
 
+### Smart configuration splitting
+By default, configurations are imported into one layout unless `SplitConfigurations` is enabled, which creates one Hudu layout per exact IT Glue configuration type name. To group similar types into a smaller set of layouts, set `SmartSplitConfigurations` to `$true` or set `ConfigurationSplitMode` to `"Smart"` in your settings. Smart split uses normalized tokens from `configuration-type-name` and `configuration-type-kind`, fuzzy token similarity, and built-in families such as workstations, servers, printers, and network gear. `SmartSplitConfigurationMaxCategories` defaults to `20`.
+
+The selected smart groups are written to `SmartConfigurationSplits.json` in the migration logs before configuration import starts.
+
 ### Addendum - Flags / FlagTypes (labels are preferred)
 If you choose to migrate flags during setup, that path expects **Hudu `2.40.0` or later** (the script will prompt accordingly).
 

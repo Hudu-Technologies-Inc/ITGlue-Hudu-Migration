@@ -980,12 +980,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
     }
 
     $ConfigurationPrefix = $settings.ConPromptPrefix ?? $ConfigurationPrefix ?? ""
-    $SplitConfigurations = [bool]($settings.SplitConfigurations ?? $false)
-    $ConfigurationOption = if ($SplitConfigurations) { 2 } else { 1 }
-    Write-Host "Using configuration import mode $ConfigurationOption from settings.SplitConfigurations=$SplitConfigurations." -ForegroundColor DarkGray
+    $ConfigurationSplitMode = Get-ConfigurationSplitMode -Settings $settings -EnvironmentSettings $environmentSettings
+    $SmartConfigurationMaxCategories = Get-SmartConfigurationCategoryMax -Settings $settings -EnvironmentSettings $environmentSettings
+    Write-Host "Using configuration import mode $ConfigurationSplitMode." -ForegroundColor DarkGray
 
     # All Configurations to 1 Layout
-    if ($ConfigurationOption -eq 1) {
+    if ($ConfigurationSplitMode -eq 'Single') {
 	
 	
 
@@ -1004,7 +1004,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         $MatchedConfigurations = Import-Items @ConfigImportSplat
 
 
-    } elseif ($ConfigurationOption -eq 2) {
+    } elseif ($ConfigurationSplitMode -eq 'Exact') {
         $ITGConfigTypes = $ITGConfigurations.attributes."configuration-type-name" | Select-Object -unique
         $MatchedConfigurations = New-Object System.Collections.ArrayList
         foreach ($ConfigType in $ITGConfigTypes) {
@@ -1042,8 +1042,51 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
 
         }
 
+    } elseif ($ConfigurationSplitMode -eq 'Smart') {
+        $SmartConfigurationGroups = Resolve-SmartConfigurationSplits -Configurations @($ITGConfigurations) -MaxCategories $SmartConfigurationMaxCategories
+        $SmartConfigurationGroups |
+            Select-Object CategoryName, Count, SourceTypes, SourceKinds |
+            ConvertTo-Json -Depth 20 |
+            Out-File "$MigrationLogs\SmartConfigurationSplits.json"
+
+        Write-Host "Smart configuration split resolved $(@($ITGConfigurations).Count) configurations into $(@($SmartConfigurationGroups).Count) layout categories." -ForegroundColor Green
+
+        $MatchedConfigurations = New-Object System.Collections.ArrayList
+        foreach ($ConfigGroup in @($SmartConfigurationGroups)) {
+            $ParsedITGConfigs = @($ConfigGroup.Configurations)
+            if ($ParsedITGConfigs.Count -eq 0) {
+                Write-Host "Skipping smart configuration layout '$($ConfigurationPrefix)$($ConfigGroup.CategoryName)' because it has no configurations in scope." -ForegroundColor Yellow
+                continue
+            }
+
+            Write-Host "Processing smart configuration group '$($ConfigGroup.CategoryName)' with $($ParsedITGConfigs.Count) configurations from source type(s): $(@($ConfigGroup.SourceTypes) -join ', ')" -ForegroundColor Cyan
+
+            $ConfigMigrationName = "$($ConfigurationPrefix)$($ConfigGroup.CategoryName)"
+            $ConfigImportAssetLayoutName = "$($ConfigurationPrefix)$($ConfigGroup.CategoryName)"
+
+            $ConfigImportSplat = @{
+                AssetFieldsMap        = $ConfigAssetFieldsMap
+                AssetLayoutFields     = $ConfigAssetLayoutFields
+                ImportIcon            = $ConfigImportIcon
+                ImportEnabled         = $ConfigImportEnabled
+                HuduItemFilter        = $ConfigHuduItemFilter
+                ImportAssetLayoutName = $ConfigImportAssetLayoutName
+                ItemSelect            = $ConfigItemSelect
+                MigrationName         = $ConfigMigrationName
+                ITGImports            = $ParsedITGConfigs
+            }
+
+            $ReturnedConfigurations = Import-Items @ConfigImportSplat
+
+            if (($ReturnedConfigurations | measure-object).count -gt 1) {
+                $MatchedConfigurations.addrange($ReturnedConfigurations)
+            } else {
+                $MatchedConfigurations.add($ReturnedConfigurations)
+            }
+        }
+
     } else {
-        Write-Error "This should never have happened somehow you selected something other than 1 or 2."
+        Write-Error "Unknown configuration import mode '$ConfigurationSplitMode'. Expected Single, Exact, or Smart."
         exit 1
     }
 

@@ -46,8 +46,8 @@ if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test
     Write-Host "Pre-flight: checking configuration asset layout names against existing Hudu asset layouts." -ForegroundColor Green
 
     $ConfigurationPrefix = $settings.ConPromptPrefix ?? $ConfigurationPrefix ?? ""
-    $SplitConfigurations = [bool]($settings.SplitConfigurations ?? $false)
-    $ConfigurationOption = if ($SplitConfigurations) { 2 } else { 1 }
+    $ConfigurationSplitMode = Get-ConfigurationSplitMode -Settings $settings -EnvironmentSettings $environmentSettings
+    $SmartConfigurationMaxCategories = Get-SmartConfigurationCategoryMax -Settings $settings -EnvironmentSettings $environmentSettings
 
     $previousMigrationName = $MigrationName
     $MigrationName = "Configurations"
@@ -58,24 +58,42 @@ if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test
         $MigrationName = $previousMigrationName
     }
 
-    $PreflightConfigurationTargetLayouts = if (-not $SplitConfigurations -and @($PreflightITGConfigurations).Count -gt 0) {
-        [pscustomobject]@{
-            SourceType = "Configurations"
-            SourceName = "Configurations"
-            TargetName = "$($ConfigurationPrefix)Configurations"
-            SourceId   = $null
+    $PreflightConfigurationTargetLayouts = switch ($ConfigurationSplitMode) {
+        'Single' {
+            if (@($PreflightITGConfigurations).Count -gt 0) {
+                [pscustomobject]@{
+                    SourceType = "Configurations"
+                    SourceName = "Configurations"
+                    TargetName = "$($ConfigurationPrefix)Configurations"
+                    SourceId   = $null
+                }
+            }
         }
-    } else {
-        $ITGConfigTypes = $PreflightITGConfigurations.attributes."configuration-type-name" |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Sort-Object -Unique
 
-        foreach ($ConfigType in $ITGConfigTypes) {
-            [pscustomobject]@{
-                SourceType = "Configuration Type"
-                SourceName = $ConfigType
-                TargetName = "$($ConfigurationPrefix)$($ConfigType)"
-                SourceId   = $null
+        'Smart' {
+            $SmartConfigurationGroups = Resolve-SmartConfigurationSplits -Configurations @($PreflightITGConfigurations) -MaxCategories $SmartConfigurationMaxCategories
+            foreach ($group in @($SmartConfigurationGroups)) {
+                [pscustomobject]@{
+                    SourceType = "Smart Configuration Group"
+                    SourceName = @($group.SourceTypes) -join ', '
+                    TargetName = "$($ConfigurationPrefix)$($group.CategoryName)"
+                    SourceId   = $null
+                }
+            }
+        }
+
+        default {
+            $ITGConfigTypes = $PreflightITGConfigurations.attributes."configuration-type-name" |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+
+            foreach ($ConfigType in $ITGConfigTypes) {
+                [pscustomobject]@{
+                    SourceType = "Configuration Type"
+                    SourceName = $ConfigType
+                    TargetName = "$($ConfigurationPrefix)$($ConfigType)"
+                    SourceId   = $null
+                }
             }
         }
     }
