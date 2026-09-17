@@ -558,6 +558,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Set-MigrationScope.ps1 # Add migration scope helper
 . $PSScriptRoot\Public\Get-Checklists.ps1 # Other JWT-Auth / Advanced Post-Run Imports
 . $PSScriptRoot\Public\Normalize-String.ps1 # Add String/Filename Normalization Helper, image Normalization helper
+. $PSScriptRoot\Public\Resolve-SmartConfigurationSplits.ps1 # Smart/fuzzy configuration layout grouping helper
 . $PSScriptRoot\Public\Normalize-And-ConvertImage.ps1 # initialization helper and field requirement helper, logging, selection helper
 . $PSScriptRoot\Public\Get-ITGFieldPopulated.ps1 # determines if a field is always populated as a prerequisite for being required
 . $PSScriptRoot\Public\JWT-Auth.ps1 # JWT auth helpers

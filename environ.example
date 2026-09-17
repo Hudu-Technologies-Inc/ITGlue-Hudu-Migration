@@ -50,6 +50,11 @@ $settings = @{
 
     # Split configurations into individual asset layouts?
     SplitConfigurations     = $false
+
+    # Smart-split configurations into fuzzy grouped asset layouts instead of exact per-type layouts.
+    # Also accepts ConfigurationSplitMode = "Single", "Exact", or "Smart".
+    SmartSplitConfigurations = $true
+    SmartSplitConfigurationMaxCategories = 20
 }
 
 # Primary Secrets

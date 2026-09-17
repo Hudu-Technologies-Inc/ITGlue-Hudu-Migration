@@ -46,8 +46,8 @@ if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test
     Write-Host "Pre-flight: checking configuration asset layout names against existing Hudu asset layouts." -ForegroundColor Green
 
     $ConfigurationPrefix = $settings.ConPromptPrefix ?? $ConfigurationPrefix ?? ""
-    $SplitConfigurations = [bool]($settings.SplitConfigurations ?? $false)
-    $ConfigurationOption = if ($SplitConfigurations) { 2 } else { 1 }
+    $ConfigurationSplitMode = Get-ConfigurationSplitMode -Settings $settings -EnvironmentSettings $environmentSettings
+    $SmartConfigurationMaxCategories = Get-SmartConfigurationCategoryMax -Settings $settings -EnvironmentSettings $environmentSettings
 
     $previousMigrationName = $MigrationName
     $MigrationName = "Configurations"
@@ -58,24 +58,79 @@ if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test
         $MigrationName = $previousMigrationName
     }
 
-    $PreflightConfigurationTargetLayouts = if (-not $SplitConfigurations -and @($PreflightITGConfigurations).Count -gt 0) {
-        [pscustomobject]@{
-            SourceType = "Configurations"
-            SourceName = "Configurations"
-            TargetName = "$($ConfigurationPrefix)Configurations"
-            SourceId   = $null
+    $PreflightConfigurationTargetLayouts = switch ($ConfigurationSplitMode) {
+        'Single' {
+            if (@($PreflightITGConfigurations).Count -gt 0) {
+                [pscustomobject]@{
+                    SourceType = "Configurations"
+                    SourceName = "Configurations"
+                    TargetName = "$($ConfigurationPrefix)Configurations"
+                    SourceId   = $null
+                }
+            }
         }
-    } else {
-        $ITGConfigTypes = $PreflightITGConfigurations.attributes."configuration-type-name" |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Sort-Object -Unique
 
-        foreach ($ConfigType in $ITGConfigTypes) {
-            [pscustomobject]@{
-                SourceType = "Configuration Type"
-                SourceName = $ConfigType
-                TargetName = "$($ConfigurationPrefix)$($ConfigType)"
-                SourceId   = $null
+        'Smart' {
+            $SmartConfigurationGroups = Resolve-SmartConfigurationSplits -Configurations @($PreflightITGConfigurations) -MaxCategories $SmartConfigurationMaxCategories
+            $SmartConfigurationPreview = @(
+                foreach ($group in @($SmartConfigurationGroups)) {
+                    [pscustomobject]@{
+                        TargetLayoutName = "$($ConfigurationPrefix)$($group.CategoryName)"
+                        CategoryName     = $group.CategoryName
+                        Count            = $group.Count
+                        SourceTypes      = @($group.SourceTypes) -join '; '
+                        SourceKinds      = @($group.SourceKinds) -join '; '
+                        Tokens           = @($group.Tokens) -join '; '
+                    }
+                }
+            )
+
+            Write-Host "Smart configuration split preview ($(@($SmartConfigurationPreview).Count) categories, max $SmartConfigurationMaxCategories):" -ForegroundColor Cyan
+            Write-Host ($SmartConfigurationPreview |
+                Sort-Object -Property @{ Expression = 'Count'; Descending = $true }, @{ Expression = 'CategoryName'; Descending = $false } |
+                Select-Object TargetLayoutName, Count, SourceTypes, SourceKinds |
+                Format-Table -AutoSize -Wrap |
+                Out-String -Width 4096)
+
+            $smartPreviewLogPath = $MigrationLogs ?? $settings.MigrationLogs
+            if (-not [string]::IsNullOrWhiteSpace([string]$smartPreviewLogPath)) {
+                try {
+                    if (-not (Test-Path -LiteralPath $smartPreviewLogPath -PathType Container)) {
+                        $null = New-Item -Path $smartPreviewLogPath -ItemType Directory -Force
+                    }
+
+                    $jsonPreviewPath = Join-Path -Path $smartPreviewLogPath -ChildPath 'SmartConfigurationSplits-Preflight.json'
+                    $csvPreviewPath = Join-Path -Path $smartPreviewLogPath -ChildPath 'SmartConfigurationSplits-Preflight.csv'
+                    $SmartConfigurationPreview | ConvertTo-Json -Depth 20 | Out-File $jsonPreviewPath
+                    $SmartConfigurationPreview | Export-Csv -Path $csvPreviewPath -NoTypeInformation
+                    Write-Host "Smart configuration split preview written to $jsonPreviewPath and $csvPreviewPath" -ForegroundColor Cyan
+                } catch {
+                    Write-Warning "Could not write smart configuration split preview: $($_.Exception.Message)"
+                }
+            }
+
+            foreach ($group in @($SmartConfigurationGroups)) {
+                [pscustomobject]@{
+                    SourceType = "Smart Configuration Group"
+                    SourceName = @($group.SourceTypes) -join ', '
+                    TargetName = "$($ConfigurationPrefix)$($group.CategoryName)"
+                    SourceId   = $null
+                }
+            }
+        }
+
+        default {
+            $ITGConfigTypes = $PreflightITGConfigurations.attributes."configuration-type-name" |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+
+            foreach ($ConfigType in $ITGConfigTypes) {
+                [pscustomobject]@{
+                    SourceType = "Configuration Type"
+                    SourceName = $ConfigType
+                    TargetName = "$($ConfigurationPrefix)$($ConfigType)"
+                    SourceId   = $null
+                }
             }
         }
     }
