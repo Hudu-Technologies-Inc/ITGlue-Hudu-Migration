@@ -72,6 +72,43 @@ if ($true -eq $ImportConfigurations -and -not ($ResumeFound -eq $true -and (Test
 
         'Smart' {
             $SmartConfigurationGroups = Resolve-SmartConfigurationSplits -Configurations @($PreflightITGConfigurations) -MaxCategories $SmartConfigurationMaxCategories
+            $SmartConfigurationPreview = @(
+                foreach ($group in @($SmartConfigurationGroups)) {
+                    [pscustomobject]@{
+                        TargetLayoutName = "$($ConfigurationPrefix)$($group.CategoryName)"
+                        CategoryName     = $group.CategoryName
+                        Count            = $group.Count
+                        SourceTypes      = @($group.SourceTypes) -join '; '
+                        SourceKinds      = @($group.SourceKinds) -join '; '
+                        Tokens           = @($group.Tokens) -join '; '
+                    }
+                }
+            )
+
+            Write-Host "Smart configuration split preview ($(@($SmartConfigurationPreview).Count) categories, max $SmartConfigurationMaxCategories):" -ForegroundColor Cyan
+            Write-Host ($SmartConfigurationPreview |
+                Sort-Object -Property @{ Expression = 'Count'; Descending = $true }, @{ Expression = 'CategoryName'; Descending = $false } |
+                Select-Object TargetLayoutName, Count, SourceTypes, SourceKinds |
+                Format-Table -AutoSize -Wrap |
+                Out-String -Width 4096)
+
+            $smartPreviewLogPath = $MigrationLogs ?? $settings.MigrationLogs
+            if (-not [string]::IsNullOrWhiteSpace([string]$smartPreviewLogPath)) {
+                try {
+                    if (-not (Test-Path -LiteralPath $smartPreviewLogPath -PathType Container)) {
+                        $null = New-Item -Path $smartPreviewLogPath -ItemType Directory -Force
+                    }
+
+                    $jsonPreviewPath = Join-Path -Path $smartPreviewLogPath -ChildPath 'SmartConfigurationSplits-Preflight.json'
+                    $csvPreviewPath = Join-Path -Path $smartPreviewLogPath -ChildPath 'SmartConfigurationSplits-Preflight.csv'
+                    $SmartConfigurationPreview | ConvertTo-Json -Depth 20 | Out-File $jsonPreviewPath
+                    $SmartConfigurationPreview | Export-Csv -Path $csvPreviewPath -NoTypeInformation
+                    Write-Host "Smart configuration split preview written to $jsonPreviewPath and $csvPreviewPath" -ForegroundColor Cyan
+                } catch {
+                    Write-Warning "Could not write smart configuration split preview: $($_.Exception.Message)"
+                }
+            }
+
             foreach ($group in @($SmartConfigurationGroups)) {
                 [pscustomobject]@{
                     SourceType = "Smart Configuration Group"
