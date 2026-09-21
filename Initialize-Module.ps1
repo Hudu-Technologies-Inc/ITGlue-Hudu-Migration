@@ -348,7 +348,7 @@ if ($InitType -eq 'Full') {
     $LocImportAssetLayoutName = $LocImportAssetLayoutName ?? "Locations" # name for location layout
     $LayoutIconBackGroundColor = $LayoutIconBackGroundColor ?? "#6136ff" # hudu-purple background for layout icons (fallback)
     $LayoutIconForegroundColor = $LayoutIconForegroundColor ?? "#ffffff" # White Foreground for layout icons (fallback)
-
+    $convertStandalonePhotoArticles = $convertStandalonePhotoArticles ?? $(Select-ObjectFromList -message "Convert standalone photo articles to Hudu photos?" -objects @($true, $false) -allowNull $false)
 
     # The font awesome name for the locations icon in Hudu
     # Here set two arrays of the different names you have used to identify the primary location in both ITGlue And Hudu

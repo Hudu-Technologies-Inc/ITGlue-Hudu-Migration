@@ -162,6 +162,23 @@ if (-not $huduCoreFeatureCheck.Success) {
     exit 1
 }
 
+$convertStandalonePhotoArticles = $convertStandalonePhotoArticles ?? $true
+if ((Test-HuduMigrationSettingEnabled $ImportArticles) -and (Test-HuduMigrationSettingEnabled $convertStandalonePhotoArticles)) {
+    $photoFeatureAvailable = try {
+        Get-HuduFeatureAvailability -Core_Feature Photo
+    } catch {
+        Write-Warning "Could not verify Hudu Photo feature availability for standalone image article conversion: $($_.Exception.Message)"
+        $false
+    }
+
+    if ($true -ne $photoFeatureAvailable) {
+        $convertStandalonePhotoArticles = $false
+        Write-Warning "Hudu Photo feature is disabled or unavailable. Standalone image articles will remain as article attachment placeholders instead of being converted to Hudu photos."
+    } else {
+        Write-Host "Photo feature is enabled in Hudu? Yes; Needed for: standalone image article conversion" -ForegroundColor Cyan
+    }
+}
+
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
 if ($backups -notin @("Y", "y")) {
@@ -2695,6 +2712,7 @@ if (-not (Get-Command -Name New-HuduArticleStandaloneMediaEmbed -ErrorAction Sil
 $preparedArticleCommits = [System.Collections.ArrayList]@()
 $articlePreCommitFailures = [System.Collections.ArrayList]@()
 $articleCommitIndex = 0
+$convertStandalonePhotoArticlesEnabled = Test-HuduMigrationSettingEnabled $convertStandalonePhotoArticles
 
 foreach ($articleFound in $ArticleContentCommitCandidates) {
     $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
@@ -2728,7 +2746,7 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
     $standaloneAttachmentNoteApplied = $false
     if ($finalArticleContent -eq 'Empty Document in IT Glue Export - Please Check IT Glue' -and $articleFound.name -ilike '*.*') {
         $standaloneArticleFileKind = Get-HuduStandaloneArticleFileKind -Path ([string]$articleFound.name)
-        if ($standaloneArticleFileKind -eq 'Image') {
+        if ($standaloneArticleFileKind -eq 'Image' -and $convertStandalonePhotoArticlesEnabled) {
             $standaloneImagePhoto = New-HuduArticleStandaloneImagePhoto -Article $articleFound -ExportPath $ITGlueExportPath -MatchedCompanies $MatchedCompanies
             if ($standaloneImagePhoto) {
                 $finalArticleContent = $standaloneImagePhoto.Content
@@ -2743,6 +2761,8 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
             } else {
                 $finalArticleContent = "Please see attached file, $($articleFound.name)"
             }
+        } elseif ($standaloneArticleFileKind -eq 'Image') {
+            $finalArticleContent = "Please see attached file, $($articleFound.name)"
         } elseif ($standaloneArticleFileKind -in @('Audio', 'Video')) {
             if ($standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath) {
                 $finalArticleContent = $standaloneMediaEmbed.Content

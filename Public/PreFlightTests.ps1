@@ -375,7 +375,6 @@ function Get-HuduMigrationRequiredCoreFeatures {
         Add-HuduCoreFeatureRequirement -Feature 'Article' -Scope 'CompanyKB' -Reason 'company knowledge base article import'
         Add-HuduCoreFeatureRequirement -Feature 'Article' -Scope 'CentralKB' -Reason 'global knowledge base article import'
         Add-HuduCoreFeatureRequirement -Feature 'PublicPhoto' -Reason 'article inline image import'
-        Add-HuduCoreFeatureRequirement -Feature 'Photo' -Reason 'standalone image article conversion'
     }
 
     if (Test-HuduMigrationSettingEnabled $ImportChecklists) {
