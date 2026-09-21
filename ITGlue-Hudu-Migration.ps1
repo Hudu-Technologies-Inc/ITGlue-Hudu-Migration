@@ -38,7 +38,7 @@ write-host $BackupSafetyText -ForegroundColor DarkCyan
 Write-Host $LiabilityWarning -ForegroundColor Red
 
 # version checking
-$RequiredHuduVersion = [version]"2.45.0"; $DisallowedVersions = @([version]("2.37.0"));
+$RequiredHuduVersion = [version]"2.46.0"; $DisallowedVersions = @([version]("2.37.0"));
 if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) {
     write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red
     Stop-ITGlueExportBootstrapJobIfRunning
@@ -131,6 +131,36 @@ $estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
 $estimateGeneratedAt = Get-Date
 $estimatedCompletionAt = $estimateGeneratedAt + $estimatedJobDuration
 Write-Host "Your Migration is estimated to finish some time around $estimatedCompletionAt or about $($estimatedJobDuration.TotalHours) hours from now using $($estimateParams.CommitWorkerCount) commit worker(s)"
+
+$huduCoreFeatureCheck = Test-HuduMigrationCoreFeatureAvailability `
+    -ImportCompanies $ImportCompanies `
+    -ImportLocations $ImportLocations `
+    -ImportDomains $ImportDomains `
+    -ImportConfigurations $ImportConfigurations `
+    -ImportContacts $ImportContacts `
+    -ImportFlexibleAssetLayouts $ImportFlexibleAssetLayouts `
+    -ImportFlexibleAssets $ImportFlexibleAssets `
+    -ImportArticles $ImportArticles `
+    -ImportPasswords $ImportPasswords `
+    -ImportPasswordFolders $importPasswordFolders `
+    -ImportChecklists $importChecklists `
+    -ImportConfigInterfaces $ImportConfigInterfaces `
+    -Detailed
+
+foreach ($featureCheck in @($huduCoreFeatureCheck.Features)) {
+    $status = if ($true -eq $featureCheck.Available) { 'Yes' } else { 'No' }
+    $color = if ($true -eq $featureCheck.Available) { 'Cyan' } else { 'Yellow' }
+    Write-Host "$($featureCheck.DisplayName) feature is enabled in Hudu? $status; Needed for: $($featureCheck.Reason)" -ForegroundColor $color
+}
+
+if (-not $huduCoreFeatureCheck.Success) {
+    foreach ($disabledFeature in @($huduCoreFeatureCheck.DisabledFeatures)) {
+        Write-Warning "$($disabledFeature.DisplayName) is required for $($disabledFeature.Reason), but that Hudu core feature is disabled or unavailable."
+    }
+    Write-Warning "Please have your Hudu administrator enable the necessary core features, or disable the related migration option(s), then run the migration again."
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+}
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 

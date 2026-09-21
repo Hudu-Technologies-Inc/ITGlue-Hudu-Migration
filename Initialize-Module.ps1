@@ -578,7 +578,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
-$requiredHuduVersion = ([version]"2.44.0")
+$requiredHuduVersion = ([version]"2.46.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
