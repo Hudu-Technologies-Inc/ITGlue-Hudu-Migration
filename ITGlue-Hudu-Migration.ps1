@@ -2463,7 +2463,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
                             description       = $unmatchedPassword.ITGObject.attributes.notes
                             in_portal         = $false
                             password          = $unmatchedPassword.ITGObject.attributes.password
-                            url               = if ($url = $unmatchedPassword.ITGObject.attributes.url) {$url} Else {$unmatchedPassword.ITGObject.attributes.'resource-url'}
+                            url               = if ($url = $unmatchedPassword.ITGObject.attributes.url) {$url} Else {$null}
                             username          = $unmatchedPassword.ITGObject.attributes.username
                             otpsecret         = $validated_otp
 
