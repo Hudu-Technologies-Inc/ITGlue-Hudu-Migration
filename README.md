@@ -81,6 +81,8 @@ If you've already elected to run through setup, that is fine, but you will need 
 > Before Starting, **make sure that any core feature that you want to migrate objects for is enabled.**
 > ***Talk to your administrator if you are not authorized to check this or ensure they are turned on.***
 
+If a core feature is configured for migration but not turned on / enabled in Hudu, the process will notify you in the console window and exit early.
+
 <img width="1161" height="1169" alt="image" src="https://github.com/user-attachments/assets/a5378e14-43fd-45d3-b094-7da96b4adffe" />
 
 
