@@ -5,7 +5,7 @@ Move assets from one Hudu asset layout to another with a guided GUI workflow. Th
 > **Quick summary**
 > 1. Run `HuduAssetLayoutTransfer.exe`, double-click `Start-HuduAssetLayoutTransfer.cmd`, or run `Start-HuduAssetLayoutTransfer.ps1` with PowerShell 7
 > 2. Choose the source and destination layouts
-> 3. Pick merge behavior for matching assets
+> 3. Pick the transfer mode and merge behavior
 > 4. Review each destination field in the mapping wizard
 > 5. Confirm the final plan and run the transfer
 
@@ -22,8 +22,11 @@ Move assets from one Hudu asset layout to another with a guided GUI workflow. Th
 - Supports `ListSelect` destination mapping, including optional creation of missing list items
 - Can merge or skip when a likely matching asset already exists in the destination
 - Relinks supported related records such as passwords, uploads, articles, and photos
+- Can optionally move existing assets in place to the new layout, preserving the same asset IDs
 
 ## What Gets Carried Over
+
+In the default transfer mode, the tool creates or updates destination-layout assets, transforms the mapped fields, and copies or relinks supported related items.
 
 - Any source asset fields you choose to map
 - AssetTag relations, converted into direct relations where applicable
@@ -35,6 +38,32 @@ Move assets from one Hudu asset layout to another with a guided GUI workflow. Th
 - Related photos
 
 > Photo relinking requires Hudu `2.41.0` or later.
+
+## Transfer Modes
+
+### Default: create, transform, and relink
+
+This is the safest general-purpose workflow. The tool creates a new destination-layout asset or updates a matched destination asset, transforms fields into the target layout, then copies or relinks supported related records.
+
+Use this mode when you want the old source-layout assets to remain as a clearer rollback point, or when you need match/merge behavior against assets that already exist in the destination layout.
+
+### Only modify existing assets
+
+This option moves each existing source asset directly into the destination layout, then updates that same asset with the transformed field values. Because the asset ID does not change, Hudu keeps the asset's own history and direct associations attached to the same record.
+
+This can be a strong fit when:
+
+- The assets have many process runs or other activity/history that should stay on the same asset record
+- You want to keep asset history intact instead of creating a replacement asset
+- Assets may be tied to integrators, integration cards, or other ID-sensitive associations
+- The asset already has passwords, photos, uploads, public photos, or relations that you want to keep attached without copy/relink work
+
+Important tradeoffs:
+
+- This mode is less reversible than the default copy-and-relink workflow
+- Destination matching, merge behavior, custom matching criteria, and auxiliary relinking are not available in this mode
+- Source layout rename and source asset archival settings remain available
+- The run logs and `transferresults_*.json` record the selected transfer mode
 
 ---
 
@@ -73,7 +102,7 @@ Provide your Hudu URL and API key.
 
 <img width="399" height="170" alt="Connection prompt" src="https://github.com/user-attachments/assets/32d62e27-dde5-4957-897c-5c7c6a9628e9" />
 
-### 3. Choose the source and destination layouts, source-archival strategy, and merge-strategy
+### 3. Choose the source and destination layouts, transfer mode, source-archival strategy, and merge strategy
 
 Pick the layout you are moving **from** and the layout you are moving **to**.
 
@@ -81,7 +110,7 @@ Pick the layout you are moving **from** and the layout you are moving **to**.
 If you are confident with your source/dest selection, it's generally a good idea to archive source data afterwards.
 
 
-### 4-A Match, Merge, Archive, and Match-Concatenation strategies (when source asset matched to destination)
+### 4-A Transfer mode, match, merge, and archive strategy
 
 You will then get a confirmation step to review or change the selection.
 
@@ -90,6 +119,8 @@ You will then get a confirmation step to review or change the selection.
 If an incoming source asset appears to match an existing destination asset, you can choose how the tool should behave.
 
 You can also enable custom matching criteria in the transfer options. After field mapping is complete, the wizard will ask for primary, secondary, and tertiary criteria from the mapped `destination <= source` field pairs, plus asset name. Each criterion can use direct case-insensitive matching or broader contains-either-way matching. During transfer, the criteria are checked in order against destination assets in the same company, and later criteria can narrow multiple earlier matches.
+
+If you select `Only modify existing assets`, match/merge behavior and custom matching are disabled because the tool is moving the selected source assets themselves into the destination layout instead of looking for separate destination assets to merge into. The GUI labels these unavailable controls directly while this mode is selected.
 
 ### 4-B (optional) filtering
 
@@ -128,6 +159,8 @@ When a source asset appears to match a destination asset, choose one of these be
 - `Skip`: do not transfer the source asset if a match is found
 
 Use `Merge-Concat` when you want to preserve both sets of notes or descriptive text. Use `Merge-FillBlanks` when the destination is already your source of truth.
+
+Merge modes apply to the default transfer workflow. They are not used when `Only modify existing assets` is selected.
 
 **tip*- Use custom matching criteria when matched objects are the expectation in order to achieve fewer cleanup tasks and higher accuracy*
 
@@ -261,6 +294,8 @@ This matching logic helps prevent accidental duplicates while still allowing fle
 
 <img width="1584" height="324" alt="image" src="https://github.com/user-attachments/assets/35716e18-2a86-480a-a4e9-9dd41b75885d" />
 
+Matching is skipped when `Only modify existing assets` is selected, because the source asset itself is moved to the destination layout and keeps its existing asset ID.
+
 ---
 
 ## Review, Outputs, and Logs
@@ -273,12 +308,13 @@ Before the transfer runs, the tool shows a final summary of the mapping plan, in
 - Skipped fields
 - Merge behavior
 - Archive preference
+- Transfer mode
 
 After the transfer, the tool writes a timestamped JSON results file such as:
 
 - `transferresults_YYYYMMDD_HHMMSS.json`
 
-The console output also includes field-level and relation-level progress messages to help with troubleshooting.
+The console output also includes field-level and relation-level progress messages to help with troubleshooting. For `Only modify existing assets` runs, the logs and results mark the mode explicitly because the workflow changes existing asset records in place.
 
 ---
 
@@ -334,6 +370,7 @@ $includeLabelInSmooshedValues = $true
 - Prefer matching destination field types when possible
 - Use constants to satisfy required destination fields that have no good source value
 - Use `SMOOSH` for notes-style destinations rather than trying to cram several inputs into a single normal field
+- Use `Only modify existing assets` when keeping process runs, asset history, or integrator-linked asset IDs intact matters more than having a separate copied asset as a rollback point
 - For plain text destinations, consider both `Strip HTML` and `excludeHTMLinSMOOSH=$true`
 - Start with a small test layout or a small company subset before running a large migration
 
@@ -348,4 +385,5 @@ $includeLabelInSmooshedValues = $true
 - `v1.0` - Finalized GUI, added forward,back buttons, and field indicator panel.
 - `v1.2` - Consolidated forms for easier review / navigation, added source-data filter for mapped or L2L migrations
 - `v1.3` - Addition of Custom Matching Criteria and Conditions, Matching behavior customization, May 28, 2026
-- `v1.4` - Standalone pwsh7 script, launcher, and exe
+- `v1.4` - Added `Only modify existing assets` mode for preserving asset IDs, process history, and integrator-linked associations, September 22, 2026
+- `v1.5` - Added direct-transfer option, which keeps integrator cards/matches and process runs intact, as well as asset history (but is more difficult to reverse when a mistake is made)
