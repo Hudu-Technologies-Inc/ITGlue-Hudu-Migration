@@ -85,7 +85,7 @@ $importPasswordFolders               = $true  # default true;
 $ImportConfigInterfaces              = $true  # default true;  this creates IPAM addresses + networks in Hudu
 $NonInteractive                      = $true  # Select $false for interactive steps, $true for noninteractive/no pauses (default)
 $skipIntegratorLayouts               = $true  # do you want to skip flexible asset layouts from integrators? they are generally have the phrase '(auto)' in the name
-         
+$convertStandalonePhotoArticles      = $true  # Convert standalone image documents to Hudu Photos when the Photo feature is enabled.
 $IncludeIgnoredFirstArticleDirectory = $true  # set this to 'false' to exclude the root level article folders (previously excluding these top level folders was expected behavior)
 $DisableWebsiteMonitoring            = $false # default false;
 $allowSettingFlagsAndTypes           = $false # Apply flags and flag types during the migration; requires Hudu 2.40+

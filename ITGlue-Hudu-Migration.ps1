@@ -38,7 +38,7 @@ write-host $BackupSafetyText -ForegroundColor DarkCyan
 Write-Host $LiabilityWarning -ForegroundColor Red
 
 # version checking
-$RequiredHuduVersion = [version]"2.45.0"; $DisallowedVersions = @([version]("2.37.0"));
+$RequiredHuduVersion = [version]"2.46.0"; $DisallowedVersions = @([version]("2.37.0"));
 if ($null -eq $CurrentVersion -or $CurrentVersion -lt $RequiredHuduVersion) {
     write-host "Current Hudu version $CurrentVersion is below the required version $RequiredHuduVersion" -ForegroundColor Red
     Stop-ITGlueExportBootstrapJobIfRunning
@@ -131,6 +131,53 @@ $estimatedJobDuration = Get-ITGlueMigrationETA @estimateParams
 $estimateGeneratedAt = Get-Date
 $estimatedCompletionAt = $estimateGeneratedAt + $estimatedJobDuration
 Write-Host "Your Migration is estimated to finish some time around $estimatedCompletionAt or about $($estimatedJobDuration.TotalHours) hours from now using $($estimateParams.CommitWorkerCount) commit worker(s)"
+
+$huduCoreFeatureCheck = Test-HuduMigrationCoreFeatureAvailability `
+    -ImportCompanies $ImportCompanies `
+    -ImportLocations $ImportLocations `
+    -ImportDomains $ImportDomains `
+    -ImportConfigurations $ImportConfigurations `
+    -ImportContacts $ImportContacts `
+    -ImportFlexibleAssetLayouts $ImportFlexibleAssetLayouts `
+    -ImportFlexibleAssets $ImportFlexibleAssets `
+    -ImportArticles $ImportArticles `
+    -ImportPasswords $ImportPasswords `
+    -ImportPasswordFolders $importPasswordFolders `
+    -ImportChecklists $importChecklists `
+    -ImportConfigInterfaces $ImportConfigInterfaces `
+    -Detailed
+
+foreach ($featureCheck in @($huduCoreFeatureCheck.Features)) {
+    $status = if ($true -eq $featureCheck.Available) { 'Yes' } else { 'No' }
+    $color = if ($true -eq $featureCheck.Available) { 'Cyan' } else { 'Yellow' }
+    Write-Host "$($featureCheck.DisplayName) feature is enabled in Hudu? $status; Needed for: $($featureCheck.Reason)" -ForegroundColor $color
+}
+
+if (-not $huduCoreFeatureCheck.Success) {
+    foreach ($disabledFeature in @($huduCoreFeatureCheck.DisabledFeatures)) {
+        Write-Warning "$($disabledFeature.DisplayName) is required for $($disabledFeature.Reason), but that Hudu core feature is disabled or unavailable."
+    }
+    Write-Warning "Please have your Hudu administrator enable the necessary core features, or disable the related migration option(s), then run the migration again."
+    Stop-ITGlueExportBootstrapJobIfRunning
+    exit 1
+}
+
+$convertStandalonePhotoArticles = $convertStandalonePhotoArticles ?? $true
+if ((Test-HuduMigrationSettingEnabled $ImportArticles) -and (Test-HuduMigrationSettingEnabled $convertStandalonePhotoArticles)) {
+    $photoFeatureAvailable = try {
+        Get-HuduFeatureAvailability -Core_Feature Photo
+    } catch {
+        Write-Warning "Could not verify Hudu Photo feature availability for standalone image article conversion: $($_.Exception.Message)"
+        $false
+    }
+
+    if ($true -ne $photoFeatureAvailable) {
+        $convertStandalonePhotoArticles = $false
+        Write-Warning "Hudu Photo feature is disabled or unavailable. Standalone image articles will remain as article attachment placeholders instead of being converted to Hudu photos."
+    } else {
+        Write-Host "Photo feature is enabled in Hudu? Yes; Needed for: standalone image article conversion" -ForegroundColor Cyan
+    }
+}
 
 if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
@@ -2665,6 +2712,7 @@ if (-not (Get-Command -Name New-HuduArticleStandaloneMediaEmbed -ErrorAction Sil
 $preparedArticleCommits = [System.Collections.ArrayList]@()
 $articlePreCommitFailures = [System.Collections.ArrayList]@()
 $articleCommitIndex = 0
+$convertStandalonePhotoArticlesEnabled = Test-HuduMigrationSettingEnabled $convertStandalonePhotoArticles
 
 foreach ($articleFound in $ArticleContentCommitCandidates) {
     $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
@@ -2698,7 +2746,7 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
     $standaloneAttachmentNoteApplied = $false
     if ($finalArticleContent -eq 'Empty Document in IT Glue Export - Please Check IT Glue' -and $articleFound.name -ilike '*.*') {
         $standaloneArticleFileKind = Get-HuduStandaloneArticleFileKind -Path ([string]$articleFound.name)
-        if ($standaloneArticleFileKind -eq 'Image') {
+        if ($standaloneArticleFileKind -eq 'Image' -and $convertStandalonePhotoArticlesEnabled) {
             $standaloneImagePhoto = New-HuduArticleStandaloneImagePhoto -Article $articleFound -ExportPath $ITGlueExportPath -MatchedCompanies $MatchedCompanies
             if ($standaloneImagePhoto) {
                 $finalArticleContent = $standaloneImagePhoto.Content
@@ -2713,6 +2761,8 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
             } else {
                 $finalArticleContent = "Please see attached file, $($articleFound.name)"
             }
+        } elseif ($standaloneArticleFileKind -eq 'Image') {
+            $finalArticleContent = "Please see attached file, $($articleFound.name)"
         } elseif ($standaloneArticleFileKind -in @('Audio', 'Video')) {
             if ($standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath) {
                 $finalArticleContent = $standaloneMediaEmbed.Content

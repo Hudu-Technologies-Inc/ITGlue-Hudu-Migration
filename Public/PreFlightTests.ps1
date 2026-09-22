@@ -290,6 +290,238 @@ function Test-ITGlueAPIKeyPasswordScope {
     return $result.Success
 }
 
+function Test-HuduMigrationSettingEnabled {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    return ($true -eq $Value -or "$Value" -ieq 'true' -or "$Value" -ieq 'yes' -or "$Value" -ieq 'y')
+}
+
+function Get-HuduMigrationRequiredCoreFeatures {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$ImportCompanies = $ImportCompanies,
+        [AllowNull()][object]$ImportLocations = $ImportLocations,
+        [AllowNull()][object]$ImportDomains = $ImportDomains,
+        [AllowNull()][object]$ImportConfigurations = $ImportConfigurations,
+        [AllowNull()][object]$ImportContacts = $ImportContacts,
+        [AllowNull()][object]$ImportFlexibleAssetLayouts = $ImportFlexibleAssetLayouts,
+        [AllowNull()][object]$ImportFlexibleAssets = $ImportFlexibleAssets,
+        [AllowNull()][object]$ImportArticles = $ImportArticles,
+        [AllowNull()][object]$ImportPasswords = $ImportPasswords,
+        [AllowNull()][object]$ImportPasswordFolders = $importPasswordFolders,
+        [AllowNull()][object]$ImportChecklists = $importChecklists,
+        [AllowNull()][object]$ImportConfigInterfaces = $ImportConfigInterfaces,
+
+        [string[]]$AdditionalRequiredFeatures = @()
+    )
+
+    $requirementsByKey = [ordered]@{}
+
+    function Add-HuduCoreFeatureRequirement {
+        param(
+            [Parameter(Mandatory)][string]$Feature,
+            [Parameter(Mandatory)][string]$Reason,
+            [AllowNull()][string]$Scope
+        )
+
+        $key = "$Feature|$Scope"
+        if (-not $requirementsByKey.Contains($key)) {
+            $requirementsByKey[$key] = [pscustomobject]@{
+                Feature = $Feature
+                Scope   = $Scope
+                Reasons = [System.Collections.Generic.List[string]]::new()
+            }
+        }
+
+        if (-not $requirementsByKey[$key].Reasons.Contains($Reason)) {
+            $requirementsByKey[$key].Reasons.Add($Reason)
+        }
+    }
+
+    $companyScopedMigrationRequested = @(
+        $ImportCompanies,
+        $ImportLocations,
+        $ImportDomains,
+        $ImportConfigurations,
+        $ImportContacts,
+        $ImportFlexibleAssets,
+        $ImportArticles,
+        $ImportPasswords,
+        $ImportPasswordFolders,
+        $ImportChecklists,
+        $ImportConfigInterfaces
+    ) | Where-Object { Test-HuduMigrationSettingEnabled $_ } | Select-Object -First 1
+
+    if ($companyScopedMigrationRequested) {
+        Add-HuduCoreFeatureRequirement -Feature 'Company' -Reason 'company-scoped migration data'
+    }
+
+    if (Test-HuduMigrationSettingEnabled $ImportDomains) {
+        Add-HuduCoreFeatureRequirement -Feature 'Website' -Reason 'website/domain import'
+    }
+
+    if (@($ImportLocations, $ImportConfigurations, $ImportContacts, $ImportFlexibleAssetLayouts, $ImportFlexibleAssets) | Where-Object { Test-HuduMigrationSettingEnabled $_ } | Select-Object -First 1) {
+        Add-HuduCoreFeatureRequirement -Feature 'Asset' -Reason 'asset-backed imports'
+    }
+
+    if (@($ImportPasswords, $ImportPasswordFolders) | Where-Object { Test-HuduMigrationSettingEnabled $_ } | Select-Object -First 1) {
+        Add-HuduCoreFeatureRequirement -Feature 'AssetPassword' -Reason 'password or password-folder import'
+    }
+
+    if (Test-HuduMigrationSettingEnabled $ImportArticles) {
+        Add-HuduCoreFeatureRequirement -Feature 'Article' -Scope 'CompanyKB' -Reason 'company knowledge base article import'
+        Add-HuduCoreFeatureRequirement -Feature 'Article' -Scope 'CentralKB' -Reason 'global knowledge base article import'
+        Add-HuduCoreFeatureRequirement -Feature 'PublicPhoto' -Reason 'article inline image import'
+    }
+
+    if (Test-HuduMigrationSettingEnabled $ImportChecklists) {
+        Add-HuduCoreFeatureRequirement -Feature 'Procedure' -Reason 'checklist/process import'
+    }
+
+    if (Test-HuduMigrationSettingEnabled $ImportConfigInterfaces) {
+        foreach ($ipamFeature in @('IpAddress', 'Network', 'Vlan', 'VlanZone')) {
+            Add-HuduCoreFeatureRequirement -Feature $ipamFeature -Reason 'IPAM import'
+        }
+    }
+
+    foreach ($feature in @($AdditionalRequiredFeatures | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        Add-HuduCoreFeatureRequirement -Feature $feature -Reason 'explicitly requested'
+    }
+
+    foreach ($requirement in $requirementsByKey.Values) {
+        [pscustomobject]@{
+            Feature = $requirement.Feature
+            Scope   = $requirement.Scope
+            Reasons = @($requirement.Reasons)
+        }
+    }
+}
+
+function Test-HuduMigrationCoreFeatureAvailability {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$ImportCompanies = $ImportCompanies,
+        [AllowNull()][object]$ImportLocations = $ImportLocations,
+        [AllowNull()][object]$ImportDomains = $ImportDomains,
+        [AllowNull()][object]$ImportConfigurations = $ImportConfigurations,
+        [AllowNull()][object]$ImportContacts = $ImportContacts,
+        [AllowNull()][object]$ImportFlexibleAssetLayouts = $ImportFlexibleAssetLayouts,
+        [AllowNull()][object]$ImportFlexibleAssets = $ImportFlexibleAssets,
+        [AllowNull()][object]$ImportArticles = $ImportArticles,
+        [AllowNull()][object]$ImportPasswords = $ImportPasswords,
+        [AllowNull()][object]$ImportPasswordFolders = $importPasswordFolders,
+        [AllowNull()][object]$ImportChecklists = $importChecklists,
+        [AllowNull()][object]$ImportConfigInterfaces = $ImportConfigInterfaces,
+
+        [AllowNull()]
+        [object[]]$RequiredFeatures,
+
+        [string[]]$AdditionalRequiredFeatures = @(),
+
+        [switch]$Detailed,
+        [switch]$ThrowOnDisabled
+    )
+
+    if (-not (Get-Command -Name Get-HuduFeatureAvailability -ErrorAction SilentlyContinue)) {
+        throw "Get-HuduFeatureAvailability is not available. Load a compatible HuduAPI module before checking core feature availability."
+    }
+
+    if ($null -eq $RequiredFeatures) {
+        $RequiredFeatures = @(
+            Get-HuduMigrationRequiredCoreFeatures `
+                -ImportCompanies $ImportCompanies `
+                -ImportLocations $ImportLocations `
+                -ImportDomains $ImportDomains `
+                -ImportConfigurations $ImportConfigurations `
+                -ImportContacts $ImportContacts `
+                -ImportFlexibleAssetLayouts $ImportFlexibleAssetLayouts `
+                -ImportFlexibleAssets $ImportFlexibleAssets `
+                -ImportArticles $ImportArticles `
+                -ImportPasswords $ImportPasswords `
+                -ImportPasswordFolders $ImportPasswordFolders `
+                -ImportChecklists $ImportChecklists `
+                -ImportConfigInterfaces $ImportConfigInterfaces `
+                -AdditionalRequiredFeatures $AdditionalRequiredFeatures
+        )
+    }
+
+    $availabilityCache = @{}
+    $ipamFeatureNames = @('IpAddress', 'Network', 'Vlan', 'VlanZone')
+
+    function Get-HuduCoreFeatureAvailabilityCached {
+        param(
+            [Parameter(Mandatory)][string]$Feature
+        )
+
+        $cacheKey = if ($ipamFeatureNames -contains $Feature) { 'IPAM' } else { $Feature }
+        if (-not $availabilityCache.ContainsKey($cacheKey)) {
+            $probeFeature = if ($cacheKey -eq 'IPAM') { 'IpAddress' } else { $Feature }
+            $availabilityCache[$cacheKey] = Get-HuduFeatureAvailability -Core_Feature $probeFeature
+        }
+
+        return $availabilityCache[$cacheKey]
+    }
+
+    $featureResults = foreach ($requirement in @($RequiredFeatures | Where-Object { $_ })) {
+        $feature = [string]($requirement.Feature ?? $requirement)
+        if ([string]::IsNullOrWhiteSpace($feature)) { continue }
+
+        $scope = if ($requirement.PSObject.Properties['Scope']) { [string]$requirement.Scope } else { $null }
+        $reasons = if ($requirement.PSObject.Properties['Reasons']) { @($requirement.Reasons) } else { @('explicitly requested') }
+        $rawAvailability = Get-HuduCoreFeatureAvailabilityCached -Feature $feature
+
+        $available = if ($feature -eq 'Article') {
+            if ([string]::IsNullOrWhiteSpace($scope)) {
+                ($true -eq $rawAvailability.CompanyKB -and $true -eq $rawAvailability.CentralKB)
+            } elseif ($rawAvailability.PSObject.Properties[$scope]) {
+                ($true -eq $rawAvailability.$scope)
+            } else {
+                $false
+            }
+        } else {
+            ($true -eq $rawAvailability)
+        }
+
+        $displayName = if ($feature -eq 'Article' -and -not [string]::IsNullOrWhiteSpace($scope)) {
+            "Article ($scope)"
+        } else {
+            $feature
+        }
+
+        [pscustomobject]@{
+            Feature         = $feature
+            Scope           = $scope
+            DisplayName     = $displayName
+            Required        = $true
+            Available       = $available
+            Reasons         = $reasons
+            Reason          = ($reasons -join ', ')
+            RawAvailability = $rawAvailability
+        }
+    }
+
+    $disabledFeatures = @($featureResults | Where-Object { $true -ne $_.Available })
+    $result = [pscustomobject]@{
+        Success          = ($disabledFeatures.Count -eq 0)
+        Features         = @($featureResults)
+        DisabledFeatures = $disabledFeatures
+    }
+
+    if (-not $result.Success -and $ThrowOnDisabled) {
+        $disabledSummary = ($disabledFeatures | ForEach-Object { "$($_.DisplayName) ($($_.Reason))" }) -join '; '
+        throw "One or more Hudu core features required for this migration are disabled or unavailable: $disabledSummary"
+    }
+
+    if ($Detailed) {
+        return $result
+    }
+
+    return $result.Success
+}
+
 function ConvertTo-ReadableByteSize {
     param(
         [Parameter(Mandatory = $true)]
