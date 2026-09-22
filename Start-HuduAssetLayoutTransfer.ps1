@@ -42,7 +42,7 @@ function Get-LayoutTransferAppVersion {
         }
     }
 
-    return '1.0.0'
+    return '1.5.0'
 }
 
 $script:AppVersion = Get-LayoutTransferAppVersion
@@ -326,6 +326,28 @@ function Set-HuduInstance {
     New-HuduBaseURL $HuduBaseURL
 }
 
+function Move-HuduAssetToNewLayout {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [int]$Id,
+
+        [Parameter(Mandatory)]
+        [int]$TargetLayoutId
+    )
+
+    $asset = Get-HuduAssets -id $Id
+    $asset = $asset.asset ?? $asset
+    if (-not $asset) {
+        throw "Asset with id $Id not found"
+    }
+
+    Invoke-HuduRequest `
+        -Method put `
+        -Resource "/api/v1/companies/$($asset.company_id)/assets/$($asset.id)/move_layout" `
+        -Body $($([pscustomobject]@{asset_layout_id = $TargetLayoutId}) | ConvertTo-Json -Depth 10)
+}
+
 
 function Get-GuiFieldMappings {
     [CmdletBinding()]
@@ -532,7 +554,8 @@ param(
     [bool]$IncludeBlanksDuringSmoosh,
     [bool]$ExcludeHTMLinSmoosh,
     [bool]$DescribeRelatedInSmoosh,
-    [bool]$IncludeRelationsForArchived
+    [bool]$IncludeRelationsForArchived,
+    [bool]$OnlyModifyExistingAssets = $false
 )
 
 
@@ -554,12 +577,16 @@ $DestLayoutId = $DestLayoutId ?? $null
 $MergeOnMatch = $MergeOnMatch ?? $($MergeMode -ne 'Skip')
 $SkipOnMatch = $SkipOnMatch ?? $($mergemode -eq 'Skip')
 $MergeMode = $MergeMode ?? "Merge-Concat"
+$OnlyModifyExistingAssets = [bool]$OnlyModifyExistingAssets
 
 # fresh vars for this run
 $allassets = $null; $allLayouts = $null; $allrelations = $null; $allPasswords = $null; $allUploads = $null; $allPhotos = $null; $allPublicPhotos = $null;
 $totalcounts = @{fromablescreated=0; toablescreated=0; assetsarchived=0; assetsmoved=0;
                  assetsskipped=0; assetsmatched=0; errored=0; sourceassetcount=$sourceassets.count;
                  uploadsRelinked = 0; photosRelinked = 0; passwordsRelinked = 0; publicPhotosRelinked = 0;
+                 assetsMovedInPlace = 0; auxiliaryRelinkSkipped = 0;
+                 transferMode = $(if ($OnlyModifyExistingAssets) { 'OnlyModifyExistingAssets' } else { 'CreateCopyAndRelink' });
+                 onlyModifyExistingAssets = $OnlyModifyExistingAssets;
                 }
 
 # calculated items
@@ -1981,16 +2008,24 @@ function Refresh-ListCache {
     }
     return $listNameExistsByListId
 }
-$allRelations = get-hudurelations
-
-Write-Host "Loaded $($allRelations.count) relations"
+$allRelations = @()
+if ($OnlyModifyExistingAssets) {
+    Write-Host "Only Modify Existing Assets mode: skipping relation cache load because existing associations stay on the same asset IDs."
+} else {
+    $allRelations = get-hudurelations
+    Write-Host "Loaded $($allRelations.count) relations"
+}
 ## START
 try {$migrationRecord = Set-MigrationRecord} catch {}
 # load supplementary data
-write-host "$(if ($allPasswords -and $null -ne $allPasswords) {'refreshing existing passwordables cache'} else {'refreshing passwordables cache'})"; $allPasswords = $(Get-HuduPasswords);
-write-host "$(if ($allUploads -and $null -ne $allUploads) {'refreshing existing uploadables cache'} else {'refreshing uploadables cache'})"; $allUploads = $(Get-HuduUploads);
-write-host "$(if ($allPhotos -and $null -ne $allPhotos) {'refreshing existing photos cache'} else {'refreshing photos cache'})"; $allphotos = $(Get-HuduPhotos);
-write-host "$(if ($allPublicPhotos -and $null -ne $allPublicPhotos) {'refreshing existing public photos cache'} else {'refreshing public photos cache'})"; $allPublicPhotos = $(Get-HuduPublicPhotos);
+if ($OnlyModifyExistingAssets) {
+    Write-Host "Only Modify Existing Assets mode: skipping password, upload, photo, and public photo cache loads."
+} else {
+    write-host "$(if ($allPasswords -and $null -ne $allPasswords) {'refreshing existing passwordables cache'} else {'refreshing passwordables cache'})"; $allPasswords = $(Get-HuduPasswords);
+    write-host "$(if ($allUploads -and $null -ne $allUploads) {'refreshing existing uploadables cache'} else {'refreshing uploadables cache'})"; $allUploads = $(Get-HuduUploads);
+    write-host "$(if ($allPhotos -and $null -ne $allPhotos) {'refreshing existing photos cache'} else {'refreshing photos cache'})"; $allphotos = $(Get-HuduPhotos);
+    write-host "$(if ($allPublicPhotos -and $null -ne $allPublicPhotos) {'refreshing existing public photos cache'} else {'refreshing public photos cache'})"; $allPublicPhotos = $(Get-HuduPublicPhotos);
+}
 
 foreach ($entry in $mapping) {
     if ($entry.dest_type -eq 'ListSelect' -and -not ([string]::IsNullOrWhiteSpace($entry.from))) {
@@ -2039,7 +2074,12 @@ if (-not [string]::IsNullOrWhiteSpace($SourceAssetFilterField) -and ($SourceAsse
     Write-Host ("Source asset filter applied: when '{0}' is '{1}'. {2} of {3} source assets will be processed." -f $SourceAssetFilterField, $sourceFilterValueForLog, @($sourceAssets).Count, $unfilteredSourceAssetCount)
 }
 $totalcounts.sourceassetcount = @($sourceAssets).Count
-$destassets = get-huduassets -assetlayoutid $destassetlayout.id
+$destassets = @()
+if ($OnlyModifyExistingAssets) {
+    Write-Host "Only Modify Existing Assets mode: skipping destination asset cache load because destination matching is disabled."
+} else {
+    $destassets = get-huduassets -assetlayoutid $destassetlayout.id
+}
 if ($sourceassets.count -lt 1) { write-host "NO SOURCE ASSETS!"; exit}
 write-host "$($($addressMapsByDest.GetEnumerator()).count) Location Types in Target"
 
@@ -2055,12 +2095,17 @@ if (@($MatchCriteria).Count -gt 0) {
 } else {
     Write-Host "Custom matching criteria not configured; using default destination name matching."
 }
+if ($OnlyModifyExistingAssets) {
+    Write-Host "WARNING: Only Modify Existing Assets mode is enabled." -ForegroundColor Red
+    Write-Host "Each source asset will be moved in place to the destination layout, then updated with transformed fields. Existing directly associated passwords, photos, public photos, uploads, integrator cards, and relations remain attached because the asset ID does not change." -ForegroundColor Yellow
+    Write-Host "This mode is less reversible than the default create-copy-and-relink transfer. Destination matching, custom matching criteria, and auxiliary relinking will not be performed." -ForegroundColor Yellow
+}
 
 if ($mappingtosmooshed) {
     Write-Host "SMOOSH source labels supplied: $($SMOOSHLABELS.Count) => $($SMOOSHLABELS -join ', ')"
 }
 Write-Host "Smooshing $(if ($excludeHTMLinSMOOSH -and $true -eq $excludeHTMLinSMOOSH) {'using plaintext value-joining'} else {'using traditional HTML value joining'})"
-Write-Host "$($sourceassets.count) source assets and $($destassets.count) dest assets."
+Write-Host "$($sourceassets.count) source assets and $(if ($OnlyModifyExistingAssets) { 'destination asset matching skipped' } else { "$($destassets.count) dest assets" })."
 
 
 
@@ -2068,36 +2113,40 @@ $sourceassetsIDX=0
 foreach ($originalasset in $sourceassets) {
     $sourceassetsIDX=$sourceassetsIDX+1
     $linkableToAssetInfo = $null; $NewAssetName = $originalasset.name; $matchedMap = $null; $match = $null; $newAsset = $null;
-    write-host "matching existing assets to asset $sourceassetsIDX of $($sourceassets.count) in destination layout assets ($($destassets.count) total) to determine if overlap"
-    if (@($MatchCriteria).Count -gt 0) {
-        $customMatch = Find-DestinationAssetMatchByCriteria -SourceAsset $originalasset -DestinationAssets $destassets -Criteria $MatchCriteria
-        if ($customMatch -and $customMatch.Asset) {
-            $match = $customMatch.Asset
-            Write-Host ("Matched by custom criterion #{0} '{1}' using '{2}': source '{3}' matched destination '{4}'." -f $customMatch.Criterion.Order, $customMatch.Criterion.Label, ($customMatch.Criterion.MatchModeLabel ?? $customMatch.Criterion.MatchMode ?? 'Direct match (case insensitive)'), $customMatch.SourceValue, $customMatch.DestValue)
-        } else {
-            Write-Host "No custom matching criteria matched source asset '$($originalasset.name)'. A new destination asset will be created unless later logic changes that."
-        }
+    if ($OnlyModifyExistingAssets) {
+        Write-Host "Only Modify Existing Assets mode: processing asset $sourceassetsIDX of $($sourceassets.count). Destination matching is skipped for source asset '$($originalasset.name)' (ID: $($originalasset.id))."
     } else {
-        $match = $destassets | Where-Object { $_.company_id -eq $originalasset.company_id -and $_.name -ieq $originalasset.name } | Select-Object -First 1
-        if (-not $match -and $originalasset.name.length -gt 6) {
-            $match = $destassets | where-object {$_.company_id -eq $originalasset.company_id -and ($_.name -ilike "$($originalasset.name)*" -or $_.name -ilike "*$($originalasset.name)")} | Select-Object -First 1
-        }
-    }
-    $match = $match.asset ?? $match
-    if ($match -and $null -ne $match -and $null -ne $match.fields) {
-        $totalcounts.assetsmatched=$totalcounts.assetsmatched+1
-        if ($true -eq $MergeOnMatch){
-            write-host "Matched existing asset '$($match.name)' (ID: $($match.id)) in destination layout for source asset '$($originalasset.name)' (ID: $($originalasset.id)) - will compile complete list of fields from both"
-            $matchedMap = FieldsToLabelValueMap $match.fields
-        } elseif ($true -eq $SkipOnMatch) {
-            write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
-            write-host "original: $($($originalasset | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Yellow
-            write-host "match: $($($match | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Blue
-            continue
+        write-host "matching existing assets to asset $sourceassetsIDX of $($sourceassets.count) in destination layout assets ($($destassets.count) total) to determine if overlap"
+        if (@($MatchCriteria).Count -gt 0) {
+            $customMatch = Find-DestinationAssetMatchByCriteria -SourceAsset $originalasset -DestinationAssets $destassets -Criteria $MatchCriteria
+            if ($customMatch -and $customMatch.Asset) {
+                $match = $customMatch.Asset
+                Write-Host ("Matched by custom criterion #{0} '{1}' using '{2}': source '{3}' matched destination '{4}'." -f $customMatch.Criterion.Order, $customMatch.Criterion.Label, ($customMatch.Criterion.MatchModeLabel ?? $customMatch.Criterion.MatchMode ?? 'Direct match (case insensitive)'), $customMatch.SourceValue, $customMatch.DestValue)
+            } else {
+                Write-Host "No custom matching criteria matched source asset '$($originalasset.name)'. A new destination asset will be created unless later logic changes that."
+            }
         } else {
-            write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
-            $NewAssetName = "$($originalasset.name) (from layout $($sourceassetlayout.name))"
-            write-host "overridding name -> $($NewAssetName) and keeping both per user-preference"
+            $match = $destassets | Where-Object { $_.company_id -eq $originalasset.company_id -and $_.name -ieq $originalasset.name } | Select-Object -First 1
+            if (-not $match -and $originalasset.name.length -gt 6) {
+                $match = $destassets | where-object {$_.company_id -eq $originalasset.company_id -and ($_.name -ilike "$($originalasset.name)*" -or $_.name -ilike "*$($originalasset.name)")} | Select-Object -First 1
+            }
+        }
+        $match = $match.asset ?? $match
+        if ($match -and $null -ne $match -and $null -ne $match.fields) {
+            $totalcounts.assetsmatched=$totalcounts.assetsmatched+1
+            if ($true -eq $MergeOnMatch){
+                write-host "Matched existing asset '$($match.name)' (ID: $($match.id)) in destination layout for source asset '$($originalasset.name)' (ID: $($originalasset.id)) - will compile complete list of fields from both"
+                $matchedMap = FieldsToLabelValueMap $match.fields
+            } elseif ($true -eq $SkipOnMatch) {
+                write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
+                write-host "original: $($($originalasset | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Yellow
+                write-host "match: $($($match | ConvertTo-Json -depth 6).ToString())" -ForegroundColor Blue
+                continue
+            } else {
+                write-host "match found in dest layout. (#$($totalcounts.assetsmatched)) thus far"
+                $NewAssetName = "$($originalasset.name) (from layout $($sourceassetlayout.name))"
+                write-host "overridding name -> $($NewAssetName) and keeping both per user-preference"
+            }
         }
     }
 
@@ -2268,9 +2317,11 @@ foreach ($originalasset in $sourceassets) {
     }
 
 
-    if ($sourceassetlayout.linkables -and $sourceassetlayout.linkables.keys.count -gt 0){
+    if ((-not $OnlyModifyExistingAssets) -and $sourceassetlayout.linkables -and $sourceassetlayout.linkables.keys.count -gt 0){
         Write-host "Getting linkable items for asset $($originalasset.name) from $($sourceassetlayout.linkables.keys.count) potentially linkable"
         $linkableToAssetInfo = Get-RelinkableRelationsForAsset -sourceAsset $originalasset -labelLinkMap $sourceassetlayout.linkables
+    } elseif ($OnlyModifyExistingAssets -and $describeRelatedInSmoosh -and $true -eq $describeRelatedInSmoosh) {
+        Write-Host "Only Modify Existing Assets mode: related-item descriptions for SMOOSH are skipped because auxiliary relationship processing is disabled." -ForegroundColor Yellow
     }
     # map custom smooshed fields ( notes, richtext, whatever we smooshed to in map)
     if ($true -eq $mappingtosmooshed) {
@@ -2337,6 +2388,36 @@ foreach ($originalasset in $sourceassets) {
         }
     }
     $newAssetRequest = Sanitize-TransferValue -Value $newAssetRequest
+    if ($OnlyModifyExistingAssets) {
+        $newAssetRequest["Id"] = $originalasset.id
+        $newAssetRequest["AssetLayoutId"] = $destassetlayout.id
+
+        try {
+            Write-Host "Moving existing asset '$($originalasset.name)' (ID: $($originalasset.id)) to destination layout '$($destassetlayout.name)' (ID: $($destassetlayout.id))." -ForegroundColor Yellow
+            $moveResult = Move-HuduAssetToNewLayout -Id $originalasset.id -TargetLayoutId $destassetlayout.id
+            if (-not $moveResult) {
+                Write-Host "Move call returned no response for asset $($originalasset.id); continuing to update the same asset ID." -ForegroundColor Yellow
+            }
+
+            Write-Host "Updating moved asset '$($newAssetRequest.Name)' (ID: $($newAssetRequest.Id)) with $(@($newAssetRequest.Fields).Count) transformed field value(s)."
+            $newAsset = Set-HuduAsset @newAssetRequest
+            $newAsset = $newAsset.asset ?? $newAsset
+            if (-not $newAsset -or $null -eq $newAsset) {
+                throw "Set-HuduAsset returned no asset after moving asset ID $($originalasset.id)."
+            }
+
+            Write-Host "Moved and updated existing asset $($newAsset.id). Auxiliary relationships were not copied or relinked because the asset ID was preserved." -ForegroundColor Green
+            $totalcounts.assetsmoved = $totalcounts.assetsmoved + 1
+            $totalcounts.assetsMovedInPlace = $totalcounts.assetsMovedInPlace + 1
+            $totalcounts.auxiliaryRelinkSkipped = $totalcounts.auxiliaryRelinkSkipped + 1
+        } catch {
+            Write-ErrorObjectsToFile -ErrorObject @{Err=$_; request=$newAssetRequest; Mode='OnlyModifyExistingAssets'} -Name "MOVE-IN-PLACE-$($newAssetRequest.name)-$($originalasset.id)"
+            $totalcounts.errored=$totalcounts.errored+1
+        }
+
+        continue
+    }
+
     # update or create, depending on if we had a match or not
     try {
         if ($null -ne $newAssetRequest.id -and $newAssetRequest.id -gt 0){
@@ -2459,7 +2540,7 @@ foreach ($originalasset in $sourceassets) {
             Write-ErrorObjectsToFile -ErrorObject @{Err = $_; PublicPhotoId = $_.id; AssetId = $newAsset.id} -Name "NCPUBPHOTO-$($newasset.name)"
         }
     }
-    if ($huduVersion -and $huduVersion -ge "2.39.0"){
+    if ($huduVersion -and $huduVersion -ge "2.45.0"){
         $outpath = Get-EnsuredPath -path "tempdownloads"
         $relatedUploads | ForEach-Object {
             try {
@@ -2483,7 +2564,14 @@ foreach ($originalasset in $sourceassets) {
         Set-HuduAssetLayout -id $sourceassetlayout.id -Name $RenameSourceLayoutTo
     }
     if ($true -eq $setsourceassetsarchived) {
-        foreach ($originalasset in $($sourceassets | where-object {$_.archived -ne $true})) {
+        $assetsToArchive = if ($OnlyModifyExistingAssets) {
+            Write-Host "Only Modify Existing Assets mode: refreshing source layout assets before archive step so moved assets are not archived in the destination layout." -ForegroundColor Yellow
+            @(Get-HuduAssets -AssetLayoutId $sourceassetlayout.id | Where-Object { $_.archived -ne $true })
+        } else {
+            @($sourceassets | Where-Object { $_.archived -ne $true })
+        }
+
+        foreach ($originalasset in $assetsToArchive) {
             $result=Set-HuduAssetArchive -id $originalasset.id -CompanyId $originalasset.company_id -archive $true
             $totalcounts.assetsarchived=$(if ($result) {$totalcounts.assetsarchived+1} else {$totalcounts.assetsarchived})
         }
@@ -2547,7 +2635,9 @@ function New-TransferReviewSummary {
         
         [Parameter()]
         [AllowEmptyCollection()]
-        [array]$relinkedFields
+        [array]$relinkedFields,
+
+        [bool]$OnlyModifyExistingAssets = $false
     )
 
     $apiKeyPreview = if ([string]::IsNullOrWhiteSpace($ApiKey)) {
@@ -2559,7 +2649,9 @@ function New-TransferReviewSummary {
     }
 
     $relinkedFieldsSummary = @('Relinked Fields:')
-    if ($relinkedFields -and $relinkedFields.Count -gt 0) {
+    if ($OnlyModifyExistingAssets) {
+        $relinkedFieldsSummary += '- Skipped. Existing direct associations remain attached to the same asset ID after the in-place layout move.'
+    } elseif ($relinkedFields -and $relinkedFields.Count -gt 0) {
         foreach ($field in $relinkedFields) {
             $relinkedFieldsSummary += ('- {0}' -f "$($field.label) (ID: $($field.id)) will be relinked as Relationships to respective $($(get-huduassetlayouts -id $field.linkable_id).Name) assets")
         }
@@ -2575,13 +2667,23 @@ function New-TransferReviewSummary {
         ('- API key: {0}' -f $apiKeyPreview),
         ('- Source layout: {0} [ID {1}]' -f $SourceLayout.Name, $SourceLayout.id),
         ('- Destination layout: {0} [ID {1}]' -f $DestLayout.Name, $DestLayout.id),
-        ('- Merge behavior on matched assets: {0}' -f (Get-MergeOptionSummaryLabel -Value $MergeOption)),
-        ('- Custom matching criteria: {0}' -f $(if (@($MatchCriteria).Count -gt 0) { 'Enabled' } else { 'Default name matching' })),
+        ('- Transfer mode: {0}' -f $(if ($OnlyModifyExistingAssets) { 'Only modify existing assets - move assets in place' } else { 'Create new assets, transform fields, and relink supported related items' })),
+        ('- Merge behavior on matched assets: {0}' -f $(if ($OnlyModifyExistingAssets) { 'Not used in this mode' } else { Get-MergeOptionSummaryLabel -Value $MergeOption })),
+        ('- Custom matching criteria: {0}' -f $(if ($OnlyModifyExistingAssets) { 'Not used in this mode' } elseif (@($MatchCriteria).Count -gt 0) { 'Enabled' } else { 'Default name matching' })),
         ('- Rename source layout to: {0}' -f $RenameSourceLayoutTo),
         ('- Archive remaining source assets after transfer: {0}' -f (Convert-BoolToYesNo $ArchivePreference)),
         ('- Source asset filter: {0}' -f $(if ($SourceAssetFilter -and $SourceAssetFilter.Enabled) { "when '$($SourceAssetFilter.FieldLabel)' is '$($SourceAssetFilter.DisplayValue ?? $SourceAssetFilter.Value)' ($($SourceAssetFilter.MatchingCount) matching)" } else { 'None' })),
         ('- Mapping file: {0}' -f $MapFilePath)
     )
+
+    if ($OnlyModifyExistingAssets) {
+        $lines += ''
+        $lines += 'WARNING'
+        $lines += '- This mode moves the original asset records to the destination layout and updates those same asset IDs.'
+        $lines += '- It is less reversible than the default copy-and-relink workflow.'
+        $lines += '- Passwords, photos, public photos, uploads, integrator cards, and existing relations are not copied because they remain attached to the same asset.'
+        $lines += '- Match/merge behavior and custom matching criteria are not available in this mode.'
+    }
 
     foreach ($item in $relinkedFieldsSummary) {
         $lines += $item
@@ -2617,7 +2719,9 @@ function New-TransferReviewSummary {
     $lines += ''
 
     $lines += 'Custom Matching Criteria'
-    if (@($MatchCriteria).Count -gt 0) {
+    if ($OnlyModifyExistingAssets) {
+        $lines += '- Not used in only-modify-existing-assets mode'
+    } elseif (@($MatchCriteria).Count -gt 0) {
         foreach ($criterion in ($MatchCriteria | Sort-Object -Property Order)) {
             $lines += ('- {0}. {1} [{2}]' -f $criterion.Order, $criterion.Label, ($criterion.MatchModeLabel ?? 'Direct match (case insensitive)'))
         }
@@ -2740,17 +2844,6 @@ param (
         }
 
         "$rawValue".Trim()
-    }
-
-    function Move-HuduAssetToNewLayout {
-        Param ([Int]$targetLayoutId,[Int]$Id)
-        $asset = Get-HuduAssets -id $Id; $asset = $asset.asset ?? $asset;
-        if (-not $asset) {throw "Asset with id $Id not found"}
-        try {$moved = $(Invoke-HuduRequest -Method put -Resource "/api/v1/companies/$($asset.company_id)/assets/$($asset.id)/move_layout" -Body $($([pscustomobject]@{asset_layout_id = $targetLayoutId}) | ConvertTo-Json -Depth 10))
-            return $moved
-        } catch {
-            throw $_
-        }
     }
 
     foreach ($l in $(get-huduassetlayouts -id $sourceLayoutID)){
@@ -3068,7 +3161,7 @@ function Show-InitialTransferOptionsDialog {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'Transfer Options'
     $form.StartPosition = 'CenterScreen'
-    $form.Size = New-Object System.Drawing.Size(760,400)
+    $form.Size = New-Object System.Drawing.Size(760,500)
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
@@ -3098,6 +3191,14 @@ function Show-InitialTransferOptionsDialog {
     $mergeCombo.SelectedItem = 'Merge-Concat'
     $form.Controls.Add($mergeCombo)
 
+    $mergeUnavailableLabel = New-Object System.Windows.Forms.Label
+    $mergeUnavailableLabel.Location = New-Object System.Drawing.Point(205,104)
+    $mergeUnavailableLabel.Size = New-Object System.Drawing.Size(500,18)
+    $mergeUnavailableLabel.ForeColor = [System.Drawing.Color]::DimGray
+    $mergeUnavailableLabel.Text = 'Matched asset behavior is not available in direct-transfer mode.'
+    $mergeUnavailableLabel.Visible = $false
+    $form.Controls.Add($mergeUnavailableLabel)
+
     $renameLabel = New-Object System.Windows.Forms.Label
     $renameLabel.Location = New-Object System.Drawing.Point(16,125)
     $renameLabel.Size = New-Object System.Drawing.Size(170,24)
@@ -3124,25 +3225,68 @@ function Show-InitialTransferOptionsDialog {
     $customMatchCheck.Checked = $false
     $form.Controls.Add($customMatchCheck)
 
+    $onlyModifyCheck = New-Object System.Windows.Forms.CheckBox
+    $onlyModifyCheck.Location = New-Object System.Drawing.Point(205,232)
+    $onlyModifyCheck.Size = New-Object System.Drawing.Size(500,24)
+    $onlyModifyCheck.Text = 'Only modify existing assets (move assets in-place instead of copying to new assets)'
+    $onlyModifyCheck.Checked = $false
+    $form.Controls.Add($onlyModifyCheck)
+
+    $onlyModifyWarning = New-Object System.Windows.Forms.Label
+    $onlyModifyWarning.Location = New-Object System.Drawing.Point(229,260)
+    $onlyModifyWarning.Size = New-Object System.Drawing.Size(476,54)
+    $onlyModifyWarning.ForeColor = [System.Drawing.Color]::Firebrick
+    $onlyModifyWarning.Text = 'Moves each source asset itself into the destination layout and updates that same asset ID. This preserves the original ID and integrator matches, but is less reversible than creating a new asset copy. Creating a backup is recommended when using this method.'
+    $form.Controls.Add($onlyModifyWarning)
+
     $hint = New-Object System.Windows.Forms.Label
-    $hint.Location = New-Object System.Drawing.Point(205,232)
+    $hint.Location = New-Object System.Drawing.Point(205,326)
     $hint.Size = New-Object System.Drawing.Size(500,52)
     $hint.ForeColor = [System.Drawing.Color]::DimGray
     $hint.Text = 'Merge-Concat keeps both values where it makes sense. Custom matching lets you choose primary, secondary, and tertiary mapped field matches.'
     $form.Controls.Add($hint)
 
+    $customMatchDefaultText = 'Choose custom matching criteria after field mapping'
+    $refreshOnlyModifyControls = {
+        $defaultModeEnabled = -not [bool]$onlyModifyCheck.Checked
+        $mergeCombo.Enabled = $defaultModeEnabled
+        $customMatchCheck.Enabled = $defaultModeEnabled
+        $mergeUnavailableLabel.Visible = -not $defaultModeEnabled
+        if (-not $defaultModeEnabled) {
+            $customMatchCheck.Checked = $false
+            $customMatchCheck.Text = 'Choose custom matching criteria (not available in direct-transfer mode)'
+        } else {
+            $customMatchCheck.Text = $customMatchDefaultText
+        }
+    }
+    $onlyModifyCheck.Add_CheckedChanged($refreshOnlyModifyControls)
+
     $okButton = New-Object System.Windows.Forms.Button
-    $okButton.Location = New-Object System.Drawing.Point(505,315)
+    $okButton.Location = New-Object System.Drawing.Point(505,405)
     $okButton.Size = New-Object System.Drawing.Size(95,30)
     $okButton.Text = 'Continue'
     $okButton.Add_Click({
+        $onlyModifyExistingAssets = [bool]$onlyModifyCheck.Checked
+        if ($onlyModifyExistingAssets) {
+            $confirmInPlace = Show-TransferMessage `
+                -Title 'Only Modify Existing Assets' `
+                -Kind Warning `
+                -YesNo `
+                -Message "WARNING: This mode moves the original asset records into the destination layout and updates those same asset IDs.`r`n`r`nIt is less reversible than the default copy-and-relink workflow. Directly attached items such as integrator cards, process runs, and existing relations should remain attached (rather than being replicated) because the asset ID is preserved, but the source assets will no longer remain in the source layout.`r`n`r`nContinue with this mode?"
+
+            if ($confirmInPlace -ne [System.Windows.Forms.DialogResult]::Yes) {
+                return
+            }
+        }
+
         $renameValue = if ([string]::IsNullOrWhiteSpace($renameText.Text)) { $SourceLayout.Name } else { $renameText.Text.Trim() }
         $form.Tag = [pscustomobject]@{
             Success              = $true
-            MergeOption          = [string]$mergeCombo.SelectedItem
+            MergeOption          = $(if ($onlyModifyExistingAssets) { 'Merge-Concat' } else { [string]$mergeCombo.SelectedItem })
             RenameSourceLayoutTo = $renameValue
             ArchivePreference    = [bool]$archiveCheck.Checked
-            CustomMatchingCriteria = [bool]$customMatchCheck.Checked
+            CustomMatchingCriteria = $(if ($onlyModifyExistingAssets) { $false } else { [bool]$customMatchCheck.Checked })
+            OnlyModifyExistingAssets = $onlyModifyExistingAssets
         }
         $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $form.Close()
@@ -3150,7 +3294,7 @@ function Show-InitialTransferOptionsDialog {
     $form.Controls.Add($okButton)
 
     $cancelButton = New-Object System.Windows.Forms.Button
-    $cancelButton.Location = New-Object System.Drawing.Point(610,315)
+    $cancelButton.Location = New-Object System.Drawing.Point(610,405)
     $cancelButton.Size = New-Object System.Drawing.Size(95,30)
     $cancelButton.Text = 'Cancel'
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
@@ -3158,6 +3302,7 @@ function Show-InitialTransferOptionsDialog {
 
     $form.AcceptButton = $okButton
     $form.CancelButton = $cancelButton
+    & $refreshOnlyModifyControls
 
     if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or $null -eq $form.Tag) {
         return [pscustomobject]@{ Success = $false }
@@ -5203,6 +5348,7 @@ function New-GuiJob {
     $renameSourceLayoutto = [string]$initialOptions.RenameSourceLayoutTo
     $archivePreference = [bool]$initialOptions.ArchivePreference
     $useCustomMatchingCriteria = [bool]$initialOptions.CustomMatchingCriteria
+    $onlyModifyExistingAssets = [bool]$initialOptions.OnlyModifyExistingAssets
 
     $reviewFields = @(
         $destLayout.Fields |
@@ -5337,13 +5483,17 @@ function New-GuiJob {
             VariableName = 'includeblanksduringsmoosh'
             DefaultValue = $false
             Description = "Include empty source fields when building the SMOOSH output. Leaving this off usually keeps the combined value cleaner."
-        },
-        @{
+        }
+    )
+    if (-not $onlyModifyExistingAssets) {
+        $perjobQuestions += @{
             SettingName = 'Include Relations For Archived Objects?'
             VariableName = 'includeRelationsForArchived'
             DefaultValue = $true
             Description = "Allow archived objects to stay related to the new asset, even if related item is Archived. Turn this off to only relate to active items."
-        },
+        }
+    }
+    $perjobQuestions += @(
         @{
             SettingName = 'Strip HTML In SMOOSH Output?'
             VariableName = 'excludeHTMLinSMOOSH'
@@ -5405,7 +5555,8 @@ function New-GuiJob {
             -MatchCriteria $matchCriteria `
             -PerJobSettingSummaries $PerJobSettingSummaries `
             -MapFilePath $mapfile `
-            -relinkedFields $relinkedFields
+            -relinkedFields $relinkedFields `
+            -OnlyModifyExistingAssets $onlyModifyExistingAssets
 
         $confirmed = Show-TransferReviewDialog -SummaryText $reviewSummaryText
         if (-not $confirmed) {
@@ -5436,7 +5587,8 @@ function New-GuiJob {
             -IncludeBlanksDuringSmoosh ($perjobAnswers["includeblanksduringsmoosh"] ?? $false) `
             -ExcludeHTMLinSmoosh ($perjobAnswers["excludeHTMLinSmoosh"] ?? $false) `
             -DescribeRelatedInSmoosh $false `
-            -includeRelationsForArchived ($perjobAnswers["includeRelationsForArchived"] ?? $true)
+            -includeRelationsForArchived ($perjobAnswers["includeRelationsForArchived"] ?? $true) `
+            -OnlyModifyExistingAssets $onlyModifyExistingAssets
 
         $results | convertto-json -depth 99 | Out-File -FilePath (Join-Path $script:Root "transferresults_$(Get-Date -Format 'yyyyMMdd_HHmmss').json") -Encoding utf8
         exit 0
