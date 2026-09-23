@@ -554,6 +554,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Start-ArticleStubs.ps1 # article starting helper
 . $PSScriptRoot\Public\ArticleContentLocalCache.ps1 # local cache for articles (since we commit fully-prepared articles last now)
 . $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1 # Article Attachment as image source helper
+. $PSScriptRoot\Public\Get-ITGlueAttachments.ps1 # IT Glue attachment metadata and export verification helpers
 . $PSScriptRoot\Public\Get-PasswordFolders.ps1 # Fetch password folders from Hudu
 . $PSScriptRoot\Public\Set-MigrationScope.ps1 # Add migration scope helper
 . $PSScriptRoot\Public\Get-Checklists.ps1 # Other JWT-Auth / Advanced Post-Run Imports

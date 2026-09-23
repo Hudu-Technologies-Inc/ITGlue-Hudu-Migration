@@ -99,11 +99,11 @@ $FolderNamingMode = "Name Based on Full Path with Delimiter" # how to name the p
                     # "Name Based on Root-Level-Directory"
                     # "Name Based on Current/Leaf-Level Directory"
 
-
-$LocImportAssetLayoutName   = "Locations" # name for locations layout
-$ConImportAssetLayoutName   = "People" # name for contacts/people layout
-$LayoutIconBackGroundColor      = "#6136ff" # hudu-purple background for layout icons
-$LayoutIconForegroundColor      = "#ffffff" # White Foreground for layout icons
+$verifyEveryAttachment               = $false # verifies every attachment with an api call. This takes quite a while and doesnt change anything about migrations
+$LocImportAssetLayoutName            = "Locations" # name for locations layout
+$ConImportAssetLayoutName            = "People" # name for contacts/people layout
+$LayoutIconBackGroundColor           = "#6136ff" # hudu-purple background for layout icons
+$LayoutIconForegroundColor           = "#ffffff" # White Foreground for layout icons
 
 
 # pre-designated array/list of prescoped/preselected companies for scoped migration (for faster testing, ignore this if you want scoped migration, you'll select your own set)

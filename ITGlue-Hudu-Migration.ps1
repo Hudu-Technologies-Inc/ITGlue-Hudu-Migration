@@ -3300,11 +3300,21 @@ if ($true -eq ($shouldRunVaultJob ?? $false)){
     $null = Complete-MigrationJob -Name "Wrap-Up - Archiving Items" -CompletedAt $(Get-Date)
 }
 
+$attachmentsVerification = @{}
+if ($true -eq $($verifyEveryAttachment ?? $false)) {
+    try {
+        $null = Start-MigrationJob -Name "Wrap-Up - verifying each attachment"; $attachmentsVerification = Test-ITGlueExportAttachments -ExportPath $ITGlueExportPath -ScanLocalInventory -ITGKey $ITGKey -ITGBaseURI $ITGAPIEndpoint;
+    } catch {
+        Write-Host "An error occurred while verifying attachments: $_"
+    } finally {
+        $null = Complete-MigrationJob -Name "Wrap-Up - verifying each attachment" -CompletedAt $(Get-Date)
+    }
+}
 ############################### End ###############################
 
 $VaultedPasswords = $VaultedPasswords ?? @(); $unvaultedMatches = $unvaultedMatches ?? @();
 $MatchedUploadFields = $MatchedUploadFields ?? @{}; $UnresolvedUploadFields = $UnresolvedUploadFields ?? @{};
-foreach ($auxilliaryObj in @(@{Name="UnvaultedPasswords"; Created = $unvaultedMatches ?? @()}, @{Name = "passwordfolders"; Created = $MatchedPasswordFolders ?? @() }, @{Name="UploadFields"; Created = $MatchedUploadFields ?? @() }, @{Name="UnresolvedUploadFields"; Created = $UnresolvedUploadFields ?? @() }, @{Name = "checklists"; Created = $MatchedChecklists ?? @() }, @{Name="Interfaces-IPAM"; Created = ($MatchedInterfaces ?? @())})) {
+foreach ($auxilliaryObj in @(@{Name="AttachmentsVerified"; Created = $attachmentsVerification ?? @{}},@{Name="UnvaultedPasswords"; Created = $unvaultedMatches ?? @()}, @{Name = "passwordfolders"; Created = $MatchedPasswordFolders ?? @() }, @{Name="UploadFields"; Created = $MatchedUploadFields ?? @() }, @{Name="UnresolvedUploadFields"; Created = $UnresolvedUploadFields ?? @() }, @{Name = "checklists"; Created = $MatchedChecklists ?? @() }, @{Name="Interfaces-IPAM"; Created = ($MatchedInterfaces ?? @())})) {
     write-host "Writing json dump for $($auxilliaryObj.Name) created during migration for reference in manual actions and for audit purposes"
     $auxilliaryObj.Created | ConvertTo-Json -depth 75 | Out-File $(join-path $settings.MigrationLogs "created-$($auxilliaryObj.Name).json")
 }
