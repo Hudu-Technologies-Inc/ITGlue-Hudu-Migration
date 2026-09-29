@@ -758,7 +758,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
         if ($UnmappedWebsiteCount -eq 0) {
             Write-Host "All $MigrationName matched, no migration required" -foregroundcolor green
         } else {
-            Write-TimedMessage -Timeout 12 -Message "Warning Import Websites is set to disabled so the above unmatched Websites will not have data migrated... Press any key to continue or CTRL+C to quit"  -DefaultResponse "continue and wrap-up Websites, please."
+            Write-TimedMessage -Timeout 3 -Message "Warning Import Websites is set to disabled so the above unmatched Websites will not have data migrated... Press any key to continue or CTRL+C to quit"  -DefaultResponse "continue and wrap-up Websites, please."
         }
     }
 
@@ -3398,5 +3398,5 @@ $MigrationSummary | Out-File -FilePath "$MigrationLogs\MigrationSummary.txt" -En
 Format-ManualActionsReport -ManualActions $ManualActions -OutputPath "$MigrationLogs\ManualActions.html" -summary $MigrationSummary
 Write-Host $MigrationSummary -ForegroundColor DarkCyan
 
-Write-TimedMessage -Message "Press any key to view manual actions" -Timeout 5  -DefaultResponse "continue, view generative Manual Actions webpage, please."
+Write-TimedMessage -Message "Press any key to view manual actions" -Timeout 3  -DefaultResponse "continue, view generative Manual Actions webpage, please."
 Start-Process "$MigrationLogs\ManualActions.html"
