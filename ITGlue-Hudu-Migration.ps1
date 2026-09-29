@@ -3400,10 +3400,10 @@ $migratedItems = [ordered]@{
     'Hudu Process Runs Migrated'                 = $ProcessRunsMigrated
     'Manual Actions Count'                       = $($ManualActions.GetEnumerator() | Measure-Object).count
     'Manual Action Categories'                   = $($ManualActions.GetEnumerator().type | Select-Object -Unique | Measure-Object).count
-"$($(@($LocationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied for this many Locations" = @($LocationLabelResults).Count
-"$($(@($ConfigurationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied for this many Configurations" = @($ConfigurationLabelResults).Count
-"$($(@($ContactLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied for this many Contacts" = @($ContactLabelResults).Count
-"$($(@($PasswordLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied for this many Passwords" = @($PasswordLabelResults).Count
+"Locations Had $($(@($LocationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($LocationLabelResults).Count
+"Configurations Had $($(@($ConfigurationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($ConfigurationLabelResults).Count
+"Contacts Had $($(@($ContactLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($ContactLabelResults).Count
+"Passwords Had $($(@($PasswordLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($PasswordLabelResults).Count
 }
 
 $archivedItems = [ordered]@{
