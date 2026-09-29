@@ -2713,8 +2713,18 @@ $preparedArticleCommits = [System.Collections.ArrayList]@()
 $articlePreCommitFailures = [System.Collections.ArrayList]@()
 $articleCommitIndex = 0
 $convertStandalonePhotoArticlesEnabled = Test-HuduMigrationSettingEnabled $convertStandalonePhotoArticles
+$articleContentStageProgressId = 41
+$articleContentCommitProgressId = 42
+$articleContentStageTotal = @($ArticleContentCommitCandidates).Count
+$articleContentStageIndex = 0
 
 foreach ($articleFound in $ArticleContentCommitCandidates) {
+    $articleContentStageIndex++
+    if ($articleContentStageTotal -gt 0) {
+        $articleContentStagePercent = [math]::Min(99, [math]::Floor(($articleContentStageIndex / $articleContentStageTotal) * 100))
+        Write-Progress -Id $articleContentStageProgressId -Activity "Staging article content for commit" -Status "Article $articleContentStageIndex of $articleContentStageTotal`: $($articleFound.name)" -PercentComplete $articleContentStagePercent
+    }
+
     $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
     if ($null -eq $localArticleContent) {
         $message = "Local article HTML was not found for '$($articleFound.name)' at '$($articleFound.LocalContentPath)'. Refusing to use Hudu-returned content as a fallback."
@@ -2764,6 +2774,9 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
         } elseif ($standaloneArticleFileKind -eq 'Image') {
             $finalArticleContent = "Please see attached file, $($articleFound.name)"
         } elseif ($standaloneArticleFileKind -in @('Audio', 'Video')) {
+            if ($articleContentStageTotal -gt 0) {
+                Write-Progress -Id $articleContentStageProgressId -Activity "Staging article content for commit" -Status "Article $articleContentStageIndex of $articleContentStageTotal`: embedding standalone $($standaloneArticleFileKind.ToLowerInvariant())" -PercentComplete $articleContentStagePercent
+            }
             if ($standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath) {
                 $finalArticleContent = $standaloneMediaEmbed.Content
                 Write-Host "Embedded standalone $($standaloneMediaEmbed.Kind.ToLowerInvariant()) upload '$($standaloneMediaEmbed.File.Name)' in article $($articleFound.name)." -ForegroundColor Cyan
@@ -2826,10 +2839,12 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
         })
     }
 }
+Write-Progress -Id $articleContentStageProgressId -Activity "Staging article content for commit" -Completed
 
 $null = Start-MigrationJob -Name "Wrap-Up - Article Content Commit"
 try {
-    $articleCommitTransportResults = if ($preparedArticleCommits.Count -gt 0 -and $UseFastArticleContentCommit) {
+    $articleContentCommitTotal = @($preparedArticleCommits).Count
+    $articleCommitTransportResults = if ($articleContentCommitTotal -gt 0 -and $UseFastArticleContentCommit) {
         $fastArticleCommitParams = @{
             CommitRequests = @($preparedArticleCommits)
             ThrottleLimit  = $MigrationParallelismLimit
@@ -2837,9 +2852,14 @@ try {
         if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
             $fastArticleCommitParams.CustomHeaders = $HuduFastCommitHeaders
         }
+        Write-Progress -Id $articleContentCommitProgressId -Activity "Committing article content" -Status "Fast commit in progress: $articleContentCommitTotal article(s) with $MigrationParallelismLimit worker(s)" -PercentComplete 0
         Invoke-FastHuduArticleContentCommit @fastArticleCommitParams
-    } elseif ($preparedArticleCommits.Count -gt 0) {
+    } elseif ($articleContentCommitTotal -gt 0) {
+        $articleContentCommitIndex = 0
         foreach ($commitRequest in @($preparedArticleCommits)) {
+            $articleContentCommitIndex++
+            $articleContentCommitPercent = [math]::Min(99, [math]::Floor(($articleContentCommitIndex / $articleContentCommitTotal) * 100))
+            Write-Progress -Id $articleContentCommitProgressId -Activity "Committing article content" -Status "Article $articleContentCommitIndex of $articleContentCommitTotal`: $($commitRequest.ArticleName)" -PercentComplete $articleContentCommitPercent
             $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             try {
                 $articleSplat = $commitRequest.ArticleSplat
@@ -2876,6 +2896,7 @@ try {
         @()
     }
 } finally {
+    Write-Progress -Id $articleContentCommitProgressId -Activity "Committing article content" -Completed
     $null = Complete-MigrationJob -Name "Wrap-Up - Article Content Commit" -CompletedAt (Get-Date)
 }
 

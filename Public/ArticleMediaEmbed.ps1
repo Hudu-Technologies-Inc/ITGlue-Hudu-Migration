@@ -60,8 +60,50 @@ function Get-ITGlueArticleStandaloneFile {
     $articleId = [string]($Article.ITGID ?? $Article.id)
     if ([string]::IsNullOrWhiteSpace($articleId)) { return $null }
 
+    if ($null -eq $script:ITGlueStandaloneArticleFileCache) {
+        $script:ITGlueStandaloneArticleFileCache = @{}
+    }
+    $exportRoot = try {
+        [IO.Path]::GetFullPath($ExportPath)
+    } catch {
+        [string]$ExportPath
+    }
+    $kindsKey = (@($Kinds) | Sort-Object) -join ','
+    $cacheKey = "$exportRoot|$articleId|$kindsKey|$([bool]$RequireTitleFileName)"
+    if ($script:ITGlueStandaloneArticleFileCache.ContainsKey($cacheKey)) {
+        return $script:ITGlueStandaloneArticleFileCache[$cacheKey]
+    }
+
     $articleAttachmentPath = Join-Path -Path $ExportPath -ChildPath "attachments\documents\$articleId"
-    if (-not (Test-Path -LiteralPath $articleAttachmentPath -PathType Container)) { return $null }
+    if (-not (Test-Path -LiteralPath $articleAttachmentPath -PathType Container)) {
+        $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $null
+        return $null
+    }
+
+    $articleFileName = [IO.Path]::GetFileName([string]$Article.name)
+    $normalizedArticleFileName = Normalize-HuduStandaloneArticleFileName -Name $articleFileName
+    if (
+        -not [string]::IsNullOrWhiteSpace($articleFileName) -and
+        -not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($articleFileName)
+    ) {
+        $matchingMediaFiles = @(
+            Get-ChildItem -LiteralPath $articleAttachmentPath -Recurse -File -Filter $articleFileName -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    $kind = Get-HuduStandaloneArticleFileKind -Path $_.FullName
+                    if ($kind -and $Kinds -contains $kind -and (Normalize-HuduStandaloneArticleFileName -Name $_.Name) -eq $normalizedArticleFileName) {
+                        [pscustomobject]@{
+                            File = $_
+                            Kind = $kind
+                        }
+                    }
+                }
+        )
+
+        if ($matchingMediaFiles.Count -eq 1) {
+            $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $matchingMediaFiles[0]
+            return $matchingMediaFiles[0]
+        }
+    }
 
     $candidateFiles = @(
         Get-ChildItem -LiteralPath $articleAttachmentPath -Recurse -File -ErrorAction SilentlyContinue |
@@ -75,10 +117,11 @@ function Get-ITGlueArticleStandaloneFile {
                 }
             }
     )
-    if ($candidateFiles.Count -lt 1) { return $null }
+    if ($candidateFiles.Count -lt 1) {
+        $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $null
+        return $null
+    }
 
-    $articleFileName = [IO.Path]::GetFileName([string]$Article.name)
-    $normalizedArticleFileName = Normalize-HuduStandaloneArticleFileName -Name $articleFileName
     $matchingMediaFiles = if (-not [string]::IsNullOrWhiteSpace($articleFileName)) {
         @($candidateFiles | Where-Object {
             (Normalize-HuduStandaloneArticleFileName -Name $_.File.Name) -eq $normalizedArticleFileName
@@ -88,17 +131,29 @@ function Get-ITGlueArticleStandaloneFile {
     }
 
     if ($RequireTitleFileName) {
-        if ($matchingMediaFiles.Count -eq 1) { return $matchingMediaFiles[0] }
+        if ($matchingMediaFiles.Count -eq 1) {
+            $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $matchingMediaFiles[0]
+            return $matchingMediaFiles[0]
+        }
         if ($candidateFiles.Count -eq 1) {
             Write-Verbose "Using the only standalone attachment '$($candidateFiles[0].File.Name)' for image article '$($Article.name)' even though the exported filename does not exactly match the article title."
+            $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $candidateFiles[0]
             return $candidateFiles[0]
         }
+        $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $null
         return $null
     }
 
-    if ($matchingMediaFiles.Count -eq 1) { return $matchingMediaFiles[0] }
-    if ($candidateFiles.Count -eq 1) { return $candidateFiles[0] }
+    if ($matchingMediaFiles.Count -eq 1) {
+        $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $matchingMediaFiles[0]
+        return $matchingMediaFiles[0]
+    }
+    if ($candidateFiles.Count -eq 1) {
+        $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $candidateFiles[0]
+        return $candidateFiles[0]
+    }
 
+    $script:ITGlueStandaloneArticleFileCache[$cacheKey] = $null
     return $null
 }
 
