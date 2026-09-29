@@ -758,7 +758,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Websites.json")) {
         if ($UnmappedWebsiteCount -eq 0) {
             Write-Host "All $MigrationName matched, no migration required" -foregroundcolor green
         } else {
-            Write-TimedMessage -Timeout 12 -Message "Warning Import Websites is set to disabled so the above unmatched Websites will not have data migrated... Press any key to continue or CTRL+C to quit"  -DefaultResponse "continue and wrap-up Websites, please."
+            Write-TimedMessage -Timeout 3 -Message "Warning Import Websites is set to disabled so the above unmatched Websites will not have data migrated... Press any key to continue or CTRL+C to quit"  -DefaultResponse "continue and wrap-up Websites, please."
         }
     }
 
@@ -2069,15 +2069,28 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
     [string]$ITGDocumentsPath = Join-Path -path $ITGlueExportPath -ChildPath "Documents"
 
     $files = Get-ChildItem -Path $ITGDocumentsPath -recurse
-    $MatchedArticles = foreach ($doc in $ITGDocuments) {
-        $article = Start-ArticleStubs `
-            -Document $doc -Files $files `
-            -ITGDocumentsPath $ITGDocumentsPath -MatchedCompanies $MatchedCompanies `
-            -GlobalKBFolder $GlobalKBFolder `
-            -IncludeIgnoredFirstArticleDirectory:$($IncludeIgnoredFirstArticleDirectory ?? $false) `
-            -PlaceInternalDocsInInternalCompany:$($PlaceInternalDocsInInternalCompany ?? $false)
+    $articleStubProgressId = 31
+    $articleStubTotal = @($ITGDocuments).Count
+    $articleStubIndex = 0
+    $MatchedArticles = try {
+        foreach ($doc in $ITGDocuments) {
+            $articleStubIndex++
+            if ($articleStubTotal -gt 0) {
+                $articleStubPercent = [math]::Min(99, [math]::Floor(($articleStubIndex / $articleStubTotal) * 100))
+                Write-Progress -Id $articleStubProgressId -Activity "Creating article stubs" -Status "Document $articleStubIndex of $articleStubTotal`: $($doc.name)" -PercentComplete $articleStubPercent
+            }
 
-        if ($article) { $article }
+            $article = Start-ArticleStubs `
+                -Document $doc -Files $files `
+                -ITGDocumentsPath $ITGDocumentsPath -MatchedCompanies $MatchedCompanies `
+                -GlobalKBFolder $GlobalKBFolder `
+                -IncludeIgnoredFirstArticleDirectory:$($IncludeIgnoredFirstArticleDirectory ?? $false) `
+                -PlaceInternalDocsInInternalCompany:$($PlaceInternalDocsInInternalCompany ?? $false)
+
+            if ($article) { $article }
+        }
+    } finally {
+        Write-Progress -Id $articleStubProgressId -Activity "Creating article stubs" -Completed
     }
 
     
@@ -2104,33 +2117,51 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
         $Attachfiles = Get-ChildItem (Join-Path -Path $ITGlueExportPath -ChildPath "attachments\documents") -recurse
         $ImageMap = $ImageMap ?? @{}
         # Now do the actual work of populating the content of articles
-        $ArticleErrors = foreach ($Article in $MatchedArticles) {
+        $articleBodyProgressId = 32
+        $articleBodyImageProgressId = 33
+        $articleBodyTotal = @($MatchedArticles).Count
+        $articleBodyIndex = 0
+        $ArticleErrors = try {
+            foreach ($Article in $MatchedArticles) {
+                $articleBodyIndex++
+                if ($articleBodyTotal -gt 0) {
+                    $articleBodyPercent = [math]::Min(99, [math]::Floor(($articleBodyIndex / $articleBodyTotal) * 100))
+                    Write-Progress -Id $articleBodyProgressId -Activity "Preparing article bodies" -Status "Article $articleBodyIndex of $articleBodyTotal`: $($Article.Name)" -PercentComplete $articleBodyPercent
+                }
 
-            $page_out = ''
-            $imagePath = $null
+                $page_out = ''
+                $imagePath = $null
 	    
-            # Check for attachments
-            $attachdir = $Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID }
-            if ($Attachdir) {
-                $InFile = ''
-                $html = ''
-                $rawsource = ''
-            }
+                # Check for attachments
+                $attachdir = $Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID }
+                if ($Attachdir) {
+                    $InFile = ''
+                    $html = ''
+                    $rawsource = ''
+                }
 
 
-            Write-Host "Starting $($Article.Name) in $($Article.Company.CompanyName)" -ForegroundColor Green
+                Write-Host "Starting $($Article.Name) in $($Article.Company.CompanyName)" -ForegroundColor Green
 				
-            $InFile = $Article.FullPath
+                $InFile = $Article.FullPath
 				
-            $html = New-Object -ComObject "HTMLFile"
-            $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
-            if ($rawsource.Length -gt 0) {
-                $source = [regex]::replace($rawsource , '\xa0+', ' ')
-                $src = [System.Text.Encoding]::Unicode.GetBytes($source)
-                $html.write($src)
-                $images = @($html.Images)
+                $html = New-Object -ComObject "HTMLFile"
+                $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
+                if ($rawsource.Length -gt 0) {
+                    $source = [regex]::replace($rawsource , '\xa0+', ' ')
+                    $src = [System.Text.Encoding]::Unicode.GetBytes($source)
+                    $html.write($src)
+                    $images = @($html.Images)
+                    $articleBodyImageTotal = @($images).Count
+                    $articleBodyImageIndex = 0
 
-                foreach ($imageObject in $images) {
+                    foreach ($imageObject in $images) {
+                        $articleBodyImageIndex++
+                        if ($articleBodyImageTotal -gt 0) {
+                            $articleBodyImagePercent = [math]::Min(99, [math]::Floor(($articleBodyImageIndex / $articleBodyImageTotal) * 100))
+                            Write-Progress -Id $articleBodyImageProgressId -ParentId $articleBodyProgressId -Activity "Processing article images" -Status "Image $articleBodyImageIndex of $articleBodyImageTotal for $($Article.Name)" -PercentComplete $articleBodyImagePercent
+                        }
+
                     # Reset per-image so resolution and the error message never carry a stale path from a previous image/article
                     $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
                     $matchedImage = $null; $foundFile = $null; $imagePath = $null
@@ -2286,6 +2317,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                         }
                     }
                 }
+                Write-Progress -Id $articleBodyImageProgressId -ParentId $articleBodyProgressId -Activity "Processing article images" -Completed
             
                 $page_Source = $html.documentelement.outerhtml
                 $page_out = [regex]::replace($page_Source , '\xa0+', ' ')
@@ -2302,7 +2334,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 		
             $Article.Imported = "Content-Prepared-Locally"
 			
-        } 
+            }
+        } finally {
+            Write-Progress -Id $articleBodyImageProgressId -ParentId $articleBodyProgressId -Activity "Processing article images" -Completed
+            Write-Progress -Id $articleBodyProgressId -Activity "Preparing article bodies" -Completed
+        }
 
         $MatchedArticles | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Articles.json"
         $ArticleErrors | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ArticleErrors.json"
@@ -2713,8 +2749,18 @@ $preparedArticleCommits = [System.Collections.ArrayList]@()
 $articlePreCommitFailures = [System.Collections.ArrayList]@()
 $articleCommitIndex = 0
 $convertStandalonePhotoArticlesEnabled = Test-HuduMigrationSettingEnabled $convertStandalonePhotoArticles
+$articleContentStageProgressId = 41
+$articleContentCommitProgressId = 42
+$articleContentStageTotal = @($ArticleContentCommitCandidates).Count
+$articleContentStageIndex = 0
 
 foreach ($articleFound in $ArticleContentCommitCandidates) {
+    $articleContentStageIndex++
+    if ($articleContentStageTotal -gt 0) {
+        $articleContentStagePercent = [math]::Min(99, [math]::Floor(($articleContentStageIndex / $articleContentStageTotal) * 100))
+        Write-Progress -Id $articleContentStageProgressId -Activity "Staging article content for commit" -Status "Article $articleContentStageIndex of $articleContentStageTotal`: $($articleFound.name)" -PercentComplete $articleContentStagePercent
+    }
+
     $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
     if ($null -eq $localArticleContent) {
         $message = "Local article HTML was not found for '$($articleFound.name)' at '$($articleFound.LocalContentPath)'. Refusing to use Hudu-returned content as a fallback."
@@ -2764,6 +2810,9 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
         } elseif ($standaloneArticleFileKind -eq 'Image') {
             $finalArticleContent = "Please see attached file, $($articleFound.name)"
         } elseif ($standaloneArticleFileKind -in @('Audio', 'Video')) {
+            if ($articleContentStageTotal -gt 0) {
+                Write-Progress -Id $articleContentStageProgressId -Activity "Staging article content for commit" -Status "Article $articleContentStageIndex of $articleContentStageTotal`: embedding standalone $($standaloneArticleFileKind.ToLowerInvariant())" -PercentComplete $articleContentStagePercent
+            }
             if ($standaloneMediaEmbed = New-HuduArticleStandaloneMediaEmbed -Article $articleFound -ExportPath $ITGlueExportPath) {
                 $finalArticleContent = $standaloneMediaEmbed.Content
                 Write-Host "Embedded standalone $($standaloneMediaEmbed.Kind.ToLowerInvariant()) upload '$($standaloneMediaEmbed.File.Name)' in article $($articleFound.name)." -ForegroundColor Cyan
@@ -2826,10 +2875,12 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
         })
     }
 }
+Write-Progress -Id $articleContentStageProgressId -Activity "Staging article content for commit" -Completed
 
 $null = Start-MigrationJob -Name "Wrap-Up - Article Content Commit"
 try {
-    $articleCommitTransportResults = if ($preparedArticleCommits.Count -gt 0 -and $UseFastArticleContentCommit) {
+    $articleContentCommitTotal = @($preparedArticleCommits).Count
+    $articleCommitTransportResults = if ($articleContentCommitTotal -gt 0 -and $UseFastArticleContentCommit) {
         $fastArticleCommitParams = @{
             CommitRequests = @($preparedArticleCommits)
             ThrottleLimit  = $MigrationParallelismLimit
@@ -2837,9 +2888,14 @@ try {
         if ($HuduFastCommitHeaders -and $HuduFastCommitHeaders.Count -gt 0) {
             $fastArticleCommitParams.CustomHeaders = $HuduFastCommitHeaders
         }
+        Write-Progress -Id $articleContentCommitProgressId -Activity "Committing article content" -Status "Fast commit in progress: $articleContentCommitTotal article(s) with $MigrationParallelismLimit worker(s)" -PercentComplete 0
         Invoke-FastHuduArticleContentCommit @fastArticleCommitParams
-    } elseif ($preparedArticleCommits.Count -gt 0) {
+    } elseif ($articleContentCommitTotal -gt 0) {
+        $articleContentCommitIndex = 0
         foreach ($commitRequest in @($preparedArticleCommits)) {
+            $articleContentCommitIndex++
+            $articleContentCommitPercent = [math]::Min(99, [math]::Floor(($articleContentCommitIndex / $articleContentCommitTotal) * 100))
+            Write-Progress -Id $articleContentCommitProgressId -Activity "Committing article content" -Status "Article $articleContentCommitIndex of $articleContentCommitTotal`: $($commitRequest.ArticleName)" -PercentComplete $articleContentCommitPercent
             $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             try {
                 $articleSplat = $commitRequest.ArticleSplat
@@ -2876,6 +2932,7 @@ try {
         @()
     }
 } finally {
+    Write-Progress -Id $articleContentCommitProgressId -Activity "Committing article content" -Completed
     $null = Complete-MigrationJob -Name "Wrap-Up - Article Content Commit" -CompletedAt (Get-Date)
 }
 
@@ -3343,6 +3400,10 @@ $migratedItems = [ordered]@{
     'Hudu Process Runs Migrated'                 = $ProcessRunsMigrated
     'Manual Actions Count'                       = $($ManualActions.GetEnumerator() | Measure-Object).count
     'Manual Action Categories'                   = $($ManualActions.GetEnumerator().type | Select-Object -Unique | Measure-Object).count
+"Locations Had $($(@($LocationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($LocationLabelResults).Count
+"Configurations Had $($(@($ConfigurationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($ConfigurationLabelResults).Count
+"Contacts Had $($(@($ContactLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($ContactLabelResults).Count
+"Passwords Had $($(@($PasswordLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Label Types applied" = @($PasswordLabelResults).Count
 }
 
 $archivedItems = [ordered]@{
@@ -3373,5 +3434,5 @@ $MigrationSummary | Out-File -FilePath "$MigrationLogs\MigrationSummary.txt" -En
 Format-ManualActionsReport -ManualActions $ManualActions -OutputPath "$MigrationLogs\ManualActions.html" -summary $MigrationSummary
 Write-Host $MigrationSummary -ForegroundColor DarkCyan
 
-Write-TimedMessage -Message "Press any key to view manual actions" -Timeout 5  -DefaultResponse "continue, view generative Manual Actions webpage, please."
+Write-TimedMessage -Message "Press any key to view manual actions" -Timeout 3  -DefaultResponse "continue, view generative Manual Actions webpage, please."
 Start-Process "$MigrationLogs\ManualActions.html"

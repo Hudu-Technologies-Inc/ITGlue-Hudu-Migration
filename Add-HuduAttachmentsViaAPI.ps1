@@ -601,8 +601,8 @@ else {
 }
 
 ## Starting main script
-Write-Host "Starting script in 10 seconds. Press CTRL+C to cancel" -ForegroundColor Yellow
-start-sleep 10
+Write-Host "Starting script in 3 seconds. Press CTRL+C to cancel" -ForegroundColor Yellow
+start-sleep 3
 
 if (-not $MatchedAssets) {$MatchedAssets = (Get-Content -path "$MigrationLogs\Assets.json" | ConvertFrom-json -depth 100) }
 if (-not $matchedConfigurations) {$matchedConfigurations = (Get-Content -path "$MigrationLogs\Configurations.json" | ConvertFrom-json -depth 100) }
