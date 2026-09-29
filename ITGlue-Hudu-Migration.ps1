@@ -3364,6 +3364,10 @@ $migratedItems = [ordered]@{
     'Hudu Process Runs Migrated'                 = $ProcessRunsMigrated
     'Manual Actions Count'                       = $($ManualActions.GetEnumerator() | Measure-Object).count
     'Manual Action Categories'                   = $($ManualActions.GetEnumerator().type | Select-Object -Unique | Measure-Object).count
+"$($(@($LocationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Location Label Types applied for" = @($LocationLabelResults).Count
+"$($(@($ConfigurationLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Configuration Label Types applied for" = @($ConfigurationLabelResults).Count
+"$($(@($ContactLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Contact Label Types applied for" = @($ContactLabelResults).Count
+"$($(@($PasswordLabelResults.HuduLabel.label_type_id) | Select-Object -Unique).Count) Password Label Types applied for" = @($PasswordLabelResults).Count
 }
 
 $archivedItems = [ordered]@{
