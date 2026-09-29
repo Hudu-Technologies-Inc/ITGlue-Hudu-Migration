@@ -2072,23 +2072,26 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\ArticleBase.json")) {
     $articleStubProgressId = 31
     $articleStubTotal = @($ITGDocuments).Count
     $articleStubIndex = 0
-    $MatchedArticles = foreach ($doc in $ITGDocuments) {
-        $articleStubIndex++
-        if ($articleStubTotal -gt 0) {
-            $articleStubPercent = [math]::Min(99, [math]::Floor(($articleStubIndex / $articleStubTotal) * 100))
-            Write-Progress -Id $articleStubProgressId -Activity "Creating article stubs" -Status "Document $articleStubIndex of $articleStubTotal`: $($doc.name)" -PercentComplete $articleStubPercent
+    $MatchedArticles = try {
+        foreach ($doc in $ITGDocuments) {
+            $articleStubIndex++
+            if ($articleStubTotal -gt 0) {
+                $articleStubPercent = [math]::Min(99, [math]::Floor(($articleStubIndex / $articleStubTotal) * 100))
+                Write-Progress -Id $articleStubProgressId -Activity "Creating article stubs" -Status "Document $articleStubIndex of $articleStubTotal`: $($doc.name)" -PercentComplete $articleStubPercent
+            }
+
+            $article = Start-ArticleStubs `
+                -Document $doc -Files $files `
+                -ITGDocumentsPath $ITGDocumentsPath -MatchedCompanies $MatchedCompanies `
+                -GlobalKBFolder $GlobalKBFolder `
+                -IncludeIgnoredFirstArticleDirectory:$($IncludeIgnoredFirstArticleDirectory ?? $false) `
+                -PlaceInternalDocsInInternalCompany:$($PlaceInternalDocsInInternalCompany ?? $false)
+
+            if ($article) { $article }
         }
-
-        $article = Start-ArticleStubs `
-            -Document $doc -Files $files `
-            -ITGDocumentsPath $ITGDocumentsPath -MatchedCompanies $MatchedCompanies `
-            -GlobalKBFolder $GlobalKBFolder `
-            -IncludeIgnoredFirstArticleDirectory:$($IncludeIgnoredFirstArticleDirectory ?? $false) `
-            -PlaceInternalDocsInInternalCompany:$($PlaceInternalDocsInInternalCompany ?? $false)
-
-        if ($article) { $article }
+    } finally {
+        Write-Progress -Id $articleStubProgressId -Activity "Creating article stubs" -Completed
     }
-    Write-Progress -Id $articleStubProgressId -Activity "Creating article stubs" -Completed
 
     
     $MatchedArticles | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ArticleBase.json"
@@ -2118,45 +2121,46 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
         $articleBodyImageProgressId = 33
         $articleBodyTotal = @($MatchedArticles).Count
         $articleBodyIndex = 0
-        $ArticleErrors = foreach ($Article in $MatchedArticles) {
-            $articleBodyIndex++
-            if ($articleBodyTotal -gt 0) {
-                $articleBodyPercent = [math]::Min(99, [math]::Floor(($articleBodyIndex / $articleBodyTotal) * 100))
-                Write-Progress -Id $articleBodyProgressId -Activity "Preparing article bodies" -Status "Article $articleBodyIndex of $articleBodyTotal`: $($Article.Name)" -PercentComplete $articleBodyPercent
-            }
+        $ArticleErrors = try {
+            foreach ($Article in $MatchedArticles) {
+                $articleBodyIndex++
+                if ($articleBodyTotal -gt 0) {
+                    $articleBodyPercent = [math]::Min(99, [math]::Floor(($articleBodyIndex / $articleBodyTotal) * 100))
+                    Write-Progress -Id $articleBodyProgressId -Activity "Preparing article bodies" -Status "Article $articleBodyIndex of $articleBodyTotal`: $($Article.Name)" -PercentComplete $articleBodyPercent
+                }
 
-            $page_out = ''
-            $imagePath = $null
+                $page_out = ''
+                $imagePath = $null
 	    
-            # Check for attachments
-            $attachdir = $Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID }
-            if ($Attachdir) {
-                $InFile = ''
-                $html = ''
-                $rawsource = ''
-            }
+                # Check for attachments
+                $attachdir = $Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID }
+                if ($Attachdir) {
+                    $InFile = ''
+                    $html = ''
+                    $rawsource = ''
+                }
 
 
-            Write-Host "Starting $($Article.Name) in $($Article.Company.CompanyName)" -ForegroundColor Green
+                Write-Host "Starting $($Article.Name) in $($Article.Company.CompanyName)" -ForegroundColor Green
 				
-            $InFile = $Article.FullPath
+                $InFile = $Article.FullPath
 				
-            $html = New-Object -ComObject "HTMLFile"
-            $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
-            if ($rawsource.Length -gt 0) {
-                $source = [regex]::replace($rawsource , '\xa0+', ' ')
-                $src = [System.Text.Encoding]::Unicode.GetBytes($source)
-                $html.write($src)
-                $images = @($html.Images)
-                $articleBodyImageTotal = @($images).Count
-                $articleBodyImageIndex = 0
+                $html = New-Object -ComObject "HTMLFile"
+                $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
+                if ($rawsource.Length -gt 0) {
+                    $source = [regex]::replace($rawsource , '\xa0+', ' ')
+                    $src = [System.Text.Encoding]::Unicode.GetBytes($source)
+                    $html.write($src)
+                    $images = @($html.Images)
+                    $articleBodyImageTotal = @($images).Count
+                    $articleBodyImageIndex = 0
 
-                foreach ($imageObject in $images) {
-                    $articleBodyImageIndex++
-                    if ($articleBodyImageTotal -gt 0) {
-                        $articleBodyImagePercent = [math]::Min(99, [math]::Floor(($articleBodyImageIndex / $articleBodyImageTotal) * 100))
-                        Write-Progress -Id $articleBodyImageProgressId -ParentId $articleBodyProgressId -Activity "Processing article images" -Status "Image $articleBodyImageIndex of $articleBodyImageTotal for $($Article.Name)" -PercentComplete $articleBodyImagePercent
-                    }
+                    foreach ($imageObject in $images) {
+                        $articleBodyImageIndex++
+                        if ($articleBodyImageTotal -gt 0) {
+                            $articleBodyImagePercent = [math]::Min(99, [math]::Floor(($articleBodyImageIndex / $articleBodyImageTotal) * 100))
+                            Write-Progress -Id $articleBodyImageProgressId -ParentId $articleBodyProgressId -Activity "Processing article images" -Status "Image $articleBodyImageIndex of $articleBodyImageTotal for $($Article.Name)" -PercentComplete $articleBodyImagePercent
+                        }
 
                     # Reset per-image so resolution and the error message never carry a stale path from a previous image/article
                     $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
@@ -2330,9 +2334,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 		
             $Article.Imported = "Content-Prepared-Locally"
 			
-        } 
-        Write-Progress -Id $articleBodyImageProgressId -ParentId $articleBodyProgressId -Activity "Processing article images" -Completed
-        Write-Progress -Id $articleBodyProgressId -Activity "Preparing article bodies" -Completed
+            }
+        } finally {
+            Write-Progress -Id $articleBodyImageProgressId -ParentId $articleBodyProgressId -Activity "Processing article images" -Completed
+            Write-Progress -Id $articleBodyProgressId -Activity "Preparing article bodies" -Completed
+        }
 
         $MatchedArticles | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\Articles.json"
         $ArticleErrors | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ArticleErrors.json"
