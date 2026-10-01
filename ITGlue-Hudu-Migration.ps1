@@ -1070,7 +1070,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             $ConfigImportSplat = @{
                 AssetFieldsMap        = $ConfigAssetFieldsMap
                 AssetLayoutFields     = $ConfigAssetLayoutFields
-                ImportIcon            = $ConfigImportIcon
+                ImportIcon            = "$(find-fontawesomeicon -search "$ConfigType")"
                 ImportEnabled         = $ConfigImportEnabled
                 HuduItemFilter        = $ConfigHuduItemFilter
                 ImportAssetLayoutName = $ConfigImportAssetLayoutName

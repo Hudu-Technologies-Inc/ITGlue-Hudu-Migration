@@ -1,6 +1,7 @@
 function Find-FontAwesomeIcon {
     param(
         [Parameter(Mandatory)]
+        [AllowEmptyString()]
         [string]$Search,
 
         [string]$MetadataPath = "C:\Users\$env:USERNAME\Icons\fontawesome-free\metadata\icons.json"
