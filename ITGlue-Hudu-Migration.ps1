@@ -1070,7 +1070,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
             $ConfigImportSplat = @{
                 AssetFieldsMap        = $ConfigAssetFieldsMap
                 AssetLayoutFields     = $ConfigAssetLayoutFields
-                ImportIcon            = $ConfigImportIcon
+                ImportIcon            = "$(find-fontawesomeicon -search "$ConfigType")"
                 ImportEnabled         = $ConfigImportEnabled
                 HuduItemFilter        = $ConfigHuduItemFilter
                 ImportAssetLayoutName = $ConfigImportAssetLayoutName
@@ -1443,27 +1443,14 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 }
 
             )
-            if ($null -eq $UnmatchedLayout.ITGObject.attributes.icon) {
-                $NewIcon = 'circle'
 
-            } elseif ($($FontAwesomeUpgrade."$($UnmatchedLayout.ITGObject.attributes.icon)")) {
-                $NewIcon = $($FontAwesomeUpgrade."$($UnmatchedLayout.ITGObject.attributes.icon)")
-            } else {
-                $CurrentIcon = ($UnmatchedLayout.ITGObject.attributes.icon -replace "-o-", "-")
-                $LastTwo = $CurrentIcon.Substring($CurrentIcon.get_Length() - 2)
-                if ($LastTwo -eq "-o") {
-                    #strip last 2 digits
-                    $CurrentIcon = $CurrentIcon.Substring(0, $CurrentIcon.get_Length() - 2)
-                }
-                $NewIcon = $CurrentIcon
-            }
             $TargetLayoutName = "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)"
             # Defense-in-depth in case Hudu layout state changed after the pre-flight check.
             if ($(Get-HuduAssetLayouts | Where-Object { $_.name -ieq $TargetLayoutName })) {
                 Write-Host "Flexible asset layout '$TargetLayoutName' now collides with an existing Hudu asset layout. Exiting instead of creating a renamed layout." -ForegroundColor Red
                 exit 1
             }
-            $NewLayout = New-HuduAssetLayout -name $TargetLayoutName -icon "fas fa-$NewIcon" -color "$($LayoutIconBackGroundColor)" -icon_color "$($LayoutIconForegroundColor)" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields
+            $NewLayout = New-HuduAssetLayout -name $TargetLayoutName -icon "$(Find-FontAwesomeIcon -search "$($UnmatchedLayout.ITGObject.attributes.name)")" -color "$($LayoutIconBackGroundColor)" -icon_color "$($LayoutIconForegroundColor)" -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields $TempLayoutFields
 
             $MatchedNewLayout = Get-HuduAssetLayouts -layoutid $NewLayout.asset_layout.id
 

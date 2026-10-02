@@ -45,7 +45,7 @@ $errorsfolder = if ([string]::IsNullOrWhiteSpace($errorsfolder)) {Join-Path $deb
 $logs_folder = $logs_folder ?? $(join-path "$debugFolder" "logs"); $script:ITG_ERRORS_DIRECTORY = $script:ITG_ERRORS_DIRECTORY ?? $errorsFolder;
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
 foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folder)) {$null = Get-EnsuredPath -Path $folder}
-
+. $PSScriptRoot\public\Find-FontAwesomeIcon.ps1
 
 ############################### Settings ###############################
 # Define the path to the settings.json file in the detected platform's folder:
@@ -340,14 +340,16 @@ if ($InitType -eq 'Full') {
     $ImportLocations = $ImportLocations ?? $(Select-ObjectFromList -message "Import Locations?" -objects @($true, $false) -allowNull $false)
 
     # The asset layout names and icons
-    $ConImportIcon = $ConImportIcon ?? "fas fa-users"
-    $LocImportIcon = $LocImportIcon ?? "fas fa-building"
-    $ConfigImportIcon = $ConfigImportIcon ?? "fas fa-sitemap"
+
     $ConfigMigrationName = $ConfigMigrationName ?? "Configurations" # name for configs layout
     $ConImportAssetLayoutName = $ConImportAssetLayoutName ?? "People" # name for people layout
     $LocImportAssetLayoutName = $LocImportAssetLayoutName ?? "Locations" # name for location layout
     $LayoutIconBackGroundColor = $LayoutIconBackGroundColor ?? "#6136ff" # hudu-purple background for layout icons (fallback)
     $LayoutIconForegroundColor = $LayoutIconForegroundColor ?? "#ffffff" # White Foreground for layout icons (fallback)
+    $ConImportIcon = $ConImportIcon ?? "$(find-fontawesomeicon -search $ConImportAssetLayoutName)"
+    $LocImportIcon = $LocImportIcon ?? "$(find-fontawesomeicon -search $LocImportAssetLayoutName)"
+    $ConfigImportIcon = $ConfigImportIcon ?? "$(find-fontawesomeicon -search $ConfigMigrationName)"
+
     $convertStandalonePhotoArticles = $convertStandalonePhotoArticles ?? $(Select-ObjectFromList -message "Convert standalone photo articles to Hudu photos?" -objects @($true, $false) -allowNull $false)
 
     # The font awesome name for the locations icon in Hudu
@@ -546,7 +548,6 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1 # Get Flexible Asset Layout Option
 . $PSScriptRoot\Private\Import-ITGlueItems.ps1 # Fetch Items from ITGlue
 . $PSScriptRoot\Private\Find-MigratedItem.ps1 # Find migrated items 
-. $PSScriptRoot\Private\Get-FontAwesomeMap.ps1; $FontAwesomeUpgrade = Get-FontAwesomeMap; # Lookup table to upgrade from Font Awesome 4 to 5
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1 # Add Replace URL functions
 . $PSScriptRoot\Public\Add-HuduRelation.ps1 # Add Hudu Relations Function
 . $PSScriptRoot\Public\Write-TimedMessage.ps1 # Add Timed (Noninteractive) Messages Helper
@@ -574,6 +575,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Invoke-FastAssetCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastFlexibleAssetFieldPreparation.ps1
 
+
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
@@ -585,3 +587,4 @@ if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 16){$defaultMigrationParallelismLimit = [math]::Min(24, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(24, [math]::Max(2, $MigrationParallelismLimit));}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
 write-host $ParalellismSettingsInfo
+
