@@ -4,7 +4,7 @@ function Find-FontAwesomeIcon {
         [AllowEmptyString()]
         [string]$Search,
 
-        [string]$MetadataPath = "C:\Users\$env:USERNAME\Icons\fontawesome-free\metadata\icons.json"
+        [string]$MetadataPath = (Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'icons.json')
     )
 
     # Download metadata only if it does not already exist
@@ -80,8 +80,13 @@ function Find-FontAwesomeIcon {
                 "$prefix fa-$($icon.Name)"
             }
         } 
-        if ($null -eq $results){
-            return "fa circle"
+        if ($null -eq $results -or @($results).Count -eq 0){
+            if ([string]::IsNullOrWhiteSpace($Search) -or $searchTerms.Count -eq 0) {
+                return "fas fa-circle"
+            }
+
+            $firstLetterOfSearch = $searchTerms[0].Substring(0, 1).ToLowerInvariant()
+            return "fas fa-$firstLetterOfSearch"
         } else {
             return $($results | get-random -count 1)
         }
