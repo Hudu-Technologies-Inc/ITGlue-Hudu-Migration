@@ -88,6 +88,12 @@ function Find-FontAwesomeIcon {
             $firstLetterOfSearch = $searchTerms[0].Substring(0, 1).ToLowerInvariant()
             return "fas fa-$firstLetterOfSearch"
         } else {
-            return $($results | get-random -count 1)
+            $nonBrandResults = @($results | Where-Object { $_ -notlike 'fa-brands *' })
+
+            if ($nonBrandResults.Count -gt 0) {
+                return $($nonBrandResults | Get-Random -Count 1)
+            }
+
+            return $($results | Get-Random -Count 1)
         }
 }
