@@ -1,4 +1,11 @@
 
+if (-not (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue)) {
+    $itGluePasswordRetryHelperPath = Join-Path $PSScriptRoot 'Get-ITGluePasswordWithRetry.ps1'
+    if (Test-Path -LiteralPath $itGluePasswordRetryHelperPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        . $itGluePasswordRetryHelperPath
+    }
+}
+
 function Get-RelatedToDoc {
     [CmdletBinding()]
     param (

@@ -167,6 +167,9 @@ function Get-ITGluePasswordsWithRetry {
         [Alias('show_password')]
         [switch]$ShowPassword,
 
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [object[]]$RemainingArguments = @(),
+
         [int]$MaxRetries = 8
     )
 
@@ -175,7 +178,11 @@ function Get-ITGluePasswordsWithRetry {
     if ($PSBoundParameters.ContainsKey('PageSize')) { $passwordRequest.page_size = $PageSize }
     if ($PSBoundParameters.ContainsKey('PageNumber')) { $passwordRequest.page_number = $PageNumber }
     if (-not [string]::IsNullOrWhiteSpace($Include)) { $passwordRequest.include = $Include }
-    if ($ShowPassword) { $passwordRequest.show_password = $true }
+    $showPasswordRequested = [bool]$ShowPassword
+    if ($RemainingArguments.Count -gt 0 -and $RemainingArguments[0] -is [bool]) {
+        $showPasswordRequested = [bool]$RemainingArguments[0]
+    }
+    if ($showPasswordRequested) { $passwordRequest.show_password = $true }
 
     $operationName = if ($PSBoundParameters.ContainsKey('Id')) {
         "Get-ITGluePasswords id $Id"

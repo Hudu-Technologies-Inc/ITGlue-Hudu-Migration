@@ -140,11 +140,7 @@ function Test-ITGlueAPIKeyPasswordScope {
             $listBody = $null
             $listStatusCode = 200
 
-            if (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue) {
-                $listUri = "Get-ITGluePasswordsWithRetry -page_size 1"
-                $listResult = Get-ITGluePasswordsWithRetry -page_size 1
-                $listBody = $listResult
-            } elseif (Get-Command -Name Get-ITGluePasswords -ErrorAction SilentlyContinue) {
+            if (Get-Command -Name Get-ITGluePasswords -ErrorAction SilentlyContinue) {
                 $listUri = "Get-ITGluePasswords -page_size 1"
                 $listResult = Get-ITGluePasswords -page_size 1
                 $listBody = $listResult
@@ -210,11 +206,7 @@ function Test-ITGlueAPIKeyPasswordScope {
         }
 
         $showBody = $null
-        if (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue) {
-            $showUri = "Get-ITGluePasswordsWithRetry -id $PasswordId -show_password `$true"
-            $showBody = Get-ITGluePasswordsWithRetry -id $PasswordId -show_password $true
-            $showStatusCode = if ($null -ne $showBody) { 200 } else { $null }
-        } elseif (Get-Command -Name Get-ITGluePasswords -ErrorAction SilentlyContinue) {
+        if (Get-Command -Name Get-ITGluePasswords -ErrorAction SilentlyContinue) {
             $showUri = "Get-ITGluePasswords -id $PasswordId -show_password `$true"
             $showBody = Get-ITGluePasswords -id $PasswordId -show_password $true
             $showStatusCode = if ($null -ne $showBody) { 200 } else { $null }
