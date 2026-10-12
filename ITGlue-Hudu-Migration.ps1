@@ -2350,7 +2350,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 
     #Import Passwords
     Write-Host "Fetching Passwords from IT Glue" -ForegroundColor Green
-    $PasswordSelect = { (Get-ITGluePasswords -page_size 1000 -page_number $i).data }
+    $PasswordSelect = { (Get-ITGluePasswordsWithRetry -page_size 1000 -page_number $i).data }
 
     $ITGPasswords = Import-ITGlueItems -ItemSelect $PasswordSelect -MigrationName 'Passwords'
 
@@ -2367,7 +2367,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
     }
 	catch {
         $ITGPasswordsSingle = foreach ($ITGRawPass in $ITGPasswords) {
-            $ITGPassword = (Get-ITGluePasswords -id $ITGRawPass.id -include related_items).data
+            $ITGPassword = (Get-ITGluePasswordsWithRetry -id $ITGRawPass.id -include related_items).data
             $ITGPassword
         }
         $ITGPasswords = $ITGPasswordsSingle
@@ -2411,7 +2411,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
         )
     }
     foreach ($itgpassword in $PasswordsNotInCSV) {
-        $FullPassword = (Get-ITGluePasswords -id $itgpassword.id -include related_items).data
+        $FullPassword = (Get-ITGluePasswordsWithRetry -id $itgpassword.id -include related_items).data
         [void]$MatchedPasswords.Add(
             [PSCustomObject]@{
                 "Name"       = $itgpassword.attributes.name

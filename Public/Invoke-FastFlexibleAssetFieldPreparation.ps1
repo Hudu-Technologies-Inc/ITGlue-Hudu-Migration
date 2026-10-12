@@ -66,6 +66,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
     $websiteMap = New-FlexLookupMap -Items $MatchedWebsites
     $locationMap = New-FlexLookupMap -Items $MatchedLocations
     $assetMap = New-FlexLookupMap -Items $MatchedAssets
+    $itGluePasswordRetryHelperPath = Join-Path $PSScriptRoot 'Get-ITGluePasswordWithRetry.ps1'
 
     $ThrottleLimit = [math]::Max(1, $ThrottleLimit)
     Write-Host "Preparing $($Assets.Count) flexible asset content update request(s) with $ThrottleLimit worker(s)." -ForegroundColor Cyan
@@ -83,7 +84,13 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         $importDomains = $using:ImportDomains
         $itgKey = $using:ITGKey
         $itgApiEndpoint = $using:ITGAPIEndpoint
+        $itGluePasswordRetryHelperPath = $using:itGluePasswordRetryHelperPath
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+        if (-not (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue) -and
+            (Test-Path -LiteralPath $itGluePasswordRetryHelperPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            . $itGluePasswordRetryHelperPath
+        }
 
         function Get-ParallelCastIfNumeric {
             param([object]$Value)
@@ -355,7 +362,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                             $MigratedPasswordStatus = 'Skipped'
 
                             try {
-                                $ITGPassword = (Get-ITGluePasswords -id $PasswordId -include related_items).data
+                                $ITGPassword = (Get-ITGluePasswordsWithRetry -id $PasswordId -include related_items).data
                                 if (-not $ITGPasswordValue -and $ITGPassword) {
                                     $ITGPasswordValue = $passwordValueMap[[string]$ITGPassword.id]
                                 }
