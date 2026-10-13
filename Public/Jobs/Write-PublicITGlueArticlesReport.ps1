@@ -104,7 +104,7 @@ if ($publicArticleTableRows.Count -eq 0) {
 
 $publicArticleReportHtml = @"
 <h1>$publicArticleReportTitle</h1>
-<p>Found $($publicArticleReportRows.Count) ITGlue document(s) marked public by the article relation preload.</p>
+<p>Found $($publicArticleReportRows.Count) ITGlue document(s) that are public in ITGlue which have not-yet been made public in Hudu.</p>
 <table>
   <thead>
     <tr>
