@@ -126,7 +126,7 @@ param($UpdateAsset)
                         }
 
                         'Password' {
-                            $ITGPassword      = (Get-ITGluePasswords -id $ITGValues -include related_items).data
+                            $ITGPassword      = (Get-ITGluePasswordsWithRetry -id $ITGValues -include related_items).data
                             $ITGPasswordValue = ($ITGPasswordsRaw | Where-Object { $_.id -eq $ITGPassword.id }).password
                             try {
                                 if ($ITGPasswordValue) {
@@ -324,7 +324,7 @@ param($UpdateAsset)
                         }
 
                         'Password' {
-                            $ITGPassword      = (Get-ITGluePasswords -id $ITGValues -include related_items).data
+                            $ITGPassword      = (Get-ITGluePasswordsWithRetry -id $ITGValues -include related_items).data
                             $ITGPasswordValue = ($ITGPasswordsRaw | Where-Object { $_.id -eq $ITGPassword.id }).password
                             try {
                                 if ($ITGPasswordValue) {

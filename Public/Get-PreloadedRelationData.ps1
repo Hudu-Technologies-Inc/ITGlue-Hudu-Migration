@@ -1,4 +1,11 @@
 
+if (-not (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue)) {
+    $itGluePasswordRetryHelperPath = Join-Path $PSScriptRoot 'Get-ITGluePasswordWithRetry.ps1'
+    if (Test-Path -LiteralPath $itGluePasswordRetryHelperPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        . $itGluePasswordRetryHelperPath
+    }
+}
+
 function Get-RelatedToDoc {
     [CmdletBinding()]
     param (
@@ -853,7 +860,7 @@ function Get-PreloadedRelationData {
                     }
                 }
                 'Passwords' {
-                    Get-ITGluePasswords -id $object.ITGObject.id -include related_items
+                    Get-ITGluePasswordsWithRetry -id $object.ITGObject.id -include related_items
                 }
                 'Procedures' {
                     Write-Warning "Procedure relation preloading is not available through the ITGlue API key endpoints used by this migration."
