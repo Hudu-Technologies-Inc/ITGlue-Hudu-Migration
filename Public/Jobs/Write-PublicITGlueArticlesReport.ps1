@@ -50,15 +50,22 @@ $publicArticleReportHuduArticle = $null
 $articleRelationPreloadPath = Join-Path $migrationlogs "RelationsPreload-Articles.json"
 
 if (Test-Path -LiteralPath $articleRelationPreloadPath -PathType Leaf) {
+    try {
+        $articleRelationPreload = Get-Content -LiteralPath $articleRelationPreloadPath -Raw |
+            ConvertFrom-Json -Depth 99
+    } catch {
+        Write-Warning "Skipping public ITGlue articles report because RelationsPreload-Articles.json could not be read: $($_.Exception.Message)"
+        return
+    }
+
     $publicArticleIDs = @(
-        Get-Content -LiteralPath $articleRelationPreloadPath -Raw |
-            ConvertFrom-Json -Depth 99 |
+        $articleRelationPreload |
             Where-Object { Test-ITGluePublicArticleFlag $_.data.attributes.public } |
             ForEach-Object { [string]$_.data.id }
     )
 } else {
     Write-Warning "Skipping public ITGlue articles report because RelationsPreload-Articles.json was not found."
-    $publicArticleIDs = @()
+    return
 }
 
 $publicArticleReportRows = @(
@@ -87,6 +94,11 @@ $publicArticleReportRows = @(
 
 ConvertTo-Json -InputObject $publicArticleReportRows -Depth 10 | Out-File -LiteralPath (Join-Path $migrationlogs "PublicITGlueArticlesReport.json") -Encoding utf8
 
+if ($publicArticleReportRows.Count -eq 0) {
+    Write-Host "No public ITGlue article report rows were found. Skipping Hudu report article creation." -ForegroundColor DarkGray
+    return
+}
+
 $publicArticleTableRows = @(
     foreach ($row in $publicArticleReportRows) {
         $companyName = ConvertTo-PublicArticleReportHtml $row.CompanyName
@@ -97,10 +109,6 @@ $publicArticleTableRows = @(
         "<tr><td>$companyName</td><td>$articleName</td><td>$huduLink</td><td>$itGlueLink</td></tr>"
     }
 )
-
-if ($publicArticleTableRows.Count -eq 0) {
-    $publicArticleTableRows = @('<tr><td colspan="4">No public ITGlue articles were found in the article relation preload.</td></tr>')
-}
 
 $publicArticleReportHtml = @"
 <h1>$publicArticleReportTitle</h1>
