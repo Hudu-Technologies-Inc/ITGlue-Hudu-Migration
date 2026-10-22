@@ -67,6 +67,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
     $locationMap = New-FlexLookupMap -Items $MatchedLocations
     $assetMap = New-FlexLookupMap -Items $MatchedAssets
     $itGluePasswordRetryHelperPath = Join-Path $PSScriptRoot 'Get-ITGluePasswordWithRetry.ps1'
+    $numberHelperPath = Join-Path $PSScriptRoot 'ConvertTo-HuduNumber.ps1'
 
     $ThrottleLimit = [math]::Max(1, $ThrottleLimit)
     Write-Host "Preparing $($Assets.Count) flexible asset content update request(s) with $ThrottleLimit worker(s)." -ForegroundColor Cyan
@@ -85,28 +86,12 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         $itgKey = $using:ITGKey
         $itgApiEndpoint = $using:ITGAPIEndpoint
         $itGluePasswordRetryHelperPath = $using:itGluePasswordRetryHelperPath
+        . $using:numberHelperPath
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
         if (-not (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue) -and
             (Test-Path -LiteralPath $itGluePasswordRetryHelperPath -PathType Leaf -ErrorAction SilentlyContinue)) {
             . $itGluePasswordRetryHelperPath
-        }
-
-        function Get-ParallelCastIfNumeric {
-            param([object]$Value)
-
-            if ($Value -is [string]) {
-                $Value = $Value.Trim()
-            }
-
-            if ($Value -match '^[+-]?\d+(\.\d+)?$') {
-                try {
-                    return [int][double]$Value
-                } catch {
-                    return 0
-                }
-            }
-            return $Value
         }
 
         function Get-ParallelCoercedDate {
@@ -442,9 +427,15 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                                 $null = $matchedAssetPasswords.Add($MigratedPassword)
                             }
                         }
-                    } elseif ($field.FieldType -eq 'Number') {
-                        $coerced = Get-ParallelCastIfNumeric ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                        $AssetFields["$($field.HuduParsedName)"] = [string]"$coerced"
+                    } elseif ($field.FieldType -in @('Number', 'Percent', 'Currency')) {
+                        $numeric = ConvertTo-HuduNumber -Value $ITGValues -FieldDefinition $field.HuduLayoutField -CurrentVersion $currentVersion -CurrencyDecimalPlaces (Get-HuduNumberProperty $field 'CurrencyDecimalPlaces')
+                        if (-not $numeric.IsValid) {
+                            $null = $manualActions.Add((New-HuduNumberManualAction -Asset $UpdateAsset -Field $field -Value $ITGValues -Reason $numeric.Reason))
+                            $null = $messages.Add("Skipping numeric field '$($field.FieldName)': $($numeric.Reason)")
+                            continue
+                        }
+                        if ($numeric.Warning) { $null = $messages.Add("Warning $($field.FieldName): $($numeric.Warning)") }
+                        if (-not $numeric.IsEmpty) { $AssetFields["$($field.HuduParsedName)"] = $numeric.Value }
                     } elseif ($field.FieldType -ieq 'Upload') {
                         $uploadFieldsArePresent = $true
                         continue

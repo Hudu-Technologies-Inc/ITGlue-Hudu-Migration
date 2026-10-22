@@ -552,6 +552,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Add-HuduRelation.ps1 # Add Hudu Relations Function
 . $PSScriptRoot\Public\Write-TimedMessage.ps1 # Add Timed (Noninteractive) Messages Helper
 . $PSScriptRoot\Public\Get-CastIfNumeric.ps1 # Add numeral casting, password folder fetching, and article stub starting helpers
+. $PSScriptRoot\Public\ConvertTo-HuduNumber.ps1 # Decimal strings, number subtype mapping, and numeric validation
 . $PSScriptRoot\Public\Start-ArticleStubs.ps1 # article starting helper
 . $PSScriptRoot\Public\ArticleContentLocalCache.ps1 # local cache for articles (since we commit fully-prepared articles last now)
 . $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1 # Article Attachment as image source helper

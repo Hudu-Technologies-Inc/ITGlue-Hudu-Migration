@@ -1,3 +1,5 @@
+if (-not (Get-Command ConvertTo-HuduNumber -ErrorAction SilentlyContinue)) { . "$PSScriptRoot/ConvertTo-HuduNumber.ps1" }
+
 function Start-FlexibleAssetContents {
 param($UpdateAsset)
             Write-Host "Populating $($UpdateAsset.Name)"
@@ -175,13 +177,18 @@ param($UpdateAsset)
                             $null = $AssetFields.Add($field.HuduParsedName, $coerced)
                         }
 
-                        default {
-                            if ($CurrentVersion -ge [version]'2.44.0') {
-                                $coerced = Get-CastIfNumeric ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                                $null = $AssetFields.Add($field.HuduParsedName, $coerced)
-                            } else {
-                                $null = $AssetFields.Add($field.HuduParsedName, ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]'))
+                        { $_ -in @('Number', 'Percent', 'Currency') } {
+                            $numeric = ConvertTo-HuduNumber -Value $ITGValues -FieldDefinition $field.HuduLayoutField -CurrentVersion $CurrentVersion -CurrencyDecimalPlaces (Get-HuduNumberProperty $field 'CurrencyDecimalPlaces')
+                            if (-not $numeric.IsValid) {
+                                $null = $ManualActions.Add((New-HuduNumberManualAction -Asset $UpdateAsset -Field $field -Value $ITGValues -Reason $numeric.Reason))
+                                Write-Warning "Skipping numeric field '$($field.FieldName)': $($numeric.Reason)"
+                            } elseif (-not $numeric.IsEmpty) {
+                                if ($numeric.Warning) { Write-Warning $numeric.Warning }
+                                $null = $AssetFields.Add($field.HuduParsedName, $numeric.Value)
                             }
+                        }
+                        default {
+                            $null = $AssetFields.Add($field.HuduParsedName, ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]'))
                         }
                     }
                 } else {
@@ -373,13 +380,18 @@ param($UpdateAsset)
                             $null = $AssetFields.Add($field.HuduParsedName, $coerced)
                         }
 
-                        default {
-                            if ($CurrentVersion -ge [version]'2.44.0') {
-                                $coerced = Get-CastIfNumeric ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                                $null = $AssetFields.Add($field.HuduParsedName, $coerced)
-                            } else {
-                                $null = $AssetFields.Add($field.HuduParsedName, ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]'))
+                        { $_ -in @('Number', 'Percent', 'Currency') } {
+                            $numeric = ConvertTo-HuduNumber -Value $ITGValues -FieldDefinition $field.HuduLayoutField -CurrentVersion $CurrentVersion -CurrencyDecimalPlaces (Get-HuduNumberProperty $field 'CurrencyDecimalPlaces')
+                            if (-not $numeric.IsValid) {
+                                $null = $ManualActions.Add((New-HuduNumberManualAction -Asset $UpdateAsset -Field $field -Value $ITGValues -Reason $numeric.Reason))
+                                Write-Warning "Skipping numeric field '$($field.FieldName)': $($numeric.Reason)"
+                            } elseif (-not $numeric.IsEmpty) {
+                                if ($numeric.Warning) { Write-Warning $numeric.Warning }
+                                $null = $AssetFields.Add($field.HuduParsedName, $numeric.Value)
                             }
+                        }
+                        default {
+                            $null = $AssetFields.Add($field.HuduParsedName, ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]'))
                         }
                     }
                 } else {

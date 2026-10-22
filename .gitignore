@@ -33,3 +33,4 @@ migration.ps1
 testdl.ps1
 payload*
 *.json
+numresults.csv

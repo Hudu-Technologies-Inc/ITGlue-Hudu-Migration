@@ -48,6 +48,10 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 
 Items marked with **!** require **JWT** authentication (ITGlue session token from your browser) and are intended for advanced users. Extracting a JWT requires web access and your browser’s developer tools. If you are unsure, skip these options.
 
+Number, percentage, and currency fields use decimal strings
+and version-aware validation. See [numeric field mapping and validation](docs/NumberFields.md)
+for currency overrides, manual-review behavior, and HuduAPI module recommendations.
+
 ## What the script does not migrate:
 - Permissions (Folders, Companies, Passwords, KBs, etc.)
 - share links- you'll have to enable those on the Hudu side and get the new links shared out.

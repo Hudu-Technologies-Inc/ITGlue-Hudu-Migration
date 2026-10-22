@@ -8,6 +8,8 @@ if ($MyInvocation.InvocationName -eq '.') {
 # Main settings load
 $FirstTimeLoad = 1
 . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
+$ITGlueNumberFieldOverrides = $ITGlueNumberFieldOverrides ?? @{}
+$ITGlueCurrencyInference = $ITGlueCurrencyInference ?? @{ Enabled = $true }
 
 # Use this to set the context of the script runs
 
@@ -1517,6 +1519,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 }
 
                 $supported = $true
+
+                $numberMapping = $null
 		
                 switch ($ITGField.Attributes.kind) {
                     "Checkbox" {
@@ -1529,8 +1533,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                     "Header" {
                         $LayoutField.add("field_type", "Heading")
                     }
-                    "Number" {
-                        $LayoutField.add("field_type", "Number")
+                    { $_ -in @('Number', 'Percent', 'Currency') } {
+                        $numberMapping = Get-HuduNumberFieldMapping -SourceField $ITGField -CurrentVersion $CurrentVersion -Overrides $ITGlueNumberFieldOverrides -CurrencyInference $ITGlueCurrencyInference
+                        if ($numberMapping.MappingSource -eq 'LabelHeuristic' -or $numberMapping.CurrencyCandidate) {
+                            Write-Host "Numeric mapping '$($ITGField.Attributes.name)' (ITGlue field $($ITGField.id)): $($numberMapping.MappingReason)" -ForegroundColor Yellow
+                        }
+                        foreach ($key in $numberMapping.LayoutAttributes.Keys) { $LayoutField[$key] = $numberMapping.LayoutAttributes[$key] }
                     }
                     "Select" {
                         $ListName = "$($UpdateLayout.HuduObject.Name)-$($ITGField.Attributes.name)"
@@ -1588,9 +1596,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                             }
                         }
                     }
-                    "Percent" {
-                        $LayoutField.add("field_type", "Number")
-                    }
                     "Password" {
                         $LayoutField.add("field_type", "Password")
                     }
@@ -1607,6 +1612,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                 $FieldDetails = [PSCustomObject]@{
                     LayoutName      = $UpdateLayout.Name
                     FieldName       = $ITGField.Attributes.name
+                    ITGFieldID      = $ITGField.id
+                    ITGFieldDefinition = $ITGField
                     FieldType       = $ITGField.Attributes.kind
                     FieldSubType    = $SubKind
                     HuduLayoutID    = $UpdateLayout.HuduID
@@ -1615,6 +1622,12 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                     HuduParsedName  = ($ITGField.Attributes.name -replace " ", "_").ToLower()
                     Supported       = $supported
                     HuduLayoutField = $LayoutField
+                    SourceNumberType = Get-HuduNumberProperty $numberMapping 'SourceNumberType'
+                    SourceDecimals   = Get-HuduNumberProperty $numberMapping 'SourceDecimals'
+                    CurrencyDecimalPlaces = Get-HuduNumberProperty $numberMapping 'CurrencyDecimalPlaces'
+                    NumberMappingSource = Get-HuduNumberProperty $numberMapping 'MappingSource'
+                    NumberMappingReason = Get-HuduNumberProperty $numberMapping 'MappingReason'
+                    CurrencyCandidate = Get-HuduNumberProperty $numberMapping 'CurrencyCandidate'
                 }
                 $null = $AllFields.add($FieldDetails)
 
@@ -1627,6 +1640,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
             $null = Set-HuduAssetLayout -id $UpdateLayout.HuduID  -name $UpdateLayout.HuduObject.Name -icon $UpdateLayout.HuduObject.icon -color $UpdateLayout.HuduObject.color -icon_color $UpdateLayout.HuduObject.icon_color -include_passwords $true -include_photos $true -include_comments $true -include_files $true -fields @($UpdateLayoutFields)
             $UpdatedLayout = Get-HuduAssetLayouts -layoutid $UpdateLayout.HuduID
+            Confirm-HuduNumberLayoutMapping -Fields @($AllFields | Where-Object IGLayoutID -eq $UpdateLayout.ITGID) -SavedLayout $UpdatedLayout -CurrentVersion $CurrentVersion
             Write-Host "Finished $($UpdateLayout.HuduObject.Name)"
             $UpdateLayout.HuduObject = $UpdatedLayout
             $UpdateLayout.ITGAssets = $FlexAssets

@@ -1,20 +1,12 @@
 function Get-CastIfNumeric {
     param(
-        [Parameter(Mandatory)]
+        [AllowNull()]
         [object]$Value
     )
 
-    if ($Value -is [string]) {
-        $Value = $Value.Trim()
-    }
-
-    if ($Value -match '^[+-]?\d+(\.\d+)?$') {
-        try {
-            return [int][double]$Value
-        } catch {
-            return 0
-        }
-    }
+    if (-not (Get-Command ConvertTo-HuduDecimalText -ErrorAction SilentlyContinue)) { . "$PSScriptRoot/ConvertTo-HuduNumber.ps1" }
+    $numberText = ConvertTo-HuduDecimalText $Value
+    if ($null -ne $numberText) { return $numberText }
     return $Value
 }
 function Test-DateAfter {
