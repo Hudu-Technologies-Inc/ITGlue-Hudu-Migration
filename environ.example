@@ -105,6 +105,20 @@ $ConImportAssetLayoutName   = "People" # name for contacts/people layout
 $LayoutIconBackGroundColor      = "#6136ff" # hudu-purple background for layout icons
 $LayoutIconForegroundColor      = "#ffffff" # White Foreground for layout icons
 
+# Optional numeric subtype overrides keyed by ITGlue flexible asset FIELD ID (strings).
+# Percent maps automatically on Hudu 2.48+. Field overrides take priority over labels.
+# $ITGlueNumberFieldOverrides = @{
+#     '12345' = @{ NumberType = 'currency'; CurrencyCode = 'USD' }
+#     # Other currencies require an explicit, verified DecimalPlaces policy too.
+# }
+# Label inference recognizes cost/spend/debt/price/budget/etc. and currency symbols/codes.
+# Bare keywords and ambiguous symbols like $ need a default currency code:
+# $ITGlueCurrencyInference = @{
+#     Enabled = $true
+#     DefaultCurrencyCode = 'USD' # Set for your source data; never guessed from $.
+#     # DecimalPlacesByCurrency = @{ EUR = 2 } # Only after verifying target behavior.
+# }
+# $ITGlueCurrencyInference = @{ Enabled = $true; DefaultCurrencyCode = 'USD'; } # Disable label inference.
 
 # pre-designated array/list of prescoped/preselected companies for scoped migration (for faster testing, ignore this if you want scoped migration, you'll select your own set)
 # prescoped Companies

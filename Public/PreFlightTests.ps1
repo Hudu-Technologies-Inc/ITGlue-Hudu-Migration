@@ -1,3 +1,7 @@
+if (-not (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'Get-ITGluePasswordWithRetry.ps1')
+}
+
 function Test-HuduAPIKeyScope {
     [CmdletBinding()]
     param(
@@ -142,17 +146,13 @@ function Test-ITGlueAPIKeyPasswordScope {
 
             if (Get-Command -Name Get-ITGluePasswords -ErrorAction SilentlyContinue) {
                 $listUri = "Get-ITGluePasswords -page_size 1"
-                $listResult = Get-ITGluePasswords -page_size 1
+                $listResult = Get-ITGluePasswordsWithRetry -page_size 1
                 $listBody = $listResult
             } else {
                 $listUri = "$resolvedBaseUrl/passwords?page[size]=1"
-                $listResponse = Invoke-WebRequest `
-                    -Method Get `
-                    -Uri $listUri `
-                    -Headers $headers `
-                    -ContentType 'application/vnd.api+json' `
-                    -SkipHttpErrorCheck `
-                    -ErrorAction Stop
+                $listResponse = Invoke-ITGlueCommandWithRetry -OperationName 'IT Glue password scope list check' -RequestGate (Get-ITGluePasswordRequestGate) -Operation {
+                    Invoke-WebRequest -Method Get -Uri $listUri -Headers $headers -ContentType 'application/vnd.api+json' -ErrorAction Stop
+                }
 
                 $listStatusCode = [int]$listResponse.StatusCode
                 $listBody = if ([string]::IsNullOrWhiteSpace($listResponse.Content)) {
@@ -208,17 +208,13 @@ function Test-ITGlueAPIKeyPasswordScope {
         $showBody = $null
         if (Get-Command -Name Get-ITGluePasswords -ErrorAction SilentlyContinue) {
             $showUri = "Get-ITGluePasswords -id $PasswordId -show_password `$true"
-            $showBody = Get-ITGluePasswords -id $PasswordId -show_password $true
+            $showBody = Get-ITGluePasswordsWithRetry -id $PasswordId -show_password $true
             $showStatusCode = if ($null -ne $showBody) { 200 } else { $null }
         } else {
             $showUri = "$resolvedBaseUrl/passwords/${PasswordId}?show_password=true"
-            $showResponse = Invoke-WebRequest `
-                -Method Get `
-                -Uri $showUri `
-                -Headers $headers `
-                -ContentType 'application/vnd.api+json' `
-                -SkipHttpErrorCheck `
-                -ErrorAction Stop
+            $showResponse = Invoke-ITGlueCommandWithRetry -OperationName 'IT Glue password value scope check' -RequestGate (Get-ITGluePasswordRequestGate) -Operation {
+                Invoke-WebRequest -Method Get -Uri $showUri -Headers $headers -ContentType 'application/vnd.api+json' -ErrorAction Stop
+            }
 
             $showStatusCode = [int]$showResponse.StatusCode
             $showBody = if ([string]::IsNullOrWhiteSpace($showResponse.Content)) {
@@ -274,6 +270,7 @@ function Test-ITGlueAPIKeyPasswordScope {
             Message       = "Failed to verify IT Glue password value access: $($_.Exception.Message)"
             ResponseBody  = $_
         }
+        $result.StatusCode = Get-ITGlueApiExceptionStatusCode -ErrorRecord $_
     }
 
     if (-not $result.Success) {

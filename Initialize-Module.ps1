@@ -539,6 +539,20 @@ function Confirm-ITGlueExportPasswordCsv {
     }
 }
 
+
+$ITGlueCurrencyInference ??= @{}
+if ($ITGlueCurrencyInference.Enabled -isnot [bool]) { $ITGlueCurrencyInference.Enabled = $true }
+if ($ITGlueCurrencyInference.DefaultCurrencyCode -notmatch '^[A-Z]{3}$') {
+    $ITGlueCurrencyInference.DefaultCurrencyCode = switch ($ITGAPIEndpoint) {
+        'https://api.eu.itglue.com' { 'EUR' }
+        'https://api.au.itglue.com' { 'AUD' }
+        default { 'USD' }
+    }
+}
+write-host "$(if ($true -eq $ITGlueCurrencyInference.Enabled){"Inferring Currency fields using default currency code $($ITGlueCurrencyInference.DefaultCurrencyCode)"}else{'Skipping Currency Field Inferrence'})"
+
+# $ITGlueCurrencyInference = @{ Enabled = $true; DefaultCurrencyCode = 'USD'; } # Disable label inference.
+
 ############################### Functions ###############################
 . $PSScriptRoot\Private\Initialize-ImageMagik.ps1 # Used to determine image type (fallback) and convert if necessary
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
@@ -552,6 +566,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Add-HuduRelation.ps1 # Add Hudu Relations Function
 . $PSScriptRoot\Public\Write-TimedMessage.ps1 # Add Timed (Noninteractive) Messages Helper
 . $PSScriptRoot\Public\Get-CastIfNumeric.ps1 # Add numeral casting, password folder fetching, and article stub starting helpers
+. $PSScriptRoot\Public\ConvertTo-HuduNumber.ps1 # Decimal strings, number subtype mapping, and numeric validation
 . $PSScriptRoot\Public\Start-ArticleStubs.ps1 # article starting helper
 . $PSScriptRoot\Public\ArticleContentLocalCache.ps1 # local cache for articles (since we commit fully-prepared articles last now)
 . $PSScriptRoot\Public\Resolve-ArticleAttachmentImage.ps1 # Article Attachment as image source helper
@@ -581,7 +596,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
-$requiredHuduVersion = ([version]"2.46.0")
+$requiredHuduVersion = ([version]"2.48.0")
 $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 

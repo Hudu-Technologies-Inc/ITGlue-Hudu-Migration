@@ -988,6 +988,7 @@ function Start-PreloadedRelationDataJob {
     }
 
     $jobName = "ITGlueRelationPreload-$RelationType-$([guid]::NewGuid().ToString('N'))"
+    $passwordRequestGate = Get-ITGluePasswordRequestGate
     $jobArguments = [object[]]@(
         $helperScriptPath
         $RelationType
@@ -995,6 +996,7 @@ function Start-PreloadedRelationDataJob {
         $ITGKey
         $ITGAPIEndpoint
         $MigrationLogs
+        $passwordRequestGate
     )
 
     try {
@@ -1005,7 +1007,8 @@ function Start-PreloadedRelationDataJob {
                 [object[]]$Objects,
                 [string]$ITGKey,
                 [string]$ITGAPIEndpoint,
-                [string]$MigrationLogs
+                [string]$MigrationLogs,
+                [hashtable]$PasswordRequestGate
             )
 
             try { Set-StrictMode -Off } catch {}
@@ -1018,6 +1021,7 @@ function Start-PreloadedRelationDataJob {
             }
 
             . $HelperScriptPath
+            $script:ITGluePasswordRequestGate = $PasswordRequestGate
             Get-PreloadedRelationData -RelationType $RelationType -ItgObjects $Objects -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs
         }
     }

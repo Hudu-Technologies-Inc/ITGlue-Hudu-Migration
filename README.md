@@ -48,6 +48,10 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 
 Items marked with **!** require **JWT** authentication (ITGlue session token from your browser) and are intended for advanced users. Extracting a JWT requires web access and your browser’s developer tools. If you are unsure, skip these options.
 
+Number, percentage, and currency fields use decimal strings
+and version-aware validation. See [numeric field mapping and validation](docs/NumberFields.md)
+for currency overrides, manual-review behavior, and HuduAPI module recommendations.
+
 ## What the script does not migrate:
 - Permissions (Folders, Companies, Passwords, KBs, etc.)
 - share links- you'll have to enable those on the Hudu side and get the new links shared out.
@@ -88,7 +92,7 @@ If a core feature is configured for migration but not turned on / enabled in Hud
 
 **1. Make sure you are on a known-compatible Hudu version**
 
-This fork requires **Hudu `2.45.0` or newer**. Versions **`2.37.0`** and **`2.44.1`-`2.44.3`** are blocked. Upgrade self-hosted instances before running the migration.
+This fork requires **Hudu `2.48.0` or newer**. Versions **`2.37.0`** and **`2.44.1`-`2.44.3`** are blocked. Upgrade self-hosted instances before running the migration.
 
 **2 (optional).** If you're self hosted, It's best to set ratelimit to be high. To do so, you can add this to your .env file and perform a docker compose down/up. If you're Cloud/Hudu hosted, the script will automatically wait if it hits the rate limit and will continue automatically.
 

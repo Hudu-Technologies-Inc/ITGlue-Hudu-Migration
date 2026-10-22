@@ -24,7 +24,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         [version]$CurrentVersion = [version]'2.44.0',
         [bool]$ImportDomains = $true,
 
-        [ValidateRange(1, 24)]
+        [ValidateRange(1, 32)]
         [int]$ThrottleLimit = 4
     )
 
@@ -45,11 +45,19 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         $map
     }
 
+    $numberHelperPath = Join-Path $PSScriptRoot 'ConvertTo-HuduNumber.ps1'
+    . $numberHelperPath
+
+    # Snapshot before starting workers: concurrent PSObject.Properties lookups can
+    # intermittently fail even when the shared object's property exists. Workers
+    # only read these maps; keep the saved bounds, subtype and precision unchanged.
     $fieldMap = @{}
     foreach ($field in @($AllFields | Where-Object { $_ })) {
         $key = "$($field.IGLayoutID)|$($field.ITGParsedName)"
         if (-not $fieldMap.ContainsKey($key)) {
-            $fieldMap[$key] = $field
+            $fieldSnapshot = Copy-HuduNumberProperties $field
+            $fieldSnapshot['HuduLayoutField'] = Copy-HuduNumberProperties (Get-HuduNumberProperty $field 'HuduLayoutField')
+            $fieldMap[$key] = $fieldSnapshot
         }
     }
 
@@ -67,6 +75,8 @@ function Invoke-FastFlexibleAssetFieldPreparation {
     $locationMap = New-FlexLookupMap -Items $MatchedLocations
     $assetMap = New-FlexLookupMap -Items $MatchedAssets
     $itGluePasswordRetryHelperPath = Join-Path $PSScriptRoot 'Get-ITGluePasswordWithRetry.ps1'
+    . $itGluePasswordRetryHelperPath
+    $itGluePasswordRequestGate = Get-ITGluePasswordRequestGate
 
     $ThrottleLimit = [math]::Max(1, $ThrottleLimit)
     Write-Host "Preparing $($Assets.Count) flexible asset content update request(s) with $ThrottleLimit worker(s)." -ForegroundColor Cyan
@@ -85,28 +95,13 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         $itgKey = $using:ITGKey
         $itgApiEndpoint = $using:ITGAPIEndpoint
         $itGluePasswordRetryHelperPath = $using:itGluePasswordRetryHelperPath
+        $itGluePasswordRequestGate = $using:itGluePasswordRequestGate
+        . $using:numberHelperPath
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
         if (-not (Get-Command -Name Get-ITGluePasswordsWithRetry -ErrorAction SilentlyContinue) -and
             (Test-Path -LiteralPath $itGluePasswordRetryHelperPath -PathType Leaf -ErrorAction SilentlyContinue)) {
             . $itGluePasswordRetryHelperPath
-        }
-
-        function Get-ParallelCastIfNumeric {
-            param([object]$Value)
-
-            if ($Value -is [string]) {
-                $Value = $Value.Trim()
-            }
-
-            if ($Value -match '^[+-]?\d+(\.\d+)?$') {
-                try {
-                    return [int][double]$Value
-                } catch {
-                    return 0
-                }
-            }
-            return $Value
         }
 
         function Get-ParallelCoercedDate {
@@ -213,6 +208,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         $huduRelationsToCreate = [System.Collections.ArrayList]@()
         $matchedAssetPasswords = [System.Collections.ArrayList]@()
         $uploadFieldsArePresent = $false
+        $ITGParsed = $null
 
         try {
             $null = $messages.Add("Populating $($UpdateAsset.Name)")
@@ -362,7 +358,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                             $MigratedPasswordStatus = 'Skipped'
 
                             try {
-                                $ITGPassword = (Get-ITGluePasswordsWithRetry -id $PasswordId -include related_items).data
+                                $ITGPassword = (Get-ITGluePasswordsWithRetry -id $PasswordId -include related_items -RequestGate $itGluePasswordRequestGate).data
                                 if (-not $ITGPasswordValue -and $ITGPassword) {
                                     $ITGPasswordValue = $passwordValueMap[[string]$ITGPassword.id]
                                 }
@@ -442,9 +438,15 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                                 $null = $matchedAssetPasswords.Add($MigratedPassword)
                             }
                         }
-                    } elseif ($field.FieldType -eq 'Number') {
-                        $coerced = Get-ParallelCastIfNumeric ($ITGValues -replace '[^\x09\x0A\x0D\x20-\xD7FF\xE000-\xFFFD\x10000\x10FFFF]')
-                        $AssetFields["$($field.HuduParsedName)"] = [string]"$coerced"
+                    } elseif ($field.FieldType -in @('Number', 'Percent', 'Currency')) {
+                        $numeric = ConvertTo-HuduNumber -Value $ITGValues -FieldDefinition $field.HuduLayoutField -CurrentVersion $currentVersion -CurrencyDecimalPlaces (Get-HuduNumberProperty $field 'CurrencyDecimalPlaces')
+                        if (-not $numeric.IsValid) {
+                            $null = $manualActions.Add((New-HuduNumberManualAction -Asset $UpdateAsset -Field $field -Value $ITGValues -Reason $numeric.Reason))
+                            $null = $messages.Add("Skipping numeric field '$($field.FieldName)': $($numeric.Reason)")
+                            continue
+                        }
+                        if ($numeric.Warning) { $null = $messages.Add("Warning $($field.FieldName): $($numeric.Warning)") }
+                        if (-not $numeric.IsEmpty) { $AssetFields["$($field.HuduParsedName)"] = $numeric.Value }
                     } elseif ($field.FieldType -ieq 'Upload') {
                         $uploadFieldsArePresent = $true
                         continue
@@ -456,6 +458,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                 }
             }
 
+            $ITGParsed = $null
             $CleanedAssetFields = @()
             foreach ($entry in $AssetFields.GetEnumerator()) {
                 $fieldName = ($entry.Key -replace '_', ' ').Trim()
@@ -508,6 +511,10 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                 Messages               = @($messages)
                 ElapsedSeconds         = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
                 Error                  = $_.Exception.Message
+                ErrorField             = $ITGParsed
+                ErrorId                = $_.FullyQualifiedErrorId
+                ErrorPosition          = $_.InvocationInfo.PositionMessage
+                ErrorScriptStackTrace  = $_.ScriptStackTrace
             }
         }
     } -ThrottleLimit $ThrottleLimit

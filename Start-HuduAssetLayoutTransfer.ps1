@@ -596,22 +596,14 @@ $addressMapsByDest      = @{};    $ListSelectEquivilencyMaps   = @{};
 $assetComparableListItemsByListId = @{}
 
 function Get-CastIfNumeric {
-    param([AllowNull()][object]$Value)
-    if ($null -eq $Value) {
-        return $null
+    param([AllowNull()][object]$Value, $FieldDefinition, [version]$CurrentVersion)
+    if (-not (Get-Command ConvertTo-HuduNumber -ErrorAction SilentlyContinue)) {
+        . (Join-Path $script:Root 'Public/ConvertTo-HuduNumber.ps1')
     }
-    if ($Value -is [string]) {
-        $Value = $Value.Trim()
-        if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
-    }
-    if ($Value -match '^[+-]?\d+(\.\d+)?$') {
-        try {
-            return [int][double]$Value
-        } catch {
-            return $null
-        }
-    }
-    return $null
+    $numeric = ConvertTo-HuduNumber -Value $Value -FieldDefinition $FieldDefinition -CurrentVersion $CurrentVersion
+    if (-not $numeric.IsValid) { Write-Warning "Skipping numeric value: $($numeric.Reason)"; return $null }
+    if ($numeric.Warning) { Write-Warning $numeric.Warning }
+    return $numeric.Value
 }
 
 function Limit-FilenameLength {
@@ -2057,6 +2049,14 @@ foreach ($entry in $mapping) {
 }
 
 $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
+$numberTargetVersion = $null
+if ($sourceDestDataType.Values -contains 'Number') {
+    $numberAppInfo = Get-HuduAppInfo
+    if (-not [version]::TryParse([string]$numberAppInfo.version, [ref]$numberTargetVersion)) {
+        throw 'Cannot determine Hudu version for numeric destination validation.'
+    }
+    if ($numberTargetVersion -lt [version]'2.21') { throw 'Hudu version lookup failed; numeric transfer has not started.' }
+}
 $sourceAssets = get-huduassets -assetlayoutid $sourceassetlayout.id
 if (-not [string]::IsNullOrWhiteSpace($SourceAssetFilterField) -and ($SourceAssetFilterValueIsBlank -or -not [string]::IsNullOrWhiteSpace($SourceAssetFilterValue))) {
     $unfilteredSourceAssetCount = @($sourceAssets).Count
@@ -2217,15 +2217,11 @@ foreach ($originalasset in $sourceassets) {
             }
             if ($destFieldType -eq "Number"){
                 $precastValue=$field.value
-                $numericValue = Get-CastIfNumeric -Value $field.value
-                if ($null -eq $numericValue) {
-                    $digitsOnly = "$($field.value)" -replace '\D+', ''
-                    if (-not [string]::IsNullOrWhiteSpace($digitsOnly)) {
-                        $numericValue = Get-CastIfNumeric -Value $digitsOnly
-                    }
-                }
+                $numericDestination = @($destassetlayout.fields | Where-Object { $_.label -ieq $transformedlabel })
+                if ($numericDestination.Count -ne 1) { throw "Cannot identify numeric destination '$transformedlabel'." }
+                $numericValue = Get-CastIfNumeric -Value $field.value -FieldDefinition $numericDestination[0] -CurrentVersion $numberTargetVersion
                 $field.value = $numericValue
-                Write-Host "non-empty source val on Number target; Casting '$($precastValue)' as int...$($field.value)"
+                Write-Host "Validated decimal text for Number target '$transformedlabel': $($field.value)"
             } elseif ($destFieldType -eq "CheckBox"){
                 $precastValue=$field.value; $field.value = $(Get-CastIfBoolean $field.value -allowFuzzy $true) ?? $null
                 Write-Host "non-empty source val on CheckBox/Boolean target; Casting '$($precastValue)' as bool...$($field.value)"
