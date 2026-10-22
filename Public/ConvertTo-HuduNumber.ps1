@@ -4,9 +4,27 @@ function Get-HuduNumberProperty {
     param([AllowNull()]$Object, [string]$Name)
     if ($null -eq $Object) { return $null }
     if ($Object -is [System.Collections.IDictionary]) { return $Object[$Name] }
-    $property = $Object.PSObject.Properties[$Name]
-    if ($null -ne $property) { return $property.Value }
+    $properties = $Object.PSObject.Properties
+    if ($null -eq $properties) { throw "Cannot read numeric metadata property '$Name'." }
+    $property = $properties[$Name]
+    # Calling the getter explicitly lets read errors reach the validator;
+    # PowerShell's ordinary property access can turn a failed getter into null.
+    if ($null -ne $property) { return $property.get_Value() }
     return $null
+}
+
+function Copy-HuduNumberProperties {
+    param([AllowNull()]$Object)
+    if ($null -eq $Object) { return $null }
+    $copy = @{}
+    if ($Object -is [System.Collections.IDictionary]) {
+        foreach ($key in $Object.Keys) { $copy[$key] = $Object[$key] }
+    } else {
+        $properties = $Object.PSObject.Properties
+        if ($null -eq $properties) { throw 'Cannot snapshot numeric field metadata.' }
+        foreach ($property in $properties) { $copy[$property.Name] = $property.get_Value() }
+    }
+    return $copy
 }
 
 function ConvertTo-HuduDecimalText {
@@ -18,11 +36,12 @@ function ConvertTo-HuduDecimalText {
     } elseif ($Value -is [double] -or $Value -is [single]) {
         $text = $Value.ToString('R', [cultureinfo]::InvariantCulture)
     } else { return $null }
-    if ($text -cnotmatch '^(?<sign>[+-]?)(?<whole>[0-9]+)(?:\.(?<fraction>[0-9]+))?$') { return $null }
-    $whole = $Matches['whole'].TrimStart('0')
+    $match = [regex]::Match($text, '^(?<sign>[+-]?)(?<whole>[0-9]+)(?:\.(?<fraction>[0-9]+))?$')
+    if (-not $match.Success) { return $null }
+    $whole = $match.Groups['whole'].Value.TrimStart('0')
     if (-not $whole) { $whole = '0' }
-    $fraction = ([string]$Matches['fraction']).TrimEnd('0')
-    $negative = $Matches['sign'] -eq '-' -and ($whole -ne '0' -or $fraction)
+    $fraction = $match.Groups['fraction'].Value.TrimEnd('0')
+    $negative = $match.Groups['sign'].Value -eq '-' -and ($whole -ne '0' -or $fraction)
     $sign = if ($negative) { '-' } else { '' }
     $suffix = if ($fraction) { ".$fraction" } else { '' }
     return "$sign$whole$suffix"
@@ -144,7 +163,23 @@ function ConvertTo-HuduNumber {
     if ($Value -is [double] -or $Value -is [single]) {
         $result.Warning = 'Source was already a floating-point value; any precision lost while reading ITGlue cannot be recovered.'
     }
-    $numberType = [string](Get-HuduNumberProperty $FieldDefinition 'number_type')
+    # Missing/unreadable settings must not silently bypass currency, percentage or bounds checks.
+    if ($null -eq $FieldDefinition) {
+        $result.Reason = 'Destination numeric field definition is missing.'; return $result
+    }
+    if ($FieldDefinition -isnot [System.Collections.IDictionary] -and $FieldDefinition -isnot [pscustomobject]) {
+        $result.Reason = 'Destination numeric field definition must be a property map.'; return $result
+    }
+    try {
+        $numberType = [string](Get-HuduNumberProperty $FieldDefinition 'number_type')
+        $code = ([string](Get-HuduNumberProperty $FieldDefinition 'currency_code')).ToUpperInvariant()
+        $bounds = @{
+            min = Get-HuduNumberProperty $FieldDefinition 'min'
+            max = Get-HuduNumberProperty $FieldDefinition 'max'
+        }
+    } catch {
+        $result.Reason = "Cannot read destination numeric field settings: $($_.Exception.Message)"; return $result
+    }
     if (-not $numberType) { $numberType = 'number' }
     if ($numberType -notin @('number', 'currency', 'percentage')) {
         $result.Reason = "Unknown destination number_type '$numberType'."; return $result
@@ -162,7 +197,6 @@ function ConvertTo-HuduNumber {
             $result.Reason = 'Percentage exceeds Hudu 2.48.0 maximum 100. Values are not rescaled.'; return $result
         }
         if ($numberType -eq 'currency') {
-            $code = ([string](Get-HuduNumberProperty $FieldDefinition 'currency_code')).ToUpperInvariant()
             if ($null -eq $CurrencyDecimalPlaces -and $code -eq 'USD') { $CurrencyDecimalPlaces = 2 }
             if (-not $code -or $null -eq $CurrencyDecimalPlaces -or [string]$CurrencyDecimalPlaces -notmatch '^(0|[1-9][0-9]?)$') {
                 $result.Reason = "Currency '$code' needs a known decimal-place policy; only USD (2) has been tested."; return $result
@@ -174,7 +208,7 @@ function ConvertTo-HuduNumber {
         }
     }
     foreach ($boundName in @('min', 'max')) {
-        $bound = Get-HuduNumberProperty $FieldDefinition $boundName
+        $bound = $bounds[$boundName]
         if ($null -eq $bound -or [string]::IsNullOrWhiteSpace([string]$bound)) { continue }
         $boundText = ConvertTo-HuduDecimalText $bound
         if ($null -eq $boundText) { $result.Reason = "Cannot validate destination $boundName setting."; return $result }

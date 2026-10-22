@@ -8,6 +8,15 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/../Public/Start-FlexAssets.ps1"
 $checks = 0
 function Assert-Number { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw $Message }; $script:checks++ }
+$metadata = [pscustomobject]@{min=0;required=$false;max='1.00000000000000000001';currency_code=$null}
+$snapshot = Copy-HuduNumberProperties $metadata
+Assert-Number ($snapshot -is [System.Collections.IDictionary] -and $snapshot.min -ceq 0 -and $snapshot.required -eq $false -and $snapshot.max -ceq $metadata.max) 'Field snapshot changed zero, false or exact bounds.'
+Assert-Number ($snapshot.ContainsKey('currency_code') -and $null -eq $snapshot.currency_code) 'Field snapshot lost an explicit null.'
+$dictionaryCopy = Copy-HuduNumberProperties $snapshot
+$dictionaryCopy.min = 1
+Assert-Number ($snapshot.min -eq 0 -and $metadata.min -eq 0) 'Field snapshot still aliases the source dictionary.'
+Assert-Number ($null -eq (Get-HuduNumberProperty $metadata 'absent') -and $null -eq (Get-HuduNumberProperty $snapshot 'absent')) 'Missing optional metadata no longer returns null.'
+Assert-Number ($null -eq (Copy-HuduNumberProperties $null)) 'Missing definition was replaced with an empty definition.'
 $plain = @{ field_type = 'Number'; number_type = 'number' }
 $percent = @{ field_type = 'Number'; number_type = 'percentage' }
 $usd = @{ field_type = 'Number'; number_type = 'currency'; currency_code = 'USD' }
@@ -45,6 +54,14 @@ Assert-Number ((ConvertTo-HuduNumber '0' @{min=0;max=0}).IsValid) 'Zero bounds t
 Assert-Number (-not (ConvertTo-HuduNumber '-0.01' @{min=0}).IsValid) 'Minimum ignored.'
 Assert-Number (-not (ConvertTo-HuduNumber '1.00000000000000000001' @{max='1.00000000000000000000'}).IsValid) 'High precision bound comparison lost precision.'
 Assert-Number ((ConvertTo-HuduNumber '-2' @{min=-3;max=-1}).IsValid) 'Negative bound comparison inverted.'
+Assert-Number (-not (ConvertTo-HuduNumber '4.0' $null).IsValid) 'Missing numeric definition bypassed validation.'
+foreach ($invalidDefinition in @('', @(), 42, $false)) {
+    Assert-Number (-not (ConvertTo-HuduNumber '4.0' $invalidDefinition).IsValid) 'Malformed numeric definition bypassed validation.'
+}
+$unreadable = [pscustomobject]@{}
+$unreadable | Add-Member -MemberType ScriptProperty -Name number_type -Value { throw 'Metadata read failed' }
+$unreadableResult = ConvertTo-HuduNumber '4.0' $unreadable
+Assert-Number (-not $unreadableResult.IsValid -and $null -eq $unreadableResult.Value) 'Unreadable numeric metadata bypassed validation.'
 $previousCulture = [cultureinfo]::CurrentCulture
 try {
     [cultureinfo]::CurrentCulture = [cultureinfo]'fr-FR'
@@ -124,6 +141,20 @@ $ManualActions = [System.Collections.ArrayList]@()
 $serial = Start-FlexibleAssetContentsExample $asset -WarningAction SilentlyContinue
 Assert-Number ($serial.amount -ceq $wire.amount -and $serial.identifier -ceq '000123') 'Serial/parallel output differs.'
 Assert-Number (-not $serial.ContainsKey('rate') -and -not $serial.ContainsKey('cost') -and $ManualActions.Count -eq 2) 'Serial path does not report invalid numbers.'
+
+# Missing numeric metadata omits only that value and preserves the rest of the asset.
+$missingField = [pscustomobject]@{IGLayoutID=1;ITGParsedName='amount';HuduParsedName='amount';FieldName='Amount';FieldType='Number';HuduLayoutField=$null}
+$missingResult = @(Invoke-FastFlexibleAssetFieldPreparation -Assets @($asset) -AllFields @($missingField, $AllFields[3]) -CurrentVersion $CurrentVersion -ThrottleLimit 1)[0]
+$missingWire = @{}
+foreach ($entry in $missingResult.AssetUpdateRequest.Fields) { foreach ($key in $entry.Keys) { $missingWire[$key] = $entry[$key] } }
+Assert-Number ($missingResult.Status -eq 'prepared' -and $missingWire.identifier -ceq '000123' -and -not $missingWire.ContainsKey('amount')) 'Missing numeric metadata failed the asset or sent an unchecked value.'
+Assert-Number ($missingResult.ManualActions.Count -eq 1 -and $missingResult.ManualActions[0].Data -ceq $longFraction) 'Missing numeric metadata lost the source value for manual review.'
+
+# Unexpected preparation failures retain enough context to diagnose the source.
+$badAsset = $asset.PSObject.Copy()
+$badAsset.HuduID = 'invalid-id'
+$badResult = @(Invoke-FastFlexibleAssetFieldPreparation -Assets @($badAsset) -AllFields $AllFields -CurrentVersion $CurrentVersion -ThrottleLimit 1)[0]
+Assert-Number ($badResult.Status -eq 'failed' -and $null -eq $badResult.AssetUpdateRequest -and $null -eq $badResult.ErrorField -and $badResult.ErrorId -and $badResult.ErrorPosition -and $badResult.ErrorScriptStackTrace) 'Preparation failure lost diagnostic context or produced an update request.'
 
 # Confirm policy against representative rows from the actual saved API run.
 $observations = @(Import-Csv "$PSScriptRoot/fixtures/number-fields-2.48.0.csv")

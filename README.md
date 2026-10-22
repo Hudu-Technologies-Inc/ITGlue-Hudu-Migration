@@ -92,7 +92,7 @@ If a core feature is configured for migration but not turned on / enabled in Hud
 
 **1. Make sure you are on a known-compatible Hudu version**
 
-This fork requires **Hudu `2.45.0` or newer**. Versions **`2.37.0`** and **`2.44.1`-`2.44.3`** are blocked. Upgrade self-hosted instances before running the migration.
+This fork requires **Hudu `2.48.0` or newer**. Versions **`2.37.0`** and **`2.44.1`-`2.44.3`** are blocked. Upgrade self-hosted instances before running the migration.
 
 **2 (optional).** If you're self hosted, It's best to set ratelimit to be high. To do so, you can add this to your .env file and perform a docker compose down/up. If you're Cloud/Hudu hosted, the script will automatically wait if it hits the rate limit and will continue automatically.
 

@@ -118,11 +118,7 @@ $LayoutIconForegroundColor      = "#ffffff" # White Foreground for layout icons
 #     DefaultCurrencyCode = 'USD' # Set for your source data; never guessed from $.
 #     # DecimalPlacesByCurrency = @{ EUR = 2 } # Only after verifying target behavior.
 # }
-# $ITGlueCurrencyInference = @{ Enabled = $false } # Disable label inference.
-$ITGlueCurrencyInference = @{
-    Enabled = $true
-    DefaultCurrencyCode = 'USD' # Choose for your source data.
-}
+# $ITGlueCurrencyInference = @{ Enabled = $true; DefaultCurrencyCode = 'USD'; } # Disable label inference.
 
 # pre-designated array/list of prescoped/preselected companies for scoped migration (for faster testing, ignore this if you want scoped migration, you'll select your own set)
 # prescoped Companies

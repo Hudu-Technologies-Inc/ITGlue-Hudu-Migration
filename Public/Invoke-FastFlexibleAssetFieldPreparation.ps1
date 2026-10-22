@@ -45,11 +45,19 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         $map
     }
 
+    $numberHelperPath = Join-Path $PSScriptRoot 'ConvertTo-HuduNumber.ps1'
+    . $numberHelperPath
+
+    # Snapshot before starting workers: concurrent PSObject.Properties lookups can
+    # intermittently fail even when the shared object's property exists. Workers
+    # only read these maps; keep the saved bounds, subtype and precision unchanged.
     $fieldMap = @{}
     foreach ($field in @($AllFields | Where-Object { $_ })) {
         $key = "$($field.IGLayoutID)|$($field.ITGParsedName)"
         if (-not $fieldMap.ContainsKey($key)) {
-            $fieldMap[$key] = $field
+            $fieldSnapshot = Copy-HuduNumberProperties $field
+            $fieldSnapshot['HuduLayoutField'] = Copy-HuduNumberProperties (Get-HuduNumberProperty $field 'HuduLayoutField')
+            $fieldMap[$key] = $fieldSnapshot
         }
     }
 
@@ -67,7 +75,6 @@ function Invoke-FastFlexibleAssetFieldPreparation {
     $locationMap = New-FlexLookupMap -Items $MatchedLocations
     $assetMap = New-FlexLookupMap -Items $MatchedAssets
     $itGluePasswordRetryHelperPath = Join-Path $PSScriptRoot 'Get-ITGluePasswordWithRetry.ps1'
-    $numberHelperPath = Join-Path $PSScriptRoot 'ConvertTo-HuduNumber.ps1'
 
     $ThrottleLimit = [math]::Max(1, $ThrottleLimit)
     Write-Host "Preparing $($Assets.Count) flexible asset content update request(s) with $ThrottleLimit worker(s)." -ForegroundColor Cyan
@@ -198,6 +205,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
         $huduRelationsToCreate = [System.Collections.ArrayList]@()
         $matchedAssetPasswords = [System.Collections.ArrayList]@()
         $uploadFieldsArePresent = $false
+        $ITGParsed = $null
 
         try {
             $null = $messages.Add("Populating $($UpdateAsset.Name)")
@@ -447,6 +455,7 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                 }
             }
 
+            $ITGParsed = $null
             $CleanedAssetFields = @()
             foreach ($entry in $AssetFields.GetEnumerator()) {
                 $fieldName = ($entry.Key -replace '_', ' ').Trim()
@@ -499,6 +508,10 @@ function Invoke-FastFlexibleAssetFieldPreparation {
                 Messages               = @($messages)
                 ElapsedSeconds         = [math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
                 Error                  = $_.Exception.Message
+                ErrorField             = $ITGParsed
+                ErrorId                = $_.FullyQualifiedErrorId
+                ErrorPosition          = $_.InvocationInfo.PositionMessage
+                ErrorScriptStackTrace  = $_.ScriptStackTrace
             }
         }
     } -ThrottleLimit $ThrottleLimit
