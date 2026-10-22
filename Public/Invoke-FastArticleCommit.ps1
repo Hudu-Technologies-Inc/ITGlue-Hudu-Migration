@@ -5,7 +5,7 @@ function Invoke-FastHuduArticleContentCommit {
         [AllowEmptyCollection()]
         [object[]]$CommitRequests,
 
-        [ValidateRange(1, 24)]
+        [ValidateRange(1, 48)]
         [int]$ThrottleLimit = 4,
 
         [ValidateRange(0, 5)]

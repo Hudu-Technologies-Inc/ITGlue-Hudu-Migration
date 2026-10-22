@@ -34,3 +34,5 @@ testdl.ps1
 payload*
 *.json
 numresults.csv
+tests/ITGluePasswordRetry.Tests.ps1
+tests/NumberPreparationConcurrency.Tests.ps1

@@ -91,7 +91,7 @@ $RelatedConfigurations = $RelatedConfigurations ?? $($FreshConfigurations | Wher
 if ($null -eq $FreshPasswords) {
     $FreshPasswords = Get-ITGlueRelationSourceData -RelationType Passwords -DisplayName 'passwords' -ItgObjects @($MatchedPasswords) -FetchItem {
         param($Item)
-        Get-ITGluePasswords -id $Item.ITGObject.id -include related_items
+        Get-ITGluePasswordsWithRetry -id $Item.ITGObject.id -include related_items
     }
 }
 $RelatedPasswords = $RelatedPasswords ?? $($FreshPasswords | Where-Object { Test-ITGlueResponseHasRelationData -Response $_ })

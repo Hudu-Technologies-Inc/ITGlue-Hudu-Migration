@@ -601,6 +601,7 @@ $CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $required
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 16){$defaultMigrationParallelismLimit = [math]::Min(24, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(24, [math]::Max(2, $MigrationParallelismLimit));}
+$MigrationParallelismLimit = 46
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
 write-host $ParalellismSettingsInfo
 
