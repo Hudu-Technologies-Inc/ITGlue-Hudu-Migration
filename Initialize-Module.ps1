@@ -85,8 +85,12 @@ function CollectAndSaveSettings {
 
     # 2. User-Entry- Secrets
     Write-Host "Settings- Secrets:" -ForegroundColor Yellow
-    $HuduAPIKey = if ($settings.HuduAPIKey) { ConvertSecureStringToPlainText ($settings.HuduAPIKey | ConvertTo-SecureString) } else { $HuduAPIKey ?? '' }
-    $ITGKey = if ($settings.ITGKey) { ConvertSecureStringToPlainText ($settings.ITGKey | ConvertTo-SecureString) } else { $ITGKey ?? '' }
+    $HuduAPIKey = if ($settings.HuduAPIKey) {
+        try { ConvertSecureStringToPlainText ($settings.HuduAPIKey | ConvertTo-SecureString) } catch { '' }
+    } else { $HuduAPIKey ?? '' }
+    $ITGKey = if ($settings.ITGKey) {
+        try { ConvertSecureStringToPlainText ($settings.ITGKey | ConvertTo-SecureString) } catch { '' }
+    } else { $ITGKey ?? '' }
     while ($HuduAPIKey.Length -ne 24) {
         $HuduAPIKey = (Read-Host -Prompt "Get a Hudu API Key from $($settings.HuduBaseDomain)/admin/api_keys").Trim()
         if ($HuduAPIKey.Length -ne 24) {
@@ -132,7 +136,7 @@ function CollectAndSaveSettings {
     if ($reenterChoice -eq "Continue") {
         Write-Host "Saving Settings to $settingsPath"
         # Convert the hash table to JSON
-        $json = $settings | ConvertTo-Json
+        $json = $settings | ConvertTo-Json -Depth 50
         $json | Out-File -LiteralPath $settingsPath
     } else {
         Clear-Host
@@ -182,13 +186,19 @@ function PromptForSettingsPath {
 $settingsReadPath = $null
 $hasLauncherSettings = $settings -and ($null -eq $previousMigrationRun -or
     -not [object]::ReferenceEquals($settings, $previousMigrationRun.SettingsAlias))
+$hasSelectedSettingsFile = $settingsPath -and (Test-Path -LiteralPath $settingsPath -PathType Leaf) -and
+    ($null -eq $previousMigrationRun -or $settingsPath -ne $previousMigrationRun.SettingsPath)
 if ($InitType -eq 'Lite' -and $previousMigrationRun) {
     $settings = Copy-MigrationSettings $previousMigrationRun.Settings
     $settingsReadPath = $previousMigrationRun.SettingsPath
 } elseif ($hasLauncherSettings) {
     $settings = Copy-MigrationSettings $settings
+} elseif ($InitType -eq 'Full' -and $hasSelectedSettingsFile) {
+    $settingsReadPath = $settingsPath
+    $settings = Copy-MigrationSettings (Get-Content -LiteralPath $settingsReadPath -Raw | ConvertFrom-Json -Depth 50)
 } elseif ($environmentSettings) {
     $settings = Copy-MigrationSettings $environmentSettings
+    if ($previousMigrationRun) { $settingsReadPath = $previousMigrationRun.SettingsPath }
 } else {
     if ($choice -eq 'I' -and $importChoice -eq 'S') {
         $settingsReadPath = PromptForSettingsPath -Default
@@ -203,8 +213,12 @@ if ($InitType -eq 'Lite' -and $previousMigrationRun) {
         Copy-MigrationSettings (Get-Content -LiteralPath $settingsReadPath -Raw | ConvertFrom-Json -Depth 50)
     } else { Copy-MigrationSettings $null }
 }
+$providedErrorsFolder = $errorsfolder
+if ($errors_folder -and ($null -eq $previousMigrationRun -or $errors_folder -ne $previousMigrationRun.ErrorsFolder)) {
+    $providedErrorsFolder = $errors_folder
+}
 $activeMigrationRun = New-MigrationRunContext -InitType $InitType -ProjectDirectory $project_workdir `
-    -DebugDirectory $debugFolder -ErrorsDirectory ($errorsfolder ?? $errors_folder) `
+    -DebugDirectory $debugFolder -ErrorsDirectory $providedErrorsFolder `
     -SettingsDirectory $settings_folder -LogsDirectory $logs_folder -SourceSettingsPath $settingsReadPath `
     -Configuration $settings -PreviousRun $previousMigrationRun
 $debugFolder = $activeMigrationRun.DebugFolder
@@ -228,8 +242,21 @@ if ($InitType -eq 'Full') {
     }
     $AttachmentUrlMap = @{}; $HuduUploadLookup = @{}; $HuduUploadLookupLoaded = $false
     $ManualActions = [System.Collections.ArrayList]@()
+    $ITGlueExportBootstrapJob = $null; $ITGlueExportBootstrap = $null
 }
-CollectAndSaveSettings
+if ($InitType -eq 'Full') {
+    CollectAndSaveSettings
+} else {
+    # Existing Lite runs need no setup questions. A prepared environment may
+    # supply plaintext keys instead of the encrypted fields in a saved run.
+    if (-not $settings.HuduAPIKey -and $HuduAPIKey) {
+        $settings.HuduAPIKey = ConvertTo-SecureString $HuduAPIKey -AsPlainText -Force | ConvertFrom-SecureString
+    }
+    if (-not $settings.ITGKey -and $ITGKey) {
+        $settings.ITGKey = ConvertTo-SecureString $ITGKey -AsPlainText -Force | ConvertFrom-SecureString
+    }
+    UpdateSavedSettings $settings
+}
 $environmentSettings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json -Depth 50
 $settings = Copy-MigrationSettings $environmentSettings
 ############################### API Settings ###############################
@@ -446,6 +473,8 @@ if ($InitType -eq 'Full' -and $true -eq $AutoDownloadITGlueExport) {
         Write-Host "Automatic IT Glue export download/extract failed: $($_.Exception.Message)" -ForegroundColor Red
         throw
     }
+} elseif ($InitType -eq 'Lite') {
+    Write-Host "Lite initialization is reusing the configured IT Glue export path: $ITGlueExportPath"
 } else {
     Write-Host "Automatic IT Glue export download/extract is disabled. Using configured export path: $ITGlueExportPath" -ForegroundColor Yellow
 }

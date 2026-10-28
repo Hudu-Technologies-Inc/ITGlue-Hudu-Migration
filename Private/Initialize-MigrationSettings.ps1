@@ -34,6 +34,15 @@ function Copy-MigrationSettings {
     return Initialize-MigrationSettings -Settings $copy
 }
 
+function Test-MigrationRunLogs {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    foreach ($name in @('Companies', 'Locations', 'Websites', 'Configurations', 'Contacts', 'AssetLayouts', 'AssetLayoutsFields', 'Assets', 'ArticleBase', 'Articles', 'Passwords')) {
+        if (Test-Path -LiteralPath (Join-Path $Path "$name.json") -PathType Leaf) { return $true }
+    }
+    return $false
+}
+
 function New-MigrationRunContext {
     param(
         [ValidateSet('Full', 'Lite')][string]$InitType,
@@ -56,6 +65,16 @@ function New-MigrationRunContext {
         # from our previous initialization are runtime state, not new input.
         $preparedFolder = -not [string]::IsNullOrWhiteSpace($DebugDirectory) -and
             ($null -eq $PreviousRun -or $DebugDirectory -ne $PreviousRun.DebugFolder)
+        if ($preparedFolder) {
+            $candidateLogs = if ($LogsDirectory) { $LogsDirectory } else { Join-Path $DebugDirectory 'logs' }
+            if (Test-MigrationRunLogs $candidateLogs) { $preparedFolder = $false }
+        }
+        if ($preparedFolder -and $SourceSettingsPath) {
+            $candidateFolder = if ($SettingsDirectory) { $SettingsDirectory } else { Join-Path $DebugDirectory 'settings' }
+            $candidateFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath((Join-Path $candidateFolder 'settings.json'))
+            $sourceFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SourceSettingsPath)
+            if ($candidateFile -eq $sourceFile -or (Test-Path -LiteralPath $candidateFile)) { $preparedFolder = $false }
+        }
         if (-not $preparedFolder) {
             $DebugDirectory = Join-Path $ProjectDirectory "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-fffffff')-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
         }

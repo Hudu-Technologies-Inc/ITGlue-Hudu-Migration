@@ -186,9 +186,11 @@ if ($backups -notin @("Y", "y")) {
 }
 
 
-if (Test-Path -Path "$MigrationLogs") {
-    if (-not ([string]::IsNullOrEmpty($guiSettingsDir)) -and (test-path $guiSettingsDir)){
-        Write-Host "Settings loaded from frontend, skipping path checks for logs/errors dir. Migration log dir was set to: $MigrationLogs; Gui settings at $guiSettingsDir" -ForegroundColor Green
+$ResumeFound = $false
+if (Test-Path -LiteralPath $MigrationLogs -PathType Container) {
+    $hasSavedMigrationLogs = Test-MigrationRunLogs $MigrationLogs
+    if (-not $hasSavedMigrationLogs) {
+        Write-Host "New migration log directory: $MigrationLogs" -ForegroundColor Green
     } elseif ($ResumePrevious -eq $true) {
         Write-Host "A previous attempt has been found job will be resumed from the last successful section" -ForegroundColor Green
         $ResumeFound = $true

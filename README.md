@@ -22,13 +22,13 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 
 ## Windows executable (recommended)
 
-**This is how most people run the migration.** The repository includes a pre-built Windows app at **`release/ITGlue-Hudu-Migration.exe`**. It runs the same interactive flow as the main PowerShell script and uses the same default settings location.
+**This is how most people run the migration.** The repository includes the Windows launcher **`ITGlue-Hudu-Migration-GUI.exe`**. It prepares an environment file from the form you fill out, then runs the main PowerShell script from your selected repository folder.
 
 <img width="1248" height="1066" alt="H83uf1uxHZ2OZnqzbyMXl (1)" src="https://github.com/user-attachments/assets/09386a13-79ab-4da2-8f46-cd121da5b5f0" /> <img width="1244" height="1192" alt="u8AsTcss0nzSAjYT5tXzc (1)" src="https://github.com/user-attachments/assets/eeb70697-89cc-4666-99cb-d7f46133600c" />
 
 
-- **How to run:** Clone or download the repository, open the **`release`** folder, and run **`ITGlue-Hudu-Migration.exe`** (double-click or from a terminal). You still need ITGlue and Hudu API keys, a compatible Hudu instance, and either automated export access or an existing ITGlue export--work through **What you'll need** and **Prerequisites** later in this document before you start.
-- **Settings:** Stored by default under `%APPDATA%\HuduMigration`, same as the PowerShell workflow.
+- **How to run:** Clone or download the repository and run **`ITGlue-Hudu-Migration-GUI.exe`** (double-click or from a terminal). Select the repository folder containing the migration scripts. You still need ITGlue and Hudu API keys, a compatible Hudu instance, and either automated export access or an existing ITGlue export--work through **What you'll need** and **Prerequisites** later in this document before you start.
+- **Settings:** Each launch saves settings under its run's timestamped debug folder, in `settings\settings.json`, alongside the run's `logs` and `errors` folders. GUI-prepared folders are preserved.
 - **Use PowerShell instead** if you rely on a customized **`environ.example`**, want full session control over variables, or need to manually invoke post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** -note, these are ran as part of the main script and are always ran, so you likely wont need to consider post-run scripts.
 
 ## What the script does migrate:
@@ -170,15 +170,17 @@ You can [download newest powershell release here](https://github.com/powershell/
 > - By default, the lowest-level folders will be included in your articles migration. Previously, this was not the default behavior. To change this, you can set this variable to false `$IncludeIgnoredFirstArticleDirectory = $false` in your environment file
 > - Your internal docs, by default will go into your Global KB. This is usually how to do things in Hudu. However, if you want to migrate internal documents into your internal company instead, set this variable to true `PlaceInternalDocsInInternalCompany = $true` in your environment file (inside the settings hashtable).
 
-Settings will get saved by default to %APPDATA%\HuduMigration. Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can modify the settings.json file directly as long as you use expected values.
+Settings are saved to `settings\settings.json` inside the current run's debug folder. Saved settings include encrypted API keys, URLs, prefixes, and export paths. A saved configuration, including a legacy `%APPDATA%\HuduMigration\settings.json` file, can supply defaults for a new run; the source file is left unchanged.
 
 
 1. Download/Clone the _entire_ repo into a folder on your computer.
 2. Use Dot Sourcing to run the main file ". .\ITGlue-Hudu-Migration.ps1" from the path of where you extracted the ZIP file of the repo.
 3. You'll be prompted for the initial setup and it will save the settings to a file.
-4. You can also resume a session and import the saved settings if you need to.
+4. Keep the run's debug folder for its saved configuration, migration logs, and any later helper work.
 
-Using Dot Sourcing to load the script keeps your settings in the PowerShell session so you can inspect them and re-run the migration or companion scripts. Initialization reuses loaded settings or imports the default settings file; supplied environment settings are saved automatically. Previous migration logs are resumed by default. To start over intentionally, set `$ResumePrevious = $false` before running the main script.
+GUI, environment-file, and direct main-script launches all use Full initialization: each starts a fresh run and saves its effective settings to that run's folder. GUI and environment-file launches keep the fresh folders they prepared. Direct launches generate those folders automatically and ask for any missing settings. Re-running Full initialization creates another run instead of overwriting imported configuration or previous migration logs.
+
+`Add-HuduAttachmentsViaAPI.ps1` and `Get-MissingRelations.ps1` use Lite initialization when needed. In the same PowerShell session they reuse the active run, settings, and matches. From a new session, select the previous run's `settings\settings.json` file (or set `$settingsPath` to it before dot-sourcing the helper). Lite keeps that run's folders and export path and does not start an export download or ask the Full migration-preference questions.
 
 Numeric fields use source metadata and conservative monetary-label inference without field overrides. Currency labels without an explicit currency use the ITGlue datacenter default: USD for North America, EUR for Europe, and AUD for Australia, each with two decimal places. Explicit supported currency codes take precedence. Other currencies keep plain numeric storage when their precision is unknown. Numeric values accept scientific notation and unambiguous grouping or decimal separators; currency and percentage markers must match the destination field. Currency amounts are rounded to the destination precision, with midpoints rounded away from zero (for example, 12.345 becomes 12.35), and each changed amount produces a warning. Ambiguous formatting (such as a lone comma in 1,234), conflicting currency markers, overflow, and values outside destination bounds are recorded for manual review.
 
@@ -345,8 +347,8 @@ Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can
 *TIP: Dot-source the main script from the repo root, for example `. .\ITGlue-Hudu-Migration.ps1`, so the session keeps answers in context and you can re-run as necessary.*
 
 - Powershell Secure Strings are used in Settings to encrypt sensitive API Keys
-- Set `$ResumePrevious = $false` to start over instead of resuming previous migration logs.
-- MigrationLogs are stored by default in `%APPDATA%\HuduMigration` make sure you keep these safe!
+- Full initialization now creates a fresh run; Lite helper initialization reuses an existing run.
+- Keep each run's debug folder, including `settings`, `logs`, and `errors`.
 - URL Rewrites have been updated to apply to all Rich Text asset fields, articles, Company Quick Notes, and Password notes
 - Image Upload has been improved to use the Hudu API endpoint instead of Base64 and will include the best quality image available
 - `Add-HuduAttachmentsViaAPI.ps1` can be used to upload attachments to Hudu. This no longer uses the direct database connection although if you run the script more than once it'll upload duplicate attachments.
