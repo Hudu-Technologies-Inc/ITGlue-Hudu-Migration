@@ -1,9 +1,9 @@
 # Check if this is a direct run, and load the logs if so the first time.
 param([string]$SettingsFile)
 
-$knownRun = Get-Variable -Name ITGlueHuduMigrationRun -Scope Global -ValueOnly -ErrorAction Ignore
-$loadedRunPath = Get-Variable -Name MigrationLogs -ValueOnly -ErrorAction Ignore
-$loadedRunFlag = Get-Variable -Name FirstTimeLoad -ValueOnly -ErrorAction Ignore
+$knownRun = Get-Variable -Name ITGlueHuduMigrationRun -Scope Local -ValueOnly -ErrorAction Ignore
+$loadedRunPath = Get-Variable -Name MigrationLogs -Scope Local -ValueOnly -ErrorAction Ignore
+$loadedRunFlag = Get-Variable -Name FirstTimeLoad -Scope Local -ValueOnly -ErrorAction Ignore
 if ($loadedRunFlag -ne 1 -or -not $knownRun -or $loadedRunPath -ne $knownRun.LogsFolder -or $SettingsFile) {
     # General Settings Load
     . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Lite' -SettingsFile $SettingsFile
@@ -35,7 +35,7 @@ $HuduUploadLookup = $HuduUploadLookup ?? @{}
 $HuduUploadLookupLoaded = $HuduUploadLookupLoaded ?? $false
 $MaxHuduUploadBytes = 100MB
 
-if (-not (Get-Variable -Name ManualActions -Scope Global -ErrorAction SilentlyContinue) -and -not (Get-Variable -Name ManualActions -Scope Script -ErrorAction SilentlyContinue)) {
+if (-not (Get-Variable -Name ManualActions -Scope Local -ErrorAction Ignore)) {
     if (Test-Path -LiteralPath "$MigrationLogs\ManualActions.json") {
         $ManualActions = [System.Collections.ArrayList](Get-Content "$MigrationLogs\ManualActions.json" -Raw | ConvertFrom-Json -Depth 100)
     } else {

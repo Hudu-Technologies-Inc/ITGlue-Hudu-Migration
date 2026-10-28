@@ -87,5 +87,6 @@ function New-MigrationRunContext {
         SettingsPath = $settingsFile
         SourceSettingsPath = $SourceSettingsPath
         Settings = $null
+        SettingsAlias = $null
     }
 }

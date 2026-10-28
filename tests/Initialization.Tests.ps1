@@ -7,8 +7,6 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 $sandboxRoot = Join-Path ([IO.Path]::GetTempPath()) "ITGlue-Initialization-Test-$([guid]::NewGuid())"
 $checks = 0
 $originalAppData = $env:APPDATA
-$originalRunVariable = Get-Variable -Name ITGlueHuduMigrationRun -Scope Global -ErrorAction Ignore
-$originalRuntimeSettingsVariable = Get-Variable -Name ITGlueHuduRuntimeSettings -Scope Global -ErrorAction Ignore
 function Assert-Initialization {
     param([bool]$Condition, [string]$Message)
     if (-not $Condition) { throw $Message }
@@ -27,11 +25,12 @@ function Invoke-InitializationScenario {
         [switch]$SwitchConfiguration,
         [switch]$StandaloneLite,
         [switch]$RelaunchMain,
+        [switch]$ReturnRunContext,
         [switch]$PassThru
     )
     $caseRoot = Join-Path $sandboxRoot ([guid]::NewGuid().ToString())
     $null = New-Item -ItemType Directory -Path $caseRoot
-    $global:ITGlueHuduMigrationRun = $null
+    $ITGlueHuduMigrationRun = $null
     $script:testSettingsImportPath = $null
     $script:testReadAnswers = @{}
     $script:testSelectAnswers = @{}
@@ -188,7 +187,7 @@ foreach ($path in @($errors_folder,$settings_folder,$logs_folder)) { $null=New-I
         Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -eq 'Simulated module initialization failure.') 'Expected module failure was not propagated.'
         Assert-Initialization ($FirstTimeLoad -eq 0) 'A helper marked failed initialization as complete.'
         if ($Mode -eq 'Full') {
-            Assert-Initialization ($null -eq $global:ITGlueHuduMigrationRun) 'Failed Full init left a previous run available to Lite.'
+            Assert-Initialization ($null -eq $ITGlueHuduMigrationRun) 'Failed Full init left a previous run available to Lite.'
             $callsBefore = $script:moduleInitCount
             $liteFailure = $null
             try { $null = . (Join-Path $sandboxRoot 'Initialize-Module.ps1') -InitType Lite } catch { $liteFailure = $_ }
@@ -230,7 +229,11 @@ foreach ($path in @($errors_folder,$settings_folder,$logs_folder)) { $null=New-I
                 Assert-Initialization ($debugFolder -ne $prepared.Debug -and $settingsPath -ne $prepared.File -and $MigrationLogs -ne $prepared.Logs) 'Full initialization reused launcher-provided output paths.'
             }
         } else {
-            Assert-Initialization ($MatchedAssets[0].ITGID -eq 'old-tenant') 'Lite initialization discarded existing migration matches.'
+            if ($pass -eq 1) {
+                Assert-Initialization ($null -eq $MatchedAssets) 'Lite adopted matches from a previously selected run.'
+            } else {
+                Assert-Initialization ($MatchedAssets[0].ITGID -eq 'old-tenant') 'Lite initialization discarded matches from its own run.'
+            }
         }
         $priorFolder = $debugFolder
         if ($StaleSession) {
@@ -269,6 +272,7 @@ foreach ($path in @($errors_folder,$settings_folder,$logs_folder)) { $null=New-I
         $null = . (Join-Path $sandboxRoot 'Initialize-Module.ps1') -InitType Lite
         Assert-Initialization ($settingsPath -eq $activePath -and $MigrationLogs -eq $activeLogs -and $debugFolder -eq $priorFolder) 'Lite initialization switched away from the completed Full run.'
     }
+    if ($ReturnRunContext) { return $ITGlueHuduMigrationRun }
     if ($PassThru) {
         return @{HuduBaseDomain=$HuduBaseDomain;ITGURL=$ITGURL;Endpoint=$ITGAPIEndpoint;InternalCompany=$InternalCompany;IncludeITGlueID=$settings.IncludeITGlueID;GlobalKBFolder=$GlobalKBFolder;ConfigurationPrefix=$settings.ConPromptPrefix;FlexiblePrefix=$settings.FAPromptPrefix;ExportPath=$ITGlueExportPath;HuduKey=$HuduAPIKey;ITGKey=$ITGKey}
     }
@@ -296,7 +300,7 @@ function Test-RunFolderSelection {
 
 function Test-LiteRejectsStaleSettings {
     param([string]$EntryPoint)
-    $global:ITGlueHuduMigrationRun = $null
+    $ITGlueHuduMigrationRun = $null
     $script:moduleInitCount = 0
     $script:pathEnsureCount = 0
     $script:failModuleLoad = $false
@@ -318,21 +322,27 @@ function Test-LiteRejectsStaleSettings {
     Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like 'Selected settings file does not exist*' -and $script:moduleInitCount -eq 0) 'An invalid explicit settings file fell back to another profile.'
 }
 
-function Test-RunReuseAcrossScopes {
-    $expectedRun = $global:ITGlueHuduMigrationRun
+function Test-RunScopeIsolation {
+    $ITGlueHuduMigrationRun = Invoke-InitializationScenario -ReturnRunContext
+    $expectedRun = $ITGlueHuduMigrationRun
+    $settings = $expectedRun.SettingsAlias
+    $MatchedAssets = @(@{ITGID='parent-only';HuduID=777})
     & {
         param($ExpectedRun)
         . (Join-Path $sandboxRoot 'Public/Init-OptionsAndLogs.ps1')
         $script:moduleInitCount = 0
         $FirstTimeLoad = 1
-        $settingsPath = Join-Path $env:APPDATA 'HuduMigration/settings.json'
-        $defaultSettingsPath = $settingsPath
-        $environmentSettings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
-        $MigrationLogs = $environmentSettings.MigrationLogs
-        $null = . (Join-Path $sandboxRoot 'Get-MissingRelations.ps1')
-        Assert-Initialization ($settingsPath -eq $ExpectedRun.SettingsPath -and $MigrationLogs -eq $ExpectedRun.LogsFolder) 'A different script scope caused Lite to lose the known run.'
-        Assert-Initialization ($script:connectedDomain -eq $ExpectedRun.Settings.HuduBaseDomain -and -not $script:lastModuleRefresh) 'Cross-scope Lite reused the wrong connection or requested a fork refresh.'
+        $MigrationLogs = $ExpectedRun.LogsFolder
+        $failure = $null
+        try { $null = . (Join-Path $sandboxRoot 'Get-MissingRelations.ps1') } catch { $failure = $_ }
+        Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like 'No active migration*' -and $script:moduleInitCount -eq 0) 'Lite implicitly adopted another scope''s run.'
+        $null = . (Join-Path $sandboxRoot 'Get-MissingRelations.ps1') -SettingsFile $ExpectedRun.SettingsPath
+        Assert-Initialization ($settingsPath -eq $ExpectedRun.SettingsPath -and $MigrationLogs -eq $ExpectedRun.LogsFolder) 'Explicit scope handoff did not select the requested run.'
+        Assert-Initialization (-not [object]::ReferenceEquals($ITGlueHuduMigrationRun, $ExpectedRun)) 'A helper reused another scope''s mutable context object.'
+        Assert-Initialization ($null -eq $MatchedAssets -and $script:connectedDomain -eq $ExpectedRun.Settings.HuduBaseDomain) 'Explicit Lite selection inherited another scope''s matches or connection.'
+        Assert-Initialization (-not $script:lastModuleRefresh) 'Lite requested a fork refresh.'
     } $expectedRun
+    Assert-Initialization ([object]::ReferenceEquals($ITGlueHuduMigrationRun, $expectedRun) -and $MatchedAssets[0].ITGID -eq 'parent-only') 'A nested invocation changed the owning scope''s run or matches.'
 }
 
 function Test-RelationHelper {
@@ -373,7 +383,6 @@ function Test-RelationHelper {
 
 try {
     $null = New-Item -ItemType Directory -Path $sandboxRoot
-    $global:ITGlueHuduRuntimeSettings = $null
     $env:APPDATA = Join-Path $sandboxRoot 'legacy-appdata'
     $legacySettingsDirectory = Join-Path $env:APPDATA 'HuduMigration'
     $null = New-Item -ItemType Directory -Path $legacySettingsDirectory -Force
@@ -468,7 +477,7 @@ function Get-ParalellismSettingsInfo { param($MigrationParallelismLimit) return 
         Assert-Initialization ($launchResults[0][$key] -ceq $launchResults[1][$key] -and $launchResults[0][$key] -ceq $launchResults[2][$key]) "Launch methods produced different effective settings: $key"
     }
     Invoke-InitializationScenario -EntryPoint 'gui-environment.ps1' -RelaunchMain
-    Test-RunReuseAcrossScopes
+    Test-RunScopeIsolation
     foreach ($entry in @('Get-MissingRelations.ps1', 'Add-HuduAttachmentsViaAPI.ps1')) {
         Invoke-InitializationScenario -EntryPoint $entry -Source Saved
         Invoke-InitializationScenario -EntryPoint $entry -Source Environment
@@ -477,16 +486,6 @@ function Get-ParalellismSettingsInfo { param($MigrationParallelismLimit) return 
     Write-Output "Passed $checks initialization checks (offline; repeated Full/Lite, environment, saved JSON, and companion entry points)."
 } finally {
     $env:APPDATA = $originalAppData
-    if ($originalRunVariable) {
-        Set-Variable -Name ITGlueHuduMigrationRun -Scope Global -Value $originalRunVariable.Value
-    } else {
-        Remove-Variable -Name ITGlueHuduMigrationRun -Scope Global -ErrorAction Ignore
-    }
-    if ($originalRuntimeSettingsVariable) {
-        Set-Variable -Name ITGlueHuduRuntimeSettings -Scope Global -Value $originalRuntimeSettingsVariable.Value
-    } else {
-        Remove-Variable -Name ITGlueHuduRuntimeSettings -Scope Global -ErrorAction Ignore
-    }
     if ($PWD.Path -eq $sandboxRoot) { Pop-Location }
     # Resolve and verify the exact test-owned temp directory before recursive cleanup.
     $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')

@@ -40,11 +40,11 @@ if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10
 }
 try {Set-StrictMode -Off} catch {}
 . $PSScriptRoot\Private\Initialize-MigrationSettings.ps1
-$previousMigrationRun = $global:ITGlueHuduMigrationRun
-if ($null -eq $global:ITGlueHuduRuntimeSettings) {
-    $global:ITGlueHuduRuntimeSettings = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
-}
-if ($InitType -eq 'Full') { $global:ITGlueHuduMigrationRun = $null }
+# Dot-sourcing keeps these variables in the caller's scope. Never search parent
+# scopes or use a process-wide registry to discover another invocation's run.
+$previousMigrationRun = Get-Variable -Name ITGlueHuduMigrationRun -Scope Local -ValueOnly -ErrorAction Ignore
+$settings = Get-Variable -Name settings -Scope Local -ValueOnly -ErrorAction Ignore
+if ($InitType -eq 'Full') { $ITGlueHuduMigrationRun = $null }
 $FirstTimeLoad = 0
 
 # These are session controls, not required environment-file settings.
@@ -161,21 +161,25 @@ function UpdateSavedSettings {
 # Full takes launcher input or the current session's known run configuration.
 # Lite takes only the known run or an explicit file, never loose/stale variables.
 $settingsReadPath = $null
-$runtimeSettingsMarker = $null
-$hasLauncherSettings = $settings -and -not $global:ITGlueHuduRuntimeSettings.TryGetValue($settings, [ref]$runtimeSettingsMarker)
+$replaceRunState = $InitType -eq 'Full'
+$hasLauncherSettings = $settings -and ($null -eq $previousMigrationRun -or
+    -not [object]::ReferenceEquals($settings, $previousMigrationRun.SettingsAlias))
 if (-not [string]::IsNullOrWhiteSpace($SettingsFile)) {
     if (-not (Test-Path -LiteralPath $SettingsFile -PathType Leaf)) { throw "Selected settings file does not exist: $SettingsFile" }
     $settingsReadPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SettingsFile)
     Write-Host "Using explicitly selected settings: $settingsReadPath" -ForegroundColor Cyan
     $settings = Copy-MigrationSettings (Get-Content -LiteralPath $settingsReadPath -Raw | ConvertFrom-Json -Depth 50)
     # Explicit Lite selection replaces the active run, even in a used session.
-    if ($InitType -eq 'Lite') { $previousMigrationRun = $null }
+    if ($InitType -eq 'Lite') {
+        $replaceRunState = $null -eq $previousMigrationRun -or $settingsReadPath -ne $previousMigrationRun.SettingsPath
+        if ($replaceRunState) { $previousMigrationRun = $null }
+    }
 } elseif ($InitType -eq 'Lite' -and $previousMigrationRun) {
     Write-Host "Reusing the active migration: $($previousMigrationRun.DebugFolder)" -ForegroundColor Cyan
     $settings = Copy-MigrationSettings $previousMigrationRun.Settings
     $settingsReadPath = $previousMigrationRun.SettingsPath
 } elseif ($InitType -eq 'Lite') {
-    throw 'No active migration in this PowerShell process. Run the helper with -SettingsFile pointing to the intended debug folder\settings\settings.json. No saved settings were automatically selected.'
+    throw 'No active migration in this invocation scope. Run the helper with -SettingsFile pointing to the intended debug folder\settings\settings.json. No saved settings were automatically selected.'
 } elseif ($hasLauncherSettings) {
     Write-Host 'Using supplied launcher settings for a new migration.' -ForegroundColor Cyan
     $settings = Copy-MigrationSettings $settings
@@ -203,14 +207,17 @@ foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folde
     $null = Get-EnsuredPath -Path $folder
 }
 $settings.MigrationLogs = $logs_folder
-if ($InitType -eq 'Full') {
+if ($replaceRunState) {
     $ResumeFound = $false
     # Fresh runs must not reuse matches or upload caches from the last tenant.
     foreach ($variable in @(Get-Variable -Name 'Matched*', 'Preflight*' -ErrorAction Ignore)) {
-        Set-Variable -Name $variable.Name -Value $null
+        Set-Variable -Name $variable.Name -Value $null -Scope Local
     }
     $AttachmentUrlMap = @{}; $HuduUploadLookup = @{}; $HuduUploadLookupLoaded = $false
     $ManualActions = [System.Collections.ArrayList]@()
+    if ($InitType -eq 'Lite' -and (Test-Path -LiteralPath (Join-Path $logs_folder 'ManualActions.json') -PathType Leaf)) {
+        $ManualActions = [System.Collections.ArrayList]@(Get-Content -LiteralPath (Join-Path $logs_folder 'ManualActions.json') -Raw | ConvertFrom-Json -Depth 100)
+    }
     $ITGlueExportBootstrapJob = $null; $ITGlueExportBootstrap = $null
 }
 if ($InitType -eq 'Full') {
@@ -228,7 +235,6 @@ if ($InitType -eq 'Full') {
 }
 $environmentSettings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json -Depth 50
 $settings = Copy-MigrationSettings $environmentSettings
-$global:ITGlueHuduRuntimeSettings.Add($settings, [object]$true)
 ############################### API Settings ###############################
 # Hudu
 # Get a Hudu API Key from https://yourhududomain.com/admin/api_keys
@@ -564,6 +570,7 @@ if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -o
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
 write-host $ParalellismSettingsInfo
 $activeMigrationRun.Settings = $environmentSettings
-$global:ITGlueHuduMigrationRun = $activeMigrationRun
+$activeMigrationRun.SettingsAlias = $settings
+$ITGlueHuduMigrationRun = $activeMigrationRun
 $FirstTimeLoad = 1
 
