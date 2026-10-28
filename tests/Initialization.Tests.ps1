@@ -1,6 +1,6 @@
 #requires -Version 7.5.1
-# Exercise real initialization and entry-point headers, with API/module loading
-# and image dependencies replaced by offline stubs in an isolated temp repo.
+# Exercise real initialization, local helpers, and entry-point headers. Only
+# external operations and interactive prompts are stubbed in an isolated repo.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -19,7 +19,8 @@ function Invoke-InitializationScenario {
         [ValidateSet('Environment', 'Saved', 'LoadedObject', 'LoadedDictionary')][string]$Source = 'Environment',
         [switch]$IncludeIDFalse,
         [switch]$ResumeFalse,
-        [switch]$StaleSession
+        [switch]$StaleSession,
+        [switch]$FailModuleLoad
     )
     $caseRoot = Join-Path $sandboxRoot ([guid]::NewGuid().ToString())
     $null = New-Item -ItemType Directory -Path $caseRoot
@@ -73,6 +74,7 @@ function Invoke-InitializationScenario {
     }
     $ConImportIcon = 'users'; $LocImportIcon = 'location-dot'; $ConfigImportIcon = 'desktop'
     $script:moduleInitCount = 0
+    $script:failModuleLoad = [bool]$FailModuleLoad
     $script:connectedDomain = $null; $script:connectedKey = $null
     . (Join-Path $sandboxRoot 'Public/Init-OptionsAndLogs.ps1')
     switch ($Source) {
@@ -85,6 +87,14 @@ function Invoke-InitializationScenario {
         }
         LoadedObject { $environmentSettings = [pscustomobject]$fixture }
         LoadedDictionary { $environmentSettings = $fixture }
+    }
+    if ($FailModuleLoad) {
+        $failure = $null
+        try { $null = . (Join-Path $sandboxRoot 'Initialize-Module.ps1') -InitType $Mode }
+        catch { $failure = $_ }
+        Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -eq 'Simulated module initialization failure.') 'Expected module failure was not propagated.'
+        Assert-Initialization ($FirstTimeLoad -eq 0) 'A helper marked failed initialization as complete.'
+        return
     }
     foreach ($pass in 1..2) {
         if ($EntryPoint -eq 'Initialize-Module.ps1') {
@@ -112,19 +122,49 @@ function Invoke-InitializationScenario {
     Assert-Initialization ($script:moduleInitCount -eq $expectedCalls) "$EntryPoint repeated or skipped module initialization."
 }
 
+function Test-RelationHelper {
+    # A standalone import must also work before settings or log variables exist.
+    . (Join-Path $sandboxRoot 'Public/Add-HuduRelation.ps1')
+    Assert-Initialization ($null -eq (Get-Variable -Name FirstTimeLoad -ValueOnly -ErrorAction Ignore)) 'Importing the relation helper changed initialization state.'
+    $script:relationCalls = 0
+    function New-HuduRelation {
+        param($FromableType, $FromableID, $ToableType, $ToableID)
+        $script:relationCalls++
+        return @{relation=@{Target=$ToableID;Type=$ToableType;From=$FromableID}}
+    }
+    $request = @{relation_type='Company';itg_to_id=1;hudu_from_id=9}
+    Assert-Initialization ($null -eq (Add-HuduRelation $request) -and $script:relationCalls -eq 0) 'Relation lookup failed without a log directory.'
+    $FirstTimeLoad = 0
+    $MigrationLogs = Join-Path $sandboxRoot 'relation-logs'
+    $null = New-Item -ItemType Directory -Path $MigrationLogs
+    foreach ($type in @('Company', 'Article', 'AssetPassword')) {
+        $request.relation_type = $type
+        Assert-Initialization ($null -eq (Add-HuduRelation $request) -and $script:relationCalls -eq 0) 'Missing optional relation logs triggered an API call.'
+    }
+    @(@{ITGID=1;HuduID=101}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $MigrationLogs 'Companies.json')
+    @(@{ITGID=2;HuduID=202}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $MigrationLogs 'Passwords.json')
+    @(@{ITGID=1;HuduID=303}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $MigrationLogs 'AssetPasswords.json')
+    $request.relation_type = 'Company'
+    Assert-Initialization ((Add-HuduRelation $request).Target -eq 101) 'Company relation did not load its existing log.'
+    $MatchedCompanies = @(@{ITGID=1;HuduID=404})
+    Assert-Initialization ((Add-HuduRelation $request).Target -eq 404) 'A saved relation log overwrote an in-memory match.'
+    $request.relation_type = 'AssetPassword'
+    Assert-Initialization ((Add-HuduRelation $request).Target -eq 303) 'Flexible-asset password fallback did not load its existing log.'
+    $request.itg_to_id = 2
+    Assert-Initialization ((Add-HuduRelation $request).Target -eq 202) 'Primary password lookup did not take precedence.'
+    # Partial runs may lack Articles.json, while other relation logs exist.
+    $request.relation_type = 'Article'
+    Assert-Initialization ($null -eq (Add-HuduRelation $request) -and $script:relationCalls -eq 4) 'A partial run with no articles caused a relation request.'
+    Assert-Initialization ($FirstTimeLoad -eq 0) 'Relation lookup changed module initialization state.'
+}
+
 try {
     $null = New-Item -ItemType Directory -Path $sandboxRoot
-    $initializer = Get-Content -LiteralPath (Join-Path $repoRoot 'Initialize-Module.ps1') -Raw
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Initialize-Module.ps1') -Destination $sandboxRoot
-    # Stub every dot-sourced dependency; restore the helpers under test below.
-    foreach ($match in [regex]::Matches($initializer, '\$PSScriptRoot\\([\w\\.-]+\.ps1)')) {
-        $dependency = Join-Path $sandboxRoot $match.Groups[1].Value
-        $null = New-Item -ItemType Directory -Path (Split-Path $dependency -Parent) -Force
-        Set-Content -LiteralPath $dependency -Value ''
+    foreach ($directory in @('Private', 'Public')) {
+        Copy-Item -LiteralPath (Join-Path $repoRoot $directory) -Destination $sandboxRoot -Recurse
     }
-    foreach ($relative in @('Private/Initialize-MigrationSettings.ps1', 'Private/ConvertTo-HuduURL.ps1', 'Public/ConvertTo-HuduNumber.ps1')) {
-        Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination (Join-Path $sandboxRoot $relative) -Force
-    }
+    Set-Content -LiteralPath (Join-Path $sandboxRoot 'Private/Initialize-ImageMagik.ps1') -Value ''
     @'
 function Get-EnsuredPath {
     param([string]$Path)
@@ -133,9 +173,12 @@ function Get-EnsuredPath {
 }
 function Read-Host { param($Prompt) throw "Unexpected input prompt: $Prompt" }
 function Select-ObjectFromList { param($objects, $message, $allowNull) throw "Unexpected selection prompt: $message" }
+function Invoke-WebRequest { throw 'Unexpected web request during offline initialization.' }
+function Invoke-RestMethod { throw 'Unexpected API request during offline initialization.' }
 function Set-ExternalModulesInitialized {
     param($RequiredHuduVersion, $DisallowedVersions, $HuduBaseURL, $HuduAPIKey)
     $script:moduleInitCount++
+    if ($script:failModuleLoad) { throw 'Simulated module initialization failure.' }
     $script:connectedDomain = $HuduBaseURL
     $script:connectedKey = $HuduAPIKey
     return [version]'2.48.0'
@@ -158,6 +201,7 @@ function Get-ParalellismSettingsInfo { param($MigrationParallelismLimit) return 
         Set-Content -LiteralPath (Join-Path $sandboxRoot 'environment.ps1')
 
     Push-Location -LiteralPath $sandboxRoot
+    Test-RelationHelper
     foreach ($mode in @('Full', 'Lite')) {
         foreach ($source in @('Environment', 'Saved', 'LoadedObject', 'LoadedDictionary')) {
             Invoke-InitializationScenario -Mode $mode -Source $source
@@ -166,6 +210,8 @@ function Get-ParalellismSettingsInfo { param($MigrationParallelismLimit) return 
     Invoke-InitializationScenario -Source Saved -IncludeIDFalse -ResumeFalse
     Invoke-InitializationScenario -Source Environment -IncludeIDFalse -ResumeFalse
     Invoke-InitializationScenario -Source Environment -StaleSession
+    Invoke-InitializationScenario -Mode Full -FailModuleLoad
+    Invoke-InitializationScenario -Mode Lite -FailModuleLoad
     Invoke-InitializationScenario -EntryPoint 'ITGlue-Hudu-Migration.ps1' -Source Saved
     Invoke-InitializationScenario -EntryPoint 'environment.ps1'
     foreach ($entry in @('Get-MissingRelations.ps1', 'Add-HuduAttachmentsViaAPI.ps1')) {
