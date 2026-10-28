@@ -178,7 +178,9 @@ Settings will get saved by default to %APPDATA%\HuduMigration. Settings that wil
 3. You'll be prompted for the initial setup and it will save the settings to a file.
 4. You can also resume a session and import the saved settings if you need to.
 
-Using Dot Sourcing to load the script will save your answers into variables and so interrupting and resuming the migration but keeping the PowerShell session active will allow you to bypass most of the initial questions. With Dot Sourcing you'll also get access to the variables at the end of the script run to examine the data or modify the parameters of the run. For example change the "$resumeQuestion" from "yes" to "no" or vice versa to resume an import or start over from scratch.
+Using Dot Sourcing to load the script keeps your settings in the PowerShell session so you can inspect them and re-run the migration or companion scripts. Initialization reuses loaded settings or imports the default settings file; supplied environment settings are saved automatically. Previous migration logs are resumed by default. To start over intentionally, set `$ResumePrevious = $false` before running the main script.
+
+Numeric fields use source metadata and conservative monetary-label inference without field overrides. Currency labels without an explicit currency use the ITGlue datacenter default: USD for North America, EUR for Europe, and AUD for Australia, each with two decimal places. Explicit supported currency codes take precedence. Other currencies keep plain numeric storage when their precision is unknown. Numeric values accept scientific notation and unambiguous grouping or decimal separators; currency and percentage markers must match the destination field. Currency amounts are rounded to the destination precision, with midpoints rounded away from zero (for example, 12.345 becomes 12.35), and each changed amount produces a warning. Ambiguous formatting (such as a lone comma in 1,234), conflicting currency markers, overflow, and values outside destination bounds are recorded for manual review.
 
 
 It's best to run the script via dot-sourcing a copy of **environ.example** that has been filled out (if you use the environ file, rename it to something like migration.ps1 -- make sure it has the .ps1 extension so you can run it!) or via dot-sourcing the main script. It's best to store the script somewhere easy to run such as C:\temp
@@ -343,14 +345,14 @@ Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can
 *TIP: Dot-source the main script from the repo root, for example `. .\ITGlue-Hudu-Migration.ps1`, so the session keeps answers in context and you can re-run as necessary.*
 
 - Powershell Secure Strings are used in Settings to encrypt sensitive API Keys
-- modify the `$resumeQuestion` variable from `yes` to `no` to change if you would like to continue or start over.
+- Set `$ResumePrevious = $false` to start over instead of resuming previous migration logs.
 - MigrationLogs are stored by default in `%APPDATA%\HuduMigration` make sure you keep these safe!
 - URL Rewrites have been updated to apply to all Rich Text asset fields, articles, Company Quick Notes, and Password notes
 - Image Upload has been improved to use the Hudu API endpoint instead of Base64 and will include the best quality image available
 - `Add-HuduAttachmentsViaAPI.ps1` can be used to upload attachments to Hudu. This no longer uses the direct database connection although if you run the script more than once it'll upload duplicate attachments.
 - Previously unsupported tagged relations have been supplemented by doing regular related items instead of tags (Articles, AssetPasswords)
 - Archived Assets will be archived even after migration
-- The initialization will prompt for multiple ITGlue domain names and will ATTEMPT (lightly tested) to rewrite ALL of them to the correct Hudu ones.
+- URL rewriting uses your ITGlue tenant URL and standard ITGlue links; retired custom-domain settings are ignored.
 
 ### Addendum - Flags / FlagTypes (labels are preferred)
 If you choose to migrate flags during setup, that path expects **Hudu `2.40.0` or later** (the script will prompt accordingly).

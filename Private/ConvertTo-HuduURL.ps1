@@ -2,10 +2,6 @@
 
 $ITGlueURLCandidates = @($ITGURL)
 
-if ($environmentSettings.ITGCustomDomains) {
-    $ITGlueURLCandidates += ($environmentSettings.ITGCustomDomains -split ",")
-}
-
 $ITGlueURLCandidates = @(
     $ITGlueURLCandidates |
         Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |

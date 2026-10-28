@@ -38,6 +38,11 @@ if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10
     write-host "CPU arch $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) is good. Using windows $($iswindows). OS version is good $([Environment]::OSVersion.Version). PS edition is $($PSVersionTable.PSEdition) (greater than required minimum of $MinimumPSVersion." -foregroundColor Green
 }
 try {Set-StrictMode -Off} catch {}
+. $PSScriptRoot\Private\Initialize-MigrationSettings.ps1
+
+# These are session controls, not required environment-file settings.
+$resumeQuestion = $resumeQuestion ?? 'yes'
+$reenterChoice = $reenterChoice ?? 'Continue'
 
 $project_workdir=$project_workdir ?? "$PSScriptRoot"
 $debugFolder = if ([string]::IsNullOrWhiteSpace($debugFolder)) {Join-Path $project_workdir "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-ffff')"} else {$debugFolder}
@@ -50,7 +55,7 @@ foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folde
 ############################### Settings ###############################
 # Define the path to the settings.json file in the detected platform's folder:
 $settingsTop = $env:APPDATA
-$settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json")
+$settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json" -ErrorAction SilentlyContinue)
 $defaultSettingsPath = $defaultSettingsPath ?? "$settingsTop\HuduMigration\settings.json"
 
 # Function to read back securely stored keys used in the settings.json file
@@ -69,7 +74,7 @@ function ConvertSecureStringToPlainText {
 # Prompt the user for various settings and save the responses
 function CollectAndSaveSettings {
     # Create a hash table to store the settings
-    $settings = $settings ?? @{}
+    $settings = Initialize-MigrationSettings -Settings $settings
 
     # 1. User Entry- Urls
     Write-Host "Settings- URLs:" -ForegroundColor Yellow
@@ -79,12 +84,7 @@ function CollectAndSaveSettings {
         $((Read-Host -Prompt 'Set the domain of your ITGlue instance (e.g https://your-company.itglue.com)') -replace '[\\/]+$', '') -replace '^(?!https://)', 'https://'
     $settings.ITGAPIEndpoint = $settings.ITGAPIEndpoint ?? 
         $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
-    $customBrandedDomain = $customBrandedDomain ?? 
-        [bool]$($(Select-ObjectFromList -message "Do you have additional hostnames you'd like to include in the URL Replacement? For example custom branded ITGlue Domain Name." -objects @($false, $true) -allowNull $false) ?? $false)
     $instance = $settings.ITGURL.replace('https://','')
-    if ($customBrandedDomain -eq $true -or $customBrandedDomain.ToString().ToLower() -eq 'y') {
-    	$settings.ITGCustomDomains = Read-Host -Prompt "Please enter comma separated list of URLs to check for, following the same format of the main domain URL. If only one, don't include the comma."
-    }
 
     # 2. User-Entry- Secrets
     Write-Host "Settings- Secrets:" -ForegroundColor Yellow
@@ -122,7 +122,6 @@ function CollectAndSaveSettings {
         $(Read-Host "Would you like a Prefix in front of ️Configuration names️ created in Hudu? This can make it easy to review and you can rename them later. Enter the prefix here, otherwise leave it blank. (e.g. ITGlue-)")
     $settings.FAPromptPrefix = $settings.FAPromptPrefix ??
         $(Read-Host "Would you like a Prefix in front of Asset Layout names created in Hudu? This can make it easy to review and you can rename them later. Enter the prefix here, otherwise leave it blank. (e.g. ITGlue-)")
-    $settings.IncludeITGlueID =  $settings.IncludeITGlueID ?? [bool]$($(Select-ObjectFromList -message "would you like to include ITGlue ID in your contacts, locations, and configurations layouts?" -objects @($true,$false) -allowNull $false) ?? $true)
 
     
     # 4. User-Entry Paths and Folders
@@ -140,8 +139,6 @@ function CollectAndSaveSettings {
 
 
     # Verify settings, save or exit and retry
-    $reenterChoice = $reenterChoice ?? 
-        $(Select-ObjectFromList -message "Do these settings look alright? $(($settings | ConvertTo-Json -depth 4).ToString())\n-If you choose to re-enter, changes made will not be saved" -objects @("Continue", "Re-Enter"))
     if ($reenterChoice -eq "Continue") {
         Write-Host "Saving Settings to $defaultSettingsPath"
         # Convert the hash table to JSON
@@ -189,7 +186,6 @@ function UpdateSavedSettings {
 
 
 # Prompt the user for a settings file
-# Prompt the user for a settings file
 function PromptForSettingsPath {
     param(
         [switch]$Default
@@ -216,21 +212,24 @@ function PromptForSettingsPath {
     }
 }
 
-# Ask the user what they want to do
-if ($environmentSettings -and $InitType -eq 'Lite') {
-    Write-Host "Lite init and settings detected."
+# Reuse the session for either entry point, unless a full init explicitly requests
+# new/imported settings. A supplied environment hashtable takes precedence in Full.
+if ($environmentSettings -and ($InitType -eq 'Lite' -or (-not $settings -and -not $choice))) {
+    Write-Host "Reusing loaded migration settings."
  }
 else {
-    $choice = $choice ?? $(Select-ObjectFromList -message "Do you want to import settings or start from new?" -objects @("I", "N"))
+    # An environment file must win over choices left behind by an earlier run.
+    $choice = if ($settings) { 'N' } else { $choice ?? $(if (Test-Path -LiteralPath $defaultSettingsPath) { 'I' } else { 'N' }) }
 
     switch ($choice) {
         'I' { 
             if (Test-Path -Path $defaultSettingsPath) {
                 Write-Host "Default settings file found at $defaultSettingsPath" -ForegroundColor Cyan
-                $importChoice = $importChoice ?? $(Select-ObjectFromList -message "Do you want to use the default settings file or specify a different path?" -objects @("D", "S"))
+                $importChoice = $importChoice ?? 'D'
                 
                 switch ($importChoice) {
                     'D' {
+                        $settingsPath = $defaultSettingsPath
                         Write-Host "Importing settings from $defaultSettingsPath" -ForegroundColor Yellow
                         $environmentSettings = Get-Content -Path $defaultSettingsPath | ConvertFrom-Json -Depth 50
                     }
@@ -250,6 +249,7 @@ else {
             }
         }
         'N' {
+            $settingsPath = $defaultSettingsPath
             Write-Host "Starting with a new settings file" -ForegroundColor Cyan
             CollectAndSaveSettings
             $environmentSettings = Get-Content -Path $defaultSettingsPath | ConvertFrom-Json -Depth 50
@@ -258,6 +258,15 @@ else {
             throw 'Invalid choice. Please choose (I)mport or (N)ew '
         }
     }
+}
+$environmentSettings = Initialize-MigrationSettings -Settings $environmentSettings
+# All consumers (including the main script's layout builders) use the same values
+# whether settings came from an environment hashtable, saved JSON, or Lite init.
+$settings = @{}
+if ($environmentSettings -is [System.Collections.IDictionary]) {
+    foreach ($key in $environmentSettings.Keys) { $settings[$key] = $environmentSettings[$key] }
+} else {
+    foreach ($property in $environmentSettings.PSObject.Properties) { $settings[$property.Name] = $property.Value }
 }
 ############################### API Settings ###############################
 # Hudu
@@ -277,14 +286,15 @@ $HuduBaseDomain = $environmentSettings.HuduBaseDomain
 
 # IT Glue - MAKE SURE TO USE AN API KEY WITH PASSWORD ACCESS
 $ITGAPIEndpoint = @(
-    $ITGAPIEndpoint
     $environmentSettings.ITGAPIEndpoint
     $settings.ITGAPIEndpoint
+    $ITGAPIEndpoint
 ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
 if ([string]::isNullOrWhiteSpace($ITGAPIEndpoint)){
     $ITGAPIEndpoint = $(Select-ObjectFromList -objects @("https://api.itglue.com", "https://api.eu.itglue.com", "https://api.au.itglue.com") -message "Select ITGlue API Endpoint for your instance/region")
 }
 $ITGAPIEndpoint = $ITGAPIEndpoint.Trim() -replace '[\\/]+$', ''
+$settings.ITGAPIEndpoint = $ITGAPIEndpoint
 if ($environmentSettings) {
     $savedITGAPIEndpoint = if ($environmentSettings -is [hashtable]) {
         $environmentSettings['ITGAPIEndpoint']
@@ -327,7 +337,6 @@ if (-not (Get-Command -Name Ensure-ITGlueExportAvailable -ErrorAction SilentlyCo
 
 
 # Choose if you want to resume previous attempts from the last successful section
-$resumeQuestion = $resumeQuestion ?? $(Select-ObjectFromList -message "Would you like to resume a previous migration?" -objects @($true, $false) -allowNull $false)
 $ResumePrevious = $ResumePrevious ?? $(if ($resumeQuestion -eq 'yes' -or $resumeQuestion -eq $true) {$true} else {$false})
 $GlobalKBFolder = if ($PlaceInternalDocsInInternalCompany) { $null } else { $environmentSettings.GlobalKBFolder }
 
@@ -540,19 +549,6 @@ function Confirm-ITGlueExportPasswordCsv {
 }
 
 
-$ITGlueCurrencyInference ??= @{}
-if ($ITGlueCurrencyInference.Enabled -isnot [bool]) { $ITGlueCurrencyInference.Enabled = $true }
-if ($ITGlueCurrencyInference.DefaultCurrencyCode -notmatch '^[A-Z]{3}$') {
-    $ITGlueCurrencyInference.DefaultCurrencyCode = switch ($ITGAPIEndpoint) {
-        'https://api.eu.itglue.com' { 'EUR' }
-        'https://api.au.itglue.com' { 'AUD' }
-        default { 'USD' }
-    }
-}
-write-host "$(if ($true -eq $ITGlueCurrencyInference.Enabled){"Inferring Currency fields using default currency code $($ITGlueCurrencyInference.DefaultCurrencyCode)"}else{'Skipping Currency Field Inferrence'})"
-
-# $ITGlueCurrencyInference = @{ Enabled = $true; DefaultCurrencyCode = 'USD'; } # Disable label inference.
-
 ############################### Functions ###############################
 . $PSScriptRoot\Private\Initialize-ImageMagik.ps1 # Used to determine image type (fallback) and convert if necessary
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
@@ -597,10 +593,11 @@ write-host "$(if ($true -eq $ITGlueCurrencyInference.Enabled){"Inferring Currenc
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 $requiredHuduVersion = ([version]"2.48.0")
-$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $($hudubaseurl ?? $settings.HuduBaseDomain ?? $null) -HuduAPIKey $($huduapikey ?? $settings.HuduApiKey ?? $null)
+$CurrentVersion =  Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $HuduBaseDomain -HuduAPIKey $HuduAPIKey
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -Path "$errorsfolder" -skipRetry $false} catch {}}
 
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 16){$defaultMigrationParallelismLimit = [math]::Min(24, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(24, [math]::Max(2, $MigrationParallelismLimit));}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
 write-host $ParalellismSettingsInfo
+$FirstTimeLoad = 1
 

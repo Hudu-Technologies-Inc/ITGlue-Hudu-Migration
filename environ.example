@@ -30,8 +30,7 @@ $settings = @{
     # If $true, internal-company documents stay under that company instead of Hudu Global KB
     PlaceInternalDocsInInternalCompany = $false
 
-    # Central folder KB articles when using Global KB for internal-company documents
-    GlobalKBFolder          = "n"
+    GlobalKBFolder          = "n" # Central folder KB articles.
 
     # Configs asset layout in Hudu Naming Prefix
     ConPromptPrefix         = ""
@@ -39,14 +38,7 @@ $settings = @{
     # Flexible asset layout in Hudu Naming Prefix
     FAPromptPrefix          = ""
 
-    # Legacy URL options [cname DNS]
-    customBrandedDomain     = "n"; ITGCustomDomains        = "" # Note- Keep this URL Format. No trailing slashes, please;
-
-
     MigrationLogs           = "$logs_folder"
-
-    # include ITGlue ID in Contacts, Websites, Locations
-    IncludeITGlueID         = $true
 
     # Split configurations into individual asset layouts?
     SplitConfigurations     = $false
@@ -57,17 +49,6 @@ $ITGKey                     = "ITG.key"
 $HuduApiKey                 = "HUDU.key"
 
 # $ITGlueJWT = "" # "eyJ..." #only needed for checklists
-
-
-# settings folder path
-$importChoice               = "$settings_folder"
-
-# Custom regex capture groups / url replacement
-$customBrandedDomain        = "n"
-
-# Resume if starting again
-$resumeQuestion = "yes"; $reenterChoice = "Continue"; $choice = "N";
-
 
 
 # Individual Import Options
@@ -105,21 +86,6 @@ $ConImportAssetLayoutName   = "People" # name for contacts/people layout
 $LayoutIconBackGroundColor      = "#6136ff" # hudu-purple background for layout icons
 $LayoutIconForegroundColor      = "#ffffff" # White Foreground for layout icons
 
-# Optional numeric subtype overrides keyed by ITGlue flexible asset FIELD ID (strings).
-# Percent maps automatically on Hudu 2.48+. Field overrides take priority over labels.
-# $ITGlueNumberFieldOverrides = @{
-#     '12345' = @{ NumberType = 'currency'; CurrencyCode = 'USD' }
-#     # Other currencies require an explicit, verified DecimalPlaces policy too.
-# }
-# Label inference recognizes cost/spend/debt/price/budget/etc. and currency symbols/codes.
-# Bare keywords and ambiguous symbols like $ need a default currency code:
-# $ITGlueCurrencyInference = @{
-#     Enabled = $true
-#     DefaultCurrencyCode = 'USD' # Set for your source data; never guessed from $.
-#     # DecimalPlacesByCurrency = @{ EUR = 2 } # Only after verifying target behavior.
-# }
-# $ITGlueCurrencyInference = @{ Enabled = $true; DefaultCurrencyCode = 'USD'; } # Disable label inference.
-
 # pre-designated array/list of prescoped/preselected companies for scoped migration (for faster testing, ignore this if you want scoped migration, you'll select your own set)
 # prescoped Companies
 # $Prescoped = @(
@@ -127,4 +93,4 @@ $LayoutIconForegroundColor      = "#ffffff" # White Foreground for layout icons
 # 859
 #)
 
-. .\ITGlue-Hudu-Migration.ps1
+. "$PSScriptRoot\ITGlue-Hudu-Migration.ps1"
