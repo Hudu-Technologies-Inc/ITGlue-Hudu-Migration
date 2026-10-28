@@ -1,3 +1,5 @@
+param([string]$SettingsFile)
+
 if ($MyInvocation.InvocationName -eq '.') {
     Write-Host "Script was dot-sourced" -ForegroundColor Green
 } else {
@@ -6,7 +8,7 @@ if ($MyInvocation.InvocationName -eq '.') {
 }
 
 # Main settings load
-. $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
+. $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full' -SettingsFile $SettingsFile
 
 # Use this to set the context of the script runs
 

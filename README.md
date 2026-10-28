@@ -28,7 +28,7 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 
 
 - **How to run:** Clone or download the repository and run **`ITGlue-Hudu-Migration-GUI.exe`** (double-click or from a terminal). Select the repository folder containing the migration scripts. You still need ITGlue and Hudu API keys, a compatible Hudu instance, and either automated export access or an existing ITGlue export--work through **What you'll need** and **Prerequisites** later in this document before you start.
-- **Settings:** Each launch saves settings under its run's timestamped debug folder, in `settings\settings.json`, alongside the run's `logs` and `errors` folders. GUI-prepared folders are preserved.
+- **Settings:** Every Full initialization creates a new timestamped debug folder and saves `settings\settings.json`, `logs`, and `errors` there. Existing folder variables cannot select an old run.
 - **Use PowerShell instead** if you rely on a customized **`environ.example`**, want full session control over variables, or need to manually invoke post-run scripts such as **`Get-MissingRelations.ps1`**, **`Move-AssetsToNewLayout.ps1`**, **`Add-HuduAttachmentsViaAPI.ps1`**, or **`Replace-HuduBase64Images.ps1`** -note, these are ran as part of the main script and are always ran, so you likely wont need to consider post-run scripts.
 
 ## What the script does migrate:
@@ -170,7 +170,7 @@ You can [download newest powershell release here](https://github.com/powershell/
 > - By default, the lowest-level folders will be included in your articles migration. Previously, this was not the default behavior. To change this, you can set this variable to false `$IncludeIgnoredFirstArticleDirectory = $false` in your environment file
 > - Your internal docs, by default will go into your Global KB. This is usually how to do things in Hudu. However, if you want to migrate internal documents into your internal company instead, set this variable to true `PlaceInternalDocsInInternalCompany = $true` in your environment file (inside the settings hashtable).
 
-Settings are saved to `settings\settings.json` inside the current run's debug folder. Saved settings include encrypted API keys, URLs, prefixes, and export paths. A saved configuration, including a legacy `%APPDATA%\HuduMigration\settings.json` file, can supply defaults for a new run; the source file is left unchanged.
+Settings are saved to `settings\settings.json` inside the current run's debug folder. Saved settings include encrypted API keys, URLs, prefixes, and export paths. No settings file is automatically discovered in `%APPDATA%` or through old folder/path variables. To deliberately use a saved configuration as input for a new Full run, pass `-SettingsFile 'C:\path\settings.json'` to the main script; that input file is left unchanged.
 
 
 1. Download/Clone the _entire_ repo into a folder on your computer.
@@ -178,9 +178,9 @@ Settings are saved to `settings\settings.json` inside the current run's debug fo
 3. You'll be prompted for the initial setup and it will save the settings to a file.
 4. Keep the run's debug folder for its saved configuration, migration logs, and any later helper work.
 
-GUI, environment-file, and direct main-script launches all use Full initialization: each starts a fresh run and saves its effective settings to that run's folder. GUI and environment-file launches keep the fresh folders they prepared. Direct launches generate those folders automatically and ask for any missing settings. Re-running Full initialization creates another run instead of overwriting imported configuration or previous migration logs.
+GUI, environment-file, and direct main-script launches all use Full initialization. Full always generates a new debug folder, even when the launcher or a previous session already set folder variables. It uses the supplied launcher settings or the known current run's configuration and asks for any missing values. Re-running Full creates another run without reading an unrelated saved profile or overwriting previous migration logs.
 
-`Add-HuduAttachmentsViaAPI.ps1` and `Get-MissingRelations.ps1` use Lite initialization when needed. In the same PowerShell session they reuse the active run, settings, and matches. From a new session, select the previous run's `settings\settings.json` file (or set `$settingsPath` to it before dot-sourcing the helper). Lite keeps that run's folders and export path and does not start an export download or ask the Full migration-preference questions.
+`Add-HuduAttachmentsViaAPI.ps1` and `Get-MissingRelations.ps1` use Lite initialization when needed. In the same PowerShell process they reuse the known active run, settings, and matches. A separate terminal cannot inherit a GUI-launched process's run. Select it explicitly, for example `. .\Get-MissingRelations.ps1 -SettingsFile 'C:\path\debug-run\settings\settings.json'`. Without an active run or explicit file, Lite stops before creating folders or initializing API modules. Lite does not download exports, refresh the HuduAPI checkout, or ask the Full migration-preference questions.
 
 Numeric fields use source metadata and conservative monetary-label inference without field overrides. Currency labels without an explicit currency use the ITGlue datacenter default: USD for North America, EUR for Europe, and AUD for Australia, each with two decimal places. Explicit supported currency codes take precedence. Other currencies keep plain numeric storage when their precision is unknown. Numeric values accept scientific notation and unambiguous grouping or decimal separators; currency and percentage markers must match the destination field. Currency amounts are rounded to the destination precision, with midpoints rounded away from zero (for example, 12.345 becomes 12.35), and each changed amount produces a warning. Ambiguous formatting (such as a lone comma in 1,234), conflicting currency markers, overflow, and values outside destination bounds are recorded for manual review.
 
@@ -338,7 +338,7 @@ Small bug fixes
 Older documentation referred to a **2.0.0-beta** line; the current **2.x** interactive migration on `main` is the supported path. The notes below still apply to companion utilities.
 
 ## Version 2.x - Well tested but still beta version (historical)
-This version of the script brings an interactive migration process, settings will get saved by default to `%APPDATA%\HuduMigration` although they can be moved and then re-imported from a different path after creation.
+Older versions saved settings under `%APPDATA%\HuduMigration`. Current Full initialization always creates a fresh debug folder; those older profiles are read only when explicitly selected with `-SettingsFile`.
 
 Settings that will be saved include API Keys, URLs, Prefixes, and so on. You can modify the settings.json file directly as long as you use values that are expected. 
 

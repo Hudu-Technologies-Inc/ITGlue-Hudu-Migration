@@ -1,6 +1,11 @@
-if (-not ($FirstTimeLoad -eq 1)) {
+param([string]$SettingsFile)
+
+$knownRun = Get-Variable -Name ITGlueHuduMigrationRun -Scope Global -ValueOnly -ErrorAction Ignore
+$loadedRunPath = Get-Variable -Name MigrationLogs -ValueOnly -ErrorAction Ignore
+$loadedRunFlag = Get-Variable -Name FirstTimeLoad -ValueOnly -ErrorAction Ignore
+if ($loadedRunFlag -ne 1 -or -not $knownRun -or $loadedRunPath -ne $knownRun.LogsFolder -or $SettingsFile) {
     # General Settings Load
-    . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Lite'
+    . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Lite' -SettingsFile $SettingsFile
 
 }
 if (-not $MatchedAssets -and (Test-Path -LiteralPath "$MigrationLogs\Assets.json")) {$MatchedAssets = (Get-Content -path "$MigrationLogs\Assets.json" | ConvertFrom-json -depth 100) }

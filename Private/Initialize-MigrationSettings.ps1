@@ -47,10 +47,6 @@ function New-MigrationRunContext {
     param(
         [ValidateSet('Full', 'Lite')][string]$InitType,
         [string]$ProjectDirectory,
-        [string]$DebugDirectory,
-        [string]$ErrorsDirectory,
-        [string]$SettingsDirectory,
-        [string]$LogsDirectory,
         [string]$SourceSettingsPath,
         [AllowNull()]$Configuration,
         [AllowNull()]$PreviousRun
@@ -61,48 +57,25 @@ function New-MigrationRunContext {
     }
 
     if ($InitType -eq 'Full') {
-        # The launcher may already have prepared a fresh folder. Paths retained
-        # from our previous initialization are runtime state, not new input.
-        $preparedFolder = -not [string]::IsNullOrWhiteSpace($DebugDirectory) -and
-            ($null -eq $PreviousRun -or $DebugDirectory -ne $PreviousRun.DebugFolder)
-        if ($preparedFolder) {
-            $candidateLogs = if ($LogsDirectory) { $LogsDirectory } else { Join-Path $DebugDirectory 'logs' }
-            if (Test-MigrationRunLogs $candidateLogs) { $preparedFolder = $false }
-        }
-        if ($preparedFolder -and $SourceSettingsPath) {
-            $candidateFolder = if ($SettingsDirectory) { $SettingsDirectory } else { Join-Path $DebugDirectory 'settings' }
-            $candidateFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath((Join-Path $candidateFolder 'settings.json'))
-            $sourceFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SourceSettingsPath)
-            if ($candidateFile -eq $sourceFile -or (Test-Path -LiteralPath $candidateFile)) { $preparedFolder = $false }
-        }
-        if (-not $preparedFolder) {
-            $DebugDirectory = Join-Path $ProjectDirectory "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-fffffff')-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
-        }
+        # Full always owns a new directory. Neither launcher paths nor retained
+        # session variables can select an old run's output folders.
+        $DebugDirectory = Join-Path $ProjectDirectory "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-fffffff')-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
         $paths = @{
-            ErrorsFolder = @{Value=$ErrorsDirectory; Child='errors'}
-            SettingsFolder = @{Value=$SettingsDirectory; Child='settings'}
-            LogsFolder = @{Value=$LogsDirectory; Child='logs'}
-        }
-        foreach ($name in @($paths.Keys)) {
-            $value = $paths[$name].Value
-            if (-not $preparedFolder -or [string]::IsNullOrWhiteSpace($value) -or
-                ($null -ne $PreviousRun -and $value -eq $PreviousRun.$name)) {
-                $value = Join-Path $DebugDirectory $paths[$name].Child
-            }
-            $paths[$name] = $value
+            ErrorsFolder = Join-Path $DebugDirectory 'errors'
+            SettingsFolder = Join-Path $DebugDirectory 'settings'
+            LogsFolder = Join-Path $DebugDirectory 'logs'
         }
     } else {
-        # A standalone Lite launch attaches to the selected saved run.
-        if ($Configuration.MigrationLogs) { $LogsDirectory = $Configuration.MigrationLogs }
-        if ($SourceSettingsPath) { $SettingsDirectory = Split-Path $SourceSettingsPath -Parent }
-        if ([string]::IsNullOrWhiteSpace($DebugDirectory)) {
-            $DebugDirectory = if ($LogsDirectory) { Split-Path $LogsDirectory -Parent } else { Split-Path $SettingsDirectory -Parent }
+        if (-not $SourceSettingsPath -or -not $Configuration.MigrationLogs) {
+            throw 'Lite initialization requires an active run or an explicitly selected settings file containing MigrationLogs.'
         }
-        if ([string]::IsNullOrWhiteSpace($DebugDirectory)) { throw 'Lite initialization needs an existing run or saved settings file.' }
+        $LogsDirectory = $Configuration.MigrationLogs
+        $DebugDirectory = Split-Path $LogsDirectory -Parent
+        if (-not $DebugDirectory) { throw 'The selected settings file has an invalid MigrationLogs path.' }
         $paths = @{
-            ErrorsFolder = $(if ($ErrorsDirectory) { $ErrorsDirectory } else { Join-Path $DebugDirectory 'errors' })
-            SettingsFolder = $(if ($SettingsDirectory) { $SettingsDirectory } else { Join-Path $DebugDirectory 'settings' })
-            LogsFolder = $(if ($LogsDirectory) { $LogsDirectory } else { Join-Path $DebugDirectory 'logs' })
+            ErrorsFolder = Join-Path $DebugDirectory 'errors'
+            SettingsFolder = Split-Path $SourceSettingsPath -Parent
+            LogsFolder = $LogsDirectory
         }
     }
     $settingsFile = if ($InitType -eq 'Lite' -and $SourceSettingsPath) { $SourceSettingsPath } else { Join-Path $paths.SettingsFolder 'settings.json' }
@@ -114,6 +87,5 @@ function New-MigrationRunContext {
         SettingsPath = $settingsFile
         SourceSettingsPath = $SourceSettingsPath
         Settings = $null
-        SettingsAlias = $null
     }
 }

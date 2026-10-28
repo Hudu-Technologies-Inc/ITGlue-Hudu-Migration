@@ -1,10 +1,12 @@
 # Check if this is a direct run, and load the logs if so the first time.
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-$ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
+param([string]$SettingsFile)
 
-if (-not ($FirstTimeLoad -eq 1)) {
+$knownRun = Get-Variable -Name ITGlueHuduMigrationRun -Scope Global -ValueOnly -ErrorAction Ignore
+$loadedRunPath = Get-Variable -Name MigrationLogs -ValueOnly -ErrorAction Ignore
+$loadedRunFlag = Get-Variable -Name FirstTimeLoad -ValueOnly -ErrorAction Ignore
+if ($loadedRunFlag -ne 1 -or -not $knownRun -or $loadedRunPath -ne $knownRun.LogsFolder -or $SettingsFile) {
     # General Settings Load
-    . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Lite'
+    . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Lite' -SettingsFile $SettingsFile
     
     # Add Replace URL functions
     . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
@@ -20,6 +22,7 @@ if (-not ($FirstTimeLoad -eq 1)) {
     # Set the context so logs don't run again unless the powershell window gets closed.
     $FirstTimeLoad = 1
 }
+$ErroredItemsFolder = Get-EnsuredPath -Path $errorsfolder
 
 # Load Invoke-ImageTest()
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
