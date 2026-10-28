@@ -39,23 +39,20 @@ if (-not ($IsWindows -and [Environment]::OSVersion.Version -ge [version]'10.0.10
 }
 try {Set-StrictMode -Off} catch {}
 . $PSScriptRoot\Private\Initialize-MigrationSettings.ps1
+$previousMigrationRun = $script:MigrationRunContext
+$FirstTimeLoad = 0
 
 # These are session controls, not required environment-file settings.
 $resumeQuestion = $resumeQuestion ?? 'yes'
 $reenterChoice = $reenterChoice ?? 'Continue'
 
 $project_workdir=$project_workdir ?? "$PSScriptRoot"
-$debugFolder = if ([string]::IsNullOrWhiteSpace($debugFolder)) {Join-Path $project_workdir "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-ffff')"} else {$debugFolder}
-$errorsfolder = if ([string]::IsNullOrWhiteSpace($errorsfolder)) {Join-Path $debugFolder 'errors'} else {$errorsfolder}; $settings_folder = $settings_folder ?? $(join-path "$debugFolder" "settings");
-$logs_folder = $logs_folder ?? $(join-path "$debugFolder" "logs"); $script:ITG_ERRORS_DIRECTORY = $script:ITG_ERRORS_DIRECTORY ?? $errorsFolder;
 if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folder)) {$null = Get-EnsuredPath -Path $folder}
 . $PSScriptRoot\public\Find-FontAwesomeIcon.ps1
 
 ############################### Settings ###############################
 # Define the path to the settings.json file in the detected platform's folder:
 $settingsTop = $env:APPDATA
-$settingsFiles = $settingsFiles ?? $(Get-Item "$settingsTop\HuduMigration\*\settings.json" -ErrorAction SilentlyContinue)
 $defaultSettingsPath = $defaultSettingsPath ?? "$settingsTop\HuduMigration\settings.json"
 
 # Function to read back securely stored keys used in the settings.json file
@@ -88,8 +85,8 @@ function CollectAndSaveSettings {
 
     # 2. User-Entry- Secrets
     Write-Host "Settings- Secrets:" -ForegroundColor Yellow
-    $HuduAPIKey = $HuduAPIKey ?? ""
-    $ITGKey = $ITGKey ?? ""
+    $HuduAPIKey = if ($settings.HuduAPIKey) { ConvertSecureStringToPlainText ($settings.HuduAPIKey | ConvertTo-SecureString) } else { $HuduAPIKey ?? '' }
+    $ITGKey = if ($settings.ITGKey) { ConvertSecureStringToPlainText ($settings.ITGKey | ConvertTo-SecureString) } else { $ITGKey ?? '' }
     while ($HuduAPIKey.Length -ne 24) {
         $HuduAPIKey = (Read-Host -Prompt "Get a Hudu API Key from $($settings.HuduBaseDomain)/admin/api_keys").Trim()
         if ($HuduAPIKey.Length -ne 24) {
@@ -128,22 +125,15 @@ function CollectAndSaveSettings {
     Write-Host "️Settings- Paths and Folders:" -ForegroundColor Yellow
     $settings.ITGlueExportPath = $settings.ITGlueExportPath ?? 
         $(Read-Host 'Enter the path of the ITGlue Export. (e.g. C:\Temp\ITGlue\Export) ️')
-    $settings.MigrationLogs = $settings.MigrationLogs ??
-        $(Read-Host "Enter the path for the migration logs, or press enter to accept the Default path ($settingsTop\HuduMigration\$instance\MigrationLogs)")
-    # Fallback for Migrationlogs setting
-    if (!($settings.MigrationLogs)) {
-        $settings.MigrationLogs = "$settingsTop\HuduMigration\$instance\MigrationLogs"
-    }
-    # Ensure folder is created for settings file
-    try{if (!(Test-Path -Path "$settingsTop\HuduMigration\$instance")) { New-Item "$settingsTop\HuduMigration\$instance" -ItemType Directory }} catch {}
+    $settings.MigrationLogs = $logs_folder
 
 
     # Verify settings, save or exit and retry
     if ($reenterChoice -eq "Continue") {
-        Write-Host "Saving Settings to $defaultSettingsPath"
+        Write-Host "Saving Settings to $settingsPath"
         # Convert the hash table to JSON
         $json = $settings | ConvertTo-Json
-        $json | Out-File -FilePath $defaultSettingsPath
+        $json | Out-File -LiteralPath $settingsPath
     } else {
         Clear-Host
         Write-Host "reinvoke script when you're ready!..." -ForegroundColor Yellow
@@ -155,33 +145,8 @@ function UpdateSavedSettings {
     param(
         $newSettings
     )
-    if ($settingsPath) {
-        if (Test-Path $settingsPath) {
-            # Convert the hash table to JSON
-            Write-Host "️Overwriting existing settings file with updated settings." -ForegroundColor Cyan
-            $json = $newSettings | ConvertTo-Json
-            $json | Out-File -FilePath $settingsPath
-        }
-        else {
-            Write-Host "Creating new settings file in $settingsPath" -ForegroundColor Yellow
-            $json = $newSettings | ConvertTo-Json
-            $json | Out-File -FilePath $settingsPath
-        }
-    }
-    else {
-        
-        if (Test-Path $defaultSettingsPath) {
-            # Convert the hash table to JSON
-            Write-Host "️Overwriting existing settings file with updated settings." -ForegroundColor Cyan
-            $json = $newSettings | ConvertTo-Json
-            $json | Out-File -FilePath $defaultSettingsPath
-        }
-        else {
-            Write-Host "Creating new settings file in $defaultSettingsPath" -ForegroundColor Yellow
-            $json = $newSettings | ConvertTo-Json
-            $json | Out-File -FilePath $defaultSettingsPath
-        }
-    }
+    if ([string]::IsNullOrWhiteSpace($settingsPath)) { throw 'No active migration settings file has been selected.' }
+    $newSettings | ConvertTo-Json -Depth 50 | Out-File -LiteralPath $settingsPath
 }
 
 
@@ -204,7 +169,7 @@ function PromptForSettingsPath {
         $fileNotExistMessage = 'The specified path does not exist or is not accessible. Please try again.'
     }
     
-    if (Test-Path -Path $userPath) {
+    if (Test-Path -LiteralPath $userPath -PathType Leaf) {
         return $userPath
     } else {
         Write-Warning $fileNotExistMessage
@@ -212,62 +177,61 @@ function PromptForSettingsPath {
     }
 }
 
-# Reuse the session for either entry point, unless a full init explicitly requests
-# new/imported settings. A supplied environment hashtable takes precedence in Full.
-if ($environmentSettings -and ($InitType -eq 'Lite' -or (-not $settings -and -not $choice))) {
-    Write-Host "Reusing loaded migration settings."
- }
-else {
-    # An environment file must win over choices left behind by an earlier run.
-    $choice = if ($settings) { 'N' } else { $choice ?? $(if (Test-Path -LiteralPath $defaultSettingsPath) { 'I' } else { 'N' }) }
-
-    switch ($choice) {
-        'I' { 
-            if (Test-Path -Path $defaultSettingsPath) {
-                Write-Host "Default settings file found at $defaultSettingsPath" -ForegroundColor Cyan
-                $importChoice = $importChoice ?? 'D'
-                
-                switch ($importChoice) {
-                    'D' {
-                        $settingsPath = $defaultSettingsPath
-                        Write-Host "Importing settings from $defaultSettingsPath" -ForegroundColor Yellow
-                        $environmentSettings = Get-Content -Path $defaultSettingsPath | ConvertFrom-Json -Depth 50
-                    }
-                    'S' {
-                        $settingsPath = PromptForSettingsPath -Default
-                        Write-Host "Importing settings from $settingsPath" -ForegroundColor Yellow
-                        $environmentSettings = Get-Content -Path $settingsPath | ConvertFrom-Json -Depth 50
-                    }
-                    default {
-                        Write-Host 'Invalid choice. Please choose (D)efault or (S)pecify.'
-                    }
-                }
-            } else {
-                $settingsPath = PromptForSettingsPath
-                Write-Host "Importing settings from $settingsPath" -ForegroundColor Yellow
-                $environmentSettings = Get-Content -Path $settingsPath | ConvertFrom-Json -Depth 50
-            }
-        }
-        'N' {
-            $settingsPath = $defaultSettingsPath
-            Write-Host "Starting with a new settings file" -ForegroundColor Cyan
-            CollectAndSaveSettings
-            $environmentSettings = Get-Content -Path $defaultSettingsPath | ConvertFrom-Json -Depth 50
-        }
-        default {
-            throw 'Invalid choice. Please choose (I)mport or (N)ew '
-        }
-    }
-}
-$environmentSettings = Initialize-MigrationSettings -Settings $environmentSettings
-# All consumers (including the main script's layout builders) use the same values
-# whether settings came from an environment hashtable, saved JSON, or Lite init.
-$settings = @{}
-if ($environmentSettings -is [System.Collections.IDictionary]) {
-    foreach ($key in $environmentSettings.Keys) { $settings[$key] = $environmentSettings[$key] }
+# Read configuration independently of the file this run will write. The GUI's
+# generated $settings/$defaultSettingsPath remain valid launcher inputs.
+$settingsReadPath = $null
+$hasLauncherSettings = $settings -and ($null -eq $previousMigrationRun -or
+    -not [object]::ReferenceEquals($settings, $previousMigrationRun.SettingsAlias))
+if ($InitType -eq 'Lite' -and $previousMigrationRun) {
+    $settings = Copy-MigrationSettings $previousMigrationRun.Settings
+    $settingsReadPath = $previousMigrationRun.SettingsPath
+} elseif ($hasLauncherSettings) {
+    $settings = Copy-MigrationSettings $settings
+} elseif ($environmentSettings) {
+    $settings = Copy-MigrationSettings $environmentSettings
 } else {
-    foreach ($property in $environmentSettings.PSObject.Properties) { $settings[$property.Name] = $property.Value }
+    if ($choice -eq 'I' -and $importChoice -eq 'S') {
+        $settingsReadPath = PromptForSettingsPath -Default
+    } elseif ($settingsPath -and (Test-Path -LiteralPath $settingsPath -PathType Leaf)) {
+        $settingsReadPath = $settingsPath
+    } elseif (Test-Path -LiteralPath $defaultSettingsPath -PathType Leaf) {
+        $settingsReadPath = $defaultSettingsPath
+    } elseif ($InitType -eq 'Lite') {
+        $settingsReadPath = PromptForSettingsPath -Default
+    }
+    $settings = if ($settingsReadPath) {
+        Copy-MigrationSettings (Get-Content -LiteralPath $settingsReadPath -Raw | ConvertFrom-Json -Depth 50)
+    } else { Copy-MigrationSettings $null }
 }
+$activeMigrationRun = New-MigrationRunContext -InitType $InitType -ProjectDirectory $project_workdir `
+    -DebugDirectory $debugFolder -ErrorsDirectory ($errorsfolder ?? $errors_folder) `
+    -SettingsDirectory $settings_folder -LogsDirectory $logs_folder -SourceSettingsPath $settingsReadPath `
+    -Configuration $settings -PreviousRun $previousMigrationRun
+$debugFolder = $activeMigrationRun.DebugFolder
+$errorsfolder = $activeMigrationRun.ErrorsFolder
+$errors_folder = $errorsfolder # Compatibility with the compiled GUI's template.
+$settings_folder = $activeMigrationRun.SettingsFolder
+$logs_folder = $activeMigrationRun.LogsFolder
+$settingsPath = $activeMigrationRun.SettingsPath
+$defaultSettingsPath = $settingsPath
+$script:GLOBAL_ERRORS_DIRECTORY = $errorsfolder
+$script:ITG_ERRORS_DIRECTORY = Join-Path $errorsfolder 'itglue'
+foreach ($folder in @($debugFolder, $errorsfolder, $logs_folder, $settings_folder, $script:ITG_ERRORS_DIRECTORY)) {
+    $null = Get-EnsuredPath -Path $folder
+}
+$settings.MigrationLogs = $logs_folder
+if ($InitType -eq 'Full') {
+    $ResumeFound = $false
+    # Fresh runs must not reuse matches or upload caches from the last tenant.
+    foreach ($variable in @(Get-Variable -Name 'Matched*', 'Preflight*' -ErrorAction Ignore)) {
+        Set-Variable -Name $variable.Name -Value $null
+    }
+    $AttachmentUrlMap = @{}; $HuduUploadLookup = @{}; $HuduUploadLookupLoaded = $false
+    $ManualActions = [System.Collections.ArrayList]@()
+}
+CollectAndSaveSettings
+$environmentSettings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json -Depth 50
+$settings = Copy-MigrationSettings $environmentSettings
 ############################### API Settings ###############################
 # Hudu
 # Get a Hudu API Key from https://yourhududomain.com/admin/api_keys
@@ -434,7 +398,7 @@ if ($InitType -eq 'Full') {
 $MigrationLogs = $environmentSettings.MigrationLogs
 
 $AutoDownloadITGlueExport = $AutoDownloadITGlueExport ?? $environmentSettings.AutoDownloadITGlueExport ?? $true
-if ($true -eq $AutoDownloadITGlueExport) {
+if ($InitType -eq 'Full' -and $true -eq $AutoDownloadITGlueExport) {
     $autoExportParams = @{
         ITGKey                  = $ITGKey
         ITGBaseURI              = $ITGAPIEndpoint
@@ -599,5 +563,8 @@ if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try
 if ($null -eq $MigrationParallelismLimit -or $MigrationParallelismLimit -lt 2 -or $MigrationParallelismLimit -gt 16){$defaultMigrationParallelismLimit = [math]::Min(24, [math]::Max(2, ([Environment]::ProcessorCount - 1) * 2)); $MigrationParallelismLimit = [int]($MigrationParallelismLimit ?? $defaultMigrationParallelismLimit); $MigrationParallelismLimit = [math]::Min(24, [math]::Max(2, $MigrationParallelismLimit));}
 $UseFastArticleContentCommit = $UseFastArticleContentCommit ?? $true; $UseFastLabelCommit = $UseFastLabelCommit ?? $true; $UseFastAssetCommit = $UseFastAssetCommit ?? $true; $UseFastRelationCommit = $UseFastRelationCommit ?? $true; $UseFastArchiveCommit = $UseFastArchiveCommit ?? $true; $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}; $ParalellismSettingsInfo = Get-ParalellismSettingsInfo -MigrationParallelismLimit $MigrationParallelismLimit;
 write-host $ParalellismSettingsInfo
+$activeMigrationRun.Settings = $environmentSettings
+$activeMigrationRun.SettingsAlias = $settings
+$script:MigrationRunContext = $activeMigrationRun
 $FirstTimeLoad = 1
 
