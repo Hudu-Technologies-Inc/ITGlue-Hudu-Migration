@@ -2116,8 +2116,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
     if ($ImportArticles -eq $true) {
         $null = Start-MigrationJob -Name "ArticleContents"
 
-        $Attachfiles = Get-ChildItem (Join-Path -Path $ITGlueExportPath -ChildPath "attachments\documents") -recurse
+        $articleAttachmentRoot = Join-Path $ITGlueExportPath 'attachments/documents'
+        $Attachfiles = @(if (Test-Path -LiteralPath $articleAttachmentRoot) { Get-ChildItem -LiteralPath $articleAttachmentRoot -Recurse })
         $ImageMap = $ImageMap ?? @{}
+        $documentImageRecoveryContext = New-ITGlueDocumentImageRecoveryContext -ApiBase $ITGAPIEndpoint -ApiKey $ITGKey -MigrationLogsPath $MigrationLogs
         # Now do the actual work of populating the content of articles
         $articleBodyProgressId = 32
         $articleBodyImageProgressId = 33
@@ -2149,11 +2151,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 				
                 $html = New-Object -ComObject "HTMLFile"
                 $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
+                if ($null -eq $Article.PSObject.Properties['SourceImages']) {
+                    $Article | Add-Member -NotePropertyName SourceImages -NotePropertyValue @(Get-ITGlueArticleSourceImages -Content $rawsource)
+                }
                 if ($rawsource.Length -gt 0) {
                     $source = [regex]::replace($rawsource , '\xa0+', ' ')
                     $src = [System.Text.Encoding]::Unicode.GetBytes($source)
                     $html.write($src)
                     $images = @($html.Images)
+                    $exportImageTags = @($images | ForEach-Object { [string]$_.outerHTML })
                     $articleBodyImageTotal = @($images).Count
                     $articleBodyImageIndex = 0
 
@@ -2168,7 +2174,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                     $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
                     $matchedImage = $null; $foundFile = $null; $imagePath = $null
                     $imagePathResolvedFromAttachment = $false
-                    if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL))) {
+                    $imageRecovery = $null
+                    $sourceReferences = Get-ITGlueDocumentImageReferences @([string]$imageObject.src, [string]$imageObject.outerHTML)
+                    if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0) {
                         $script:HasImages = $true
                         $imgHTML = $imageObject.outerHTML
                         Write-Host "Processing HTML: $imgHTML"
@@ -2201,6 +2209,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                             $imagePath = $foundFile.FullName
                             $imagePathResolvedFromAttachment = $true
                             Write-Host "Resolved inline attachment image from article attachments: $imagePath" -ForegroundColor Cyan
+                        } elseif (($imageRecovery = Resolve-ITGlueDocumentImage -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, [string]$imageObject.src, $imgHTML) -ImageIndex ($articleBodyImageIndex - 1) -ExportImageTags $exportImageTags -Context $documentImageRecoveryContext).File) {
+                            $imagePath = $imageRecovery.File.FullName
+                            Write-Host "Recovered missing document image through the IT Glue API: $imagePath" -ForegroundColor Cyan
                         } else { 
                             Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                             Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
@@ -2216,6 +2227,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                     Data          = "$InFile"
                                     Hudu_URL      = $Article.HuduObject.url
                                     ITG_URL       = "$ITGURL/$($Article.ITGLocator)"
+                                    ImageSources  = @($fullImgUrl, $tnImgUrl, [string]$imageObject.src, $imgHTML)
+                                    ImageRecoveryReason = $imageRecovery.Reason
                             }
                             $null = $ManualActions.add($ManualLog)
                             continue
@@ -2239,11 +2252,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                         $NewImageURL = Convert-ITGlueArticleAttachmentImageToPublicPhoto -ImageFile (Get-Item -LiteralPath $imagePath) -Article $Article
                                         $ImageMap["$OriginalFullImagePath"] = $NewImageURL
                                     } else {
-                                        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
+                                        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article' -ErrorAction Stop
                                         $ImageMap["$OriginalFullImagePath"] = "$($UploadImage.public_photo.url)"
                                     }
+                                    if ([string]::IsNullOrWhiteSpace([string]$ImageMap["$OriginalFullImagePath"])) { throw 'Hudu returned no image URL' }
                                 } catch {
                     # issue during Upload
+                                    if ($imageRecovery -and $imageRecovery.Record) {
+                                        $imageRecovery.Record.Status = 'UploadFailed'
+                                        $imageRecovery.Record.Problem = 'Recovered image could not be uploaded to Hudu'
+                                        Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                    }
                                     $ManualLog = [PSCustomObject]@{
                                         Document_Name = $Article.Name
                                         Type          = "Article - Image"
@@ -2267,6 +2286,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 
                                     # Update the <img> tag src
                                     $imageObject.src = [string]$NewImageURL
+                                    if ($imageRecovery -and $imageRecovery.Record) {
+                                        $imageRecovery.Record.Status = 'Placed'
+                                        $imageRecovery.Record.HuduImageUrl = [string]$NewImageURL
+                                        Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                    }
                                     Write-Host "Setting <img>.src to: $NewImageURL"
 
                                     # Try to find a matching <a> link around the image

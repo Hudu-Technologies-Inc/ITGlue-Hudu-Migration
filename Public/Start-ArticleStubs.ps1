@@ -38,6 +38,11 @@ function Start-ArticleStubs {
         Write-Warning "Found more than one HTML file for this article. Using the first match only."
     }
     $DocumentFile = $documentFiles | Sort-Object FullName | Select-Object -First 1
+    if (-not (Get-Command Get-ITGlueArticleSourceImages -ErrorAction SilentlyContinue)) {
+        . "$PSScriptRoot/Resolve-ITGlueDocumentImage.ps1"
+    }
+    # Preserve the export's image references before DOM parsing and URL rewriting.
+    $sourceImages = @(Get-ITGlueArticleSourceImages -Content (Get-Content -LiteralPath $DocumentFile.FullName -Raw -Encoding utf8))
 
     $folderResolution = Resolve-ArticleFolderPath `
         -BasePath $ITGDocumentsPath `
@@ -102,6 +107,7 @@ function Start-ArticleStubs {
         "Filename"        = $Filename
         "Path"            = $DocumentFile.Directory.FullName
         "FullPath"        = $DocumentFile.FullName
+        "SourceImages"    = $sourceImages
         "ITGID"           = $doc.id
         "ITGLocator"      = $doc.locator
         "HuduID"          = $NewArticle.ID

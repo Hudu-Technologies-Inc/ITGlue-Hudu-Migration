@@ -24,8 +24,12 @@ if (-not ($FirstTimeLoad -eq 1)) {
     $FirstTimeLoad = 1
 }
 
+if (-not (Get-Command Resolve-ITGlueDocumentImage -ErrorAction SilentlyContinue)) {
+    . "$PSScriptRoot/Resolve-ITGlueDocumentImage.ps1"
+}
 
     if ($Articles) {
+        $documentImageRecoveryContext = New-ITGlueDocumentImageRecoveryContext -ApiBase $ITGAPIEndpoint -ApiKey $ITGKey -MigrationLogsPath $MigrationLogs
         Write-host "Loading Articles Log"
         if (-not ($ITGlueDocuments = (Get-Content "$MigrationLogs\Articles.json" | ConvertFrom-json -Depth 50))) {
             Write-Warning "Article log is missing, using ArticleBase file"
@@ -74,15 +78,24 @@ if (-not ($FirstTimeLoad -eq 1)) {
                     
                 $html = New-Object -ComObject "HTMLFile"
                 $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
+                if ($null -eq $Article.PSObject.Properties['SourceImages']) {
+                    $Article | Add-Member -NotePropertyName SourceImages -NotePropertyValue @(Get-ITGlueArticleSourceImages -Content $rawsource)
+                }
                 if ($rawsource.Length -gt 0) {
                     $source = [regex]::replace($rawsource , '\xa0+', ' ')
                     $src = [System.Text.Encoding]::Unicode.GetBytes($source)
                     $html.write($src)
                     $images = @($html.Images)
+                    $exportImageTags = @($images | ForEach-Object { [string]$_.outerHTML })
+                    $legacyImageIndex = -1
 
                     $images | ForEach-Object {
+                        $legacyImageIndex++
+                        $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
+                        $imagePath = $null; $foundFile = $null; $imageRecovery = $null
+                        $sourceReferences = Get-ITGlueDocumentImageReferences @([string]$_.src, [string]$_.outerHTML)
 
-                        if (($_.src -notmatch '^http[s]?://') -or ($_.src -match [regex]::Escape($ITGURL))) {
+                        if (($_.src -notmatch '^http[s]?://') -or ($_.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0) {
                             $imagePathResolvedFromAttachment = $false
                             $script:HasImages = $true
                             $imgHTML = $_.outerHTML
@@ -116,6 +129,9 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                 $imagePath = $foundFile.FullName
                                 $imagePathResolvedFromAttachment = $true
                                 Write-Host "Resolved inline attachment image from article attachments: $imagePath" -ForegroundColor Cyan
+                            } elseif (($imageRecovery = Resolve-ITGlueDocumentImage -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, [string]$_.src, $imgHTML) -ImageIndex $legacyImageIndex -ExportImageTags $exportImageTags -Context $documentImageRecoveryContext).File) {
+                                $imagePath = $imageRecovery.File.FullName
+                                Write-Host "Recovered missing document image through the IT Glue API: $imagePath" -ForegroundColor Cyan
                             } else {
                                 Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                                 Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
@@ -125,7 +141,9 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                 Details = "Neither $fullImgPath or $tnImgPath were found"
                                 InFile = "$InFile"
                                 MigrationObject = $Article
+                                ImageRecoveryReason = $imageRecovery.Reason
                             }
+                            return
                         }
 
                             # Test the path to ensure that a file extension exists, if no file extension we get problems later on. We rename it if there's no ext.
@@ -145,18 +163,29 @@ if (-not ($FirstTimeLoad -eq 1)) {
                                         if ($imagePathResolvedFromAttachment) {
                                             $NewImageURL = Convert-ITGlueArticleAttachmentImageToPublicPhoto -ImageFile (Get-Item -LiteralPath $imagePath) -Article $Article
                                         } else {
-                                            $UploadImage = New-HuduPublicPhoto -FilePath "$imagePath" -record_id $Article.HuduID -record_type 'Article'
+                                            $UploadImage = New-HuduPublicPhoto -FilePath "$imagePath" -record_id $Article.HuduID -record_type 'Article' -ErrorAction Stop
                                             $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
                                         }
-                                        $ImgLink = $html.Links | Where-Object {$_.innerHTML -eq $imgHTML}
+                                        if ([string]::IsNullOrWhiteSpace([string]$NewImageURL)) { throw 'Hudu returned no image URL' }
+                                        $ImgLink = $html.Links | Where-Object {$_.innerHTML -eq $imgHTML} | Select-Object -First 1
                                         Write-Host "Setting image to: '$NewImageURL'"
                                         $_.src = [string]"$NewImageURL"
+                                        if ($imageRecovery -and $imageRecovery.Record) {
+                                            $imageRecovery.Record.Status = 'Placed'
+                                            $imageRecovery.Record.HuduImageUrl = [string]$NewImageURL
+                                            Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                        }
                                         
                                         # Update Links for this image
-                                        $ImgLink.href = [string]"$NewImageUrl"
+                                        if ($ImgLink) { $ImgLink.href = [string]"$NewImageUrl" }
 
                                     }
                                     catch {
+                                        if ($imageRecovery -and $imageRecovery.Record) {
+                                            $imageRecovery.Record.Status = 'UploadFailed'
+                                            $imageRecovery.Record.Problem = 'Recovered image could not be placed in Hudu'
+                                            Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                        }
                                         [PSCustomObject]@{
                                             ErrorType = 'Failed to Upload to Backend Storage'
                                             Details = "$imagePath failed to upload to Hudu backend. $_"
