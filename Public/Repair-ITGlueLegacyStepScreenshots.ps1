@@ -4,13 +4,15 @@
 
 function New-ITGlueLegacyScreenshotRecoveryContext {
     param([string]$ApiBase, [string]$ApiKey, [string]$MigrationLogsPath, [string]$TenantBase,
-        [string]$JWTAuthToken, [string]$JWTBaseUri,
+        [string]$JWTAuthToken, [string]$JWTBaseUri, [string]$HuduBase,
         [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession)
     $context = New-ITGlueDocumentImageRecoveryContext -ApiBase $ApiBase -ApiKey $ApiKey -MigrationLogsPath $MigrationLogsPath -LegacyScreenshotUrlResolver {
         param($RecoveryContext, $DocumentId, $StepId)
         Get-ITGlueLegacyScreenshotUrls $RecoveryContext $DocumentId $StepId
     }
     $context.TenantBase = $TenantBase
+    $context.HuduBase = $HuduBase
+    $context.PlacementVerificationDelayMilliseconds = 1000
     $context.JWTAuthToken = ($JWTAuthToken -replace '^\s*Bearer\s+', '').Trim()
     $context.JWTBaseUri = if ($JWTBaseUri) { $JWTBaseUri.TrimEnd('/') } else { $context.ApiBase }
     $context.WebSession = $WebSession
@@ -159,6 +161,31 @@ function Get-ITGlueLegacyScreenshotUrls {
     }
 }
 
+function ConvertTo-ITGlueLegacyHuduImageSrc {
+    param([string]$Url, [string]$HuduBase)
+    $uri = $null; $baseUri = $null
+    if ([Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$uri) -and
+        [Uri]::TryCreate($HuduBase, [UriKind]::Absolute, [ref]$baseUri) -and
+        $uri.Scheme -eq $baseUri.Scheme -and $uri.Authority -ieq $baseUri.Authority -and
+        $uri.AbsolutePath -match '^/public_photos?/') {
+        # Hudu can treat absolute URLs as external images and remove them in
+        # post-processing. Use the same relative URLs as regular article imports.
+        return $uri.PathAndQuery
+    }
+    return $Url
+}
+
+function Test-ITGlueLegacyScreenshotPlaced {
+    param([string]$Content, [string]$Url, [string]$HuduBase)
+    foreach ($candidate in @($Url, (ConvertTo-ITGlueLegacyHuduImageSrc $Url $HuduBase)) | Select-Object -Unique) {
+        if (-not $candidate) { continue }
+        $escaped = [regex]::Escape($candidate)
+        $pattern = '(?i)(?<![\w-])src\s*=\s*(?:"' + $escaped + '"|''' + $escaped + '''|' + $escaped + '(?=[\s>]))'
+        if (@(Get-ITGlueArticleSourceImages $Content | Where-Object { [Net.WebUtility]::HtmlDecode($_.Html) -match $pattern }).Count -gt 0) { return $true }
+    }
+    return $false
+}
+
 function Set-ITGlueLegacyScreenshotTagUrl {
     param([string]$Content, [int]$ImageIndex, [string]$Url)
     $tags = @([regex]::Matches($Content, '(?is)<img\b(?:[^>"'']|"[^"]*"|''[^'']*'')*>'))
@@ -169,7 +196,17 @@ function Set-ITGlueLegacyScreenshotTagUrl {
         param($match) $match.Groups['prefix'].Value + '"' + $encodedUrl + '"'
     })
     if ($updated -notmatch '(?i)(?<![\w-])src\s*=') { $updated = [regex]::Replace($updated, '(?i)^<img\b', ('<img src="' + $encodedUrl + '"')) }
-    return $Content.Substring(0, $tag.Index) + $updated + $Content.Substring($tag.Index + $tag.Length)
+    $before = $Content.Substring(0, $tag.Index)
+    $after = $Content.Substring($tag.Index + $tag.Length)
+    $anchor = [regex]::Match($before, '(?is)<a\b(?:[^>"'']|"[^"]*"|''[^'']*'')*>\s*$')
+    if ($anchor.Success -and $after -match '(?is)^\s*</a\s*>') {
+        $href = [regex]::Match($anchor.Value, '(?i)\bhref\s*=\s*(?:"(?<url>[^"]*)"|''(?<url>[^'']*)''|(?<url>[^\s>]+))')
+        if ($href.Success -and [Net.WebUtility]::HtmlDecode($href.Groups['url'].Value) -match '^(?:original|slim|thumbnail|large)/') {
+            $replacement = [regex]::Replace($anchor.Value, '(?i)(\bhref\s*=\s*)(?:"[^"]*"|''[^'']*''|[^\s>]+)', { param($match) $match.Groups[1].Value + '"' + $encodedUrl + '"' })
+            $before = $before.Substring(0, $anchor.Index) + $replacement
+        }
+    }
+    return $before + $updated + $after
 }
 
 function Get-ITGlueLegacyHtmlLayout {
@@ -255,7 +292,7 @@ function New-ITGlueLegacyPlacementPlan {
         $matching = @($sourceImages | Where-Object { @($_.FileNames | Where-Object { $_ -in $item.Names }).Count -gt 0 })
         if ($matching.Count -eq 1 -and @($item.Names | Where-Object { $nameCounts[$_] -gt 1 }).Count -eq 0) { $indices[$item.Id] = [int]$matching[0].Index }
     }
-    return [pscustomobject]@{SourceImages=$sourceImages; Layout=$layout; SnapshotPath=$snapshotPath; StepIndices=$indices; NameCounts=$nameCounts; Ordered=$ordered}
+    return [pscustomobject]@{SourceImages=$sourceImages; Layout=$layout; SnapshotPath=$snapshotPath; StepIndices=$indices; NameCounts=$nameCounts; Ordered=$ordered; HuduBase=$Context.HuduBase}
 }
 
 function Get-ITGlueLegacyScreenshotTarget {
@@ -294,7 +331,7 @@ function Get-ITGlueLegacyScreenshotTarget {
             foreach ($record in @(Get-ITGlueDocumentImageProperty $Article 'ImageRecoveries')) {
                 $url = [string](Get-ITGlueDocumentImageProperty $record 'HuduImageUrl')
                 $stepId = [string](Get-ITGlueDocumentImageProperty $record 'ITGStepId')
-                if ($url -and $existing.Html.Contains([Net.WebUtility]::HtmlEncode($url)) -and $Plan.StepIndices.ContainsKey($stepId)) { $knownIndex=$Plan.StepIndices[$stepId]; break }
+                if ($url -and (Test-ITGlueLegacyScreenshotPlaced $existing.Html $url $Plan.HuduBase) -and $Plan.StepIndices.ContainsKey($stepId)) { $knownIndex=$Plan.StepIndices[$stepId]; break }
             }
             if ($knownIndex -lt 0) { throw 'An existing image at the original screenshot position cannot be identified safely' }
             if ($knownIndex -eq $sourceIndex) { return [pscustomobject]@{Kind='Existing'; Index=$existing.Index; SourceIndex=$sourceIndex; Method='RecoveryLog'; Html=$null; Offset=0} }
@@ -308,7 +345,7 @@ function Get-ITGlueLegacyScreenshotTarget {
         for ($index=0; $index -lt $live.Images.Count; $index++) {
             if ($live.Images[$index].References.Names.Count -gt 0 -and -not (Test-ITGlueLegacyImageReference $live.Images[$index].References (Get-ITGlueDocumentImageReferences @($Plan.SourceImages[$index].Html)))) {
                 $known = @(Get-ITGlueDocumentImageProperty $Article 'ImageRecoveries' | Where-Object {
-                    $url=[string](Get-ITGlueDocumentImageProperty $_ 'HuduImageUrl'); $url -and $live.Images[$index].Html.Contains([Net.WebUtility]::HtmlEncode($url))
+                    $url=[string](Get-ITGlueDocumentImageProperty $_ 'HuduImageUrl'); $url -and (Test-ITGlueLegacyScreenshotPlaced $live.Images[$index].Html $url $Plan.HuduBase)
                 })
                 if ($known.Count -eq 0 -and $live.Images[$index].Html -notmatch '(?i)src\s*=\s*["'']/images/') { $compatible=$false; break }
             }
@@ -354,9 +391,7 @@ function Invoke-ITGlueLegacyScreenshotRepair {
                     $previous = @(Get-ITGlueDocumentImageProperty $article 'ImageRecoveries' | Where-Object { [string](Get-ITGlueDocumentImageProperty $_ 'ITGStepId') -eq $step.Id -and (Get-ITGlueDocumentImageProperty $_ 'HuduImageUrl') }) | Select-Object -Last 1
                     $alreadyPlaced = $false
                     if ($previous) {
-                        $escapedUrl = [regex]::Escape([string]$previous.HuduImageUrl)
-                        $placedPattern = '(?i)(?<![\w-])src\s*=\s*(?:"' + $escapedUrl + '"|''' + $escapedUrl + '''|' + $escapedUrl + '(?=[\s>]))'
-                        $alreadyPlaced = @(Get-ITGlueArticleSourceImages $content | Where-Object { [Net.WebUtility]::HtmlDecode($_.Html) -match $placedPattern }).Count -gt 0
+                        $alreadyPlaced = Test-ITGlueLegacyScreenshotPlaced $content ([string]$previous.HuduImageUrl) $Context.HuduBase
                     }
                     if ($alreadyPlaced) {
                         [pscustomobject]@{DocumentId=$id; StepId=$step.Id; Filename=$filename; Status='AlreadyPlaced'; Problem=$null}
@@ -398,11 +433,12 @@ function Invoke-ITGlueLegacyScreenshotRepair {
                     $record | Add-Member -NotePropertyName PlacementMethod -NotePropertyValue $target.Method -Force
                     $record.HuduImageUrl = $url; $record.Status = 'Uploaded'
                     Save-ITGlueDocumentImageRecovery $article $record $Context
+                    $imageSrc = ConvertTo-ITGlueLegacyHuduImageSrc $url $Context.HuduBase
                     if ($target.Kind -eq 'Insert') {
-                        $imageHtml = Set-ITGlueLegacyScreenshotTagUrl -Content $target.Html -ImageIndex 0 -Url $url
+                        $imageHtml = Set-ITGlueLegacyScreenshotTagUrl -Content $target.Html -ImageIndex 0 -Url $imageSrc
                         $content = $content.Insert($target.Offset, $imageHtml)
                     } else {
-                        $content = Set-ITGlueLegacyScreenshotTagUrl -Content $content -ImageIndex $target.Index -Url $url
+                        $content = Set-ITGlueLegacyScreenshotTagUrl -Content $content -ImageIndex $target.Index -Url $imageSrc
                     }
                     $pending.Add($record)
                 } catch {
@@ -418,13 +454,24 @@ function Invoke-ITGlueLegacyScreenshotRepair {
                 $response = Set-HuduArticle -Id $article.HuduID -Content $content -ErrorAction Stop
                 $updated = (Get-ITGlueDocumentImageProperty $response 'article') ?? $response
                 if ([string](Get-ITGlueDocumentImageProperty $updated 'id') -ne [string]$article.HuduID) { throw 'Hudu did not confirm the article update' }
+                # The PUT response can echo embeds that Hudu removes immediately
+                # afterward. Verify persisted content before reporting placement.
+                if ($Context.PlacementVerificationDelayMilliseconds -gt 0) { Start-Sleep -Milliseconds $Context.PlacementVerificationDelayMilliseconds }
+                $verifiedResponse = Get-HuduArticles -Id $article.HuduID -ErrorAction Stop
+                $updated = (Get-ITGlueDocumentImageProperty $verifiedResponse 'article') ?? $verifiedResponse
+                if ([string](Get-ITGlueDocumentImageProperty $updated 'id') -ne [string]$article.HuduID) { throw 'Hudu did not return the saved article for embed verification' }
+                $content = [string](Get-ITGlueDocumentImageProperty $updated 'content')
                 $article.HuduObject = $updated
                 $null = Set-HuduArticleLocalContent -Article $article -Content $content -MigrationLogsPath $Context.LogsPath -DebugFolderPath (Split-Path $Context.LogsPath -Parent)
                 $article | Add-Member -NotePropertyName LocalContentCommittedAt -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
                 foreach ($record in $pending) {
-                    $record.Status = 'Placed'; $record.Problem = $null
+                    $placed = Test-ITGlueLegacyScreenshotPlaced $content ([string]$record.HuduImageUrl) $Context.HuduBase
+                    $record.Status = if ($placed) { 'Placed' } else { 'Uploaded' }
+                    $record.Problem = if ($placed) { $null } else { 'Hudu did not retain the screenshot embed after saving; the uploaded photo can be reused on retry' }
+                    $record | Add-Member -NotePropertyName PlacementVerified -NotePropertyValue $placed -Force
+                    $record | Add-Member -NotePropertyName PlacementVerifiedAt -NotePropertyValue ([datetime]::UtcNow.ToString('o')) -Force
                     Save-ITGlueDocumentImageRecovery $article $record $Context
-                    [pscustomobject]@{DocumentId=$id; StepId=$record.ITGStepId; Filename=$record.ITGFileName; Status='Placed'; Problem=$null}
+                    [pscustomobject]@{DocumentId=$id; StepId=$record.ITGStepId; Filename=$record.ITGFileName; Status=if ($placed) { 'Placed' } else { 'Failed' }; Problem=$record.Problem}
                 }
             }
         } catch {

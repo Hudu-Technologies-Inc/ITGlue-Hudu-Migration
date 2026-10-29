@@ -57,7 +57,7 @@ foreach ($legacyArticle in $legacyRepairArticles) {
         $legacyArticle | Add-Member -NotePropertyName ImageRecoveries -NotePropertyValue $combinedRecoveries -Force
     }
 }
-$legacyRepairContext = New-ITGlueLegacyScreenshotRecoveryContext -ApiBase $ITGAPIEndpoint -ApiKey $ITGKey -MigrationLogsPath $MigrationLogs -TenantBase $ITGURL -JWTAuthToken $legacyRepairJwt -JWTBaseUri $JWTBaseUri -WebSession $WebSession
+$legacyRepairContext = New-ITGlueLegacyScreenshotRecoveryContext -ApiBase $ITGAPIEndpoint -ApiKey $ITGKey -MigrationLogsPath $MigrationLogs -TenantBase $ITGURL -HuduBase $HuduBaseDomain -JWTAuthToken $legacyRepairJwt -JWTBaseUri $JWTBaseUri -WebSession $WebSession
 try {
     $legacyRepairResults = @(Invoke-ITGlueLegacyScreenshotRepair -Articles $legacyRepairArticles -Context $legacyRepairContext -DocumentId $DocumentId -DownloadOnly:$DownloadOnly -WhatIf:$WhatIfPreference)
     $legacyRepairResults | ConvertTo-Json -Depth 20 -AsArray | Set-Content -LiteralPath (Join-Path $MigrationLogs 'LegacyStepScreenshotRecovery.json') -Encoding utf8
