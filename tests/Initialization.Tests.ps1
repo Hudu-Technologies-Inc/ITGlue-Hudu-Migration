@@ -25,6 +25,7 @@ function Invoke-InitializationScenario {
         [switch]$SwitchConfiguration,
         [switch]$StandaloneLite,
         [switch]$RelaunchMain,
+        [switch]$NamedDebugFolder,
         [switch]$ReturnRunContext,
         [switch]$PassThru
     )
@@ -90,6 +91,9 @@ function Invoke-InitializationScenario {
         }
     }
     $ConImportIcon = 'users'; $LocImportIcon = 'location-dot'; $ConfigImportIcon = 'desktop'
+    # The child paths below also serve as saved-input fixtures. They are stale
+    # runtime variables, not a request to adopt their containing debug folder.
+    $debugFolder = $null
     $script:moduleInitCount = 0
     $script:failModuleLoad = [bool]$FailModuleLoad
     $script:connectedDomain = $null; $script:connectedKey = $null
@@ -158,10 +162,14 @@ function Invoke-InitializationScenario {
     if ($EntryPoint -in @('environment.ps1', 'gui-environment.ps1')) {
         $example = Get-Content -LiteralPath (Join-Path $repoRoot 'environ.example') -Raw
         $example = $example.Replace('ITG.key', ('i' * 101)).Replace('HUDU.key', ('h' * 24)).Replace('https://api.itglue.com', 'https://api.eu.itglue.com').Replace('https://changeme.huducloud.com', $fixture.HuduBaseDomain).Replace('https://changeme.itglue.com', $fixture.ITGURL).Replace('changeme inc.', $fixture.InternalCompany).Replace('c:\tmp\export', $fixture.ITGlueExportPath)
+        if ($NamedDebugFolder) {
+            $example = $example.Replace('$debugFolder = $null', '$debugFolder = Join-Path $PSScriptRoot "named-tenant-$([guid]::NewGuid())"')
+        }
         if ($EntryPoint -eq 'gui-environment.ps1') {
             # Contract inspected in the executable's embedded Python launcher:
             # it generates the same template, using errors_folder and old controls.
             $example = $example.Replace('$errorsfolder', '$errors_folder')
+            $example = $example.Replace('$debugFolder = $null', '# The compiled launcher supplies debugFolder in its prelude.')
             $guiPrelude = @'
 $resumeQuestion="yes"; $reenterChoice="Continue"; $choice="N"
 $project_workdir=$PSScriptRoot
@@ -224,10 +232,14 @@ foreach ($path in @($errors_folder,$settings_folder,$logs_folder)) { $null=New-I
             foreach ($file in $sourceFiles) {
                 Assert-Initialization ((Get-Content -LiteralPath $file.Path -Raw) -ceq $file.Text) "Full initialization ($EntryPoint/$Mode/$Source pass $pass) overwrote input $($file.Path); active file: $settingsPath."
             }
-            if ($EntryPoint -in @('environment.ps1', 'gui-environment.ps1')) {
+            if ($launchEntry -in @('environment.ps1', 'gui-environment.ps1')) {
                 $prepared = $script:testPreparedPaths
-                Assert-Initialization ($debugFolder -ne $prepared.Debug -and $settingsPath -ne $prepared.File -and $MigrationLogs -ne $prepared.Logs) 'Full initialization reused launcher-provided output paths.'
+                if ($prepared.Debug) {
+                    Assert-Initialization ($debugFolder -eq $prepared.Debug) 'Full initialization ignored an unused absolute launcher debug folder.'
+                }
+                Assert-Initialization ($MigrationLogs -eq (Join-Path $debugFolder 'logs') -and $errorsfolder -eq (Join-Path $debugFolder 'errors') -and $settingsPath -eq (Join-Path $debugFolder 'settings/settings.json')) 'Launcher child paths redirected output away from the selected debug folder.'
             }
+            Assert-Initialization (Test-Path -LiteralPath (Join-Path $debugFolder '.hudu-migration-run.json') -PathType Leaf) 'Full initialization did not claim its output folder.'
         } else {
             if ($pass -eq 1) {
                 Assert-Initialization ($null -eq $MatchedAssets) 'Lite adopted matches from a previously selected run.'
@@ -320,6 +332,121 @@ function Test-LiteRejectsStaleSettings {
     $failure = $null
     try { $null = . (Join-Path $sandboxRoot $EntryPoint) -SettingsFile (Join-Path $sandboxRoot 'missing-settings.json') } catch { $failure = $_ }
     Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like 'Selected settings file does not exist*' -and $script:moduleInitCount -eq 0) 'An invalid explicit settings file fell back to another profile.'
+}
+
+function Test-NamedRunFolderClaims {
+    . (Join-Path $sandboxRoot 'Private/Initialize-MigrationSettings.ps1')
+    $named = Join-Path $sandboxRoot 'tenant [west]'
+    $requested = Join-Path $sandboxRoot 'unused/../tenant [west]/'
+    $run = New-MigrationRunContext -InitType Full -ProjectDirectory $sandboxRoot -RequestedDebugFolder $requested
+    Assert-Initialization ($run.DebugFolder -eq $named) 'Named absolute path was not normalized or preserved literally.'
+    $claimPath = Join-Path $named '.hudu-migration-run.json'
+    $claimText = Get-Content -LiteralPath $claimPath -Raw
+    $claim = $claimText | ConvertFrom-Json
+    Assert-Initialization ($claim.ProcessId -eq $PID -and $claim.RunId.Length -eq 32 -and $claim.CreatedUtc) 'Run claim is missing ownership metadata.'
+    $failure = $null
+    try { $null = New-MigrationRunContext -InitType Full -ProjectDirectory $sandboxRoot -RequestedDebugFolder $named } catch { $failure = $_ }
+    Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like '*already claimed*') 'A second Full run adopted a claimed folder.'
+    Assert-Initialization ((Get-Content -LiteralPath $claimPath -Raw) -ceq $claimText) 'Rejected startup changed an existing claim.'
+    $lite = New-MigrationRunContext -InitType Lite -ProjectDirectory $sandboxRoot -PreviousRun $run
+    Assert-Initialization ([object]::ReferenceEquals($run, $lite) -and (Get-Content -LiteralPath $claimPath -Raw) -ceq $claimText) 'Lite changed the run or its claim.'
+
+    $scaffold = Join-Path $sandboxRoot 'gui-empty-scaffold'
+    foreach ($child in @('errors/itglue', 'settings', 'logs')) { $null = [IO.Directory]::CreateDirectory((Join-Path $scaffold $child)) }
+    $run = New-MigrationRunContext -InitType Full -ProjectDirectory $sandboxRoot -RequestedDebugFolder $scaffold
+    Assert-Initialization ($run.DebugFolder -eq $scaffold) 'GUI-created empty directories were rejected.'
+
+    foreach ($relative in @('relative-debug', '\rooted-debug', 'C:relative-debug')) {
+        $failure = $null
+        try { $null = New-MigrationRunContext -InitType Full -ProjectDirectory $sandboxRoot -RequestedDebugFolder $relative } catch { $failure = $_ }
+        Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like '*absolute filesystem path*') 'A relative debug folder was accepted.'
+    }
+    $failure = $null
+    try { $null = New-MigrationRunContext -InitType Full -ProjectDirectory $sandboxRoot -RequestedDebugFolder ([IO.Path]::GetPathRoot($sandboxRoot)) } catch { $failure = $_ }
+    Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like '*drive or share root*') 'A drive root was accepted as a run folder.'
+
+    foreach ($content in @('logs/Assets.json', 'settings/settings.json', 'errors/previous.txt', '.hidden', 'unrelated-empty-directory')) {
+        $occupied = Join-Path $sandboxRoot ([guid]::NewGuid().ToString('N'))
+        $contentPath = Join-Path $occupied $content
+        $null = [IO.Directory]::CreateDirectory((Split-Path $contentPath -Parent))
+        if ($content -eq 'unrelated-empty-directory') { $null = [IO.Directory]::CreateDirectory($contentPath) }
+        else { [IO.File]::WriteAllText($contentPath, 'original-data') }
+        $failure = $null
+        try { $null = New-MigrationRunContext -InitType Full -ProjectDirectory $sandboxRoot -RequestedDebugFolder $occupied } catch { $failure = $_ }
+        Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like '*contains existing data*') "Full adopted existing content: $content"
+        Assert-Initialization (-not (Test-Path -LiteralPath (Join-Path $occupied '.hudu-migration-run.json'))) 'Rejected occupied folder was modified with a claim.'
+        if ($content -ne 'unrelated-empty-directory') { Assert-Initialization ([IO.File]::ReadAllText($contentPath) -ceq 'original-data') 'An existing file was modified.' }
+    }
+    $linkedRoot = Join-Path $sandboxRoot 'linked-scaffold'
+    $linkedTarget = Join-Path $sandboxRoot 'linked-target'
+    $null = [IO.Directory]::CreateDirectory($linkedRoot)
+    $null = [IO.Directory]::CreateDirectory($linkedTarget)
+    $null = New-Item -ItemType Junction -Path (Join-Path $linkedRoot 'logs') -Target $linkedTarget
+    $failure = $null
+    try { $null = New-MigrationRunContext -InitType Full -RequestedDebugFolder $linkedRoot } catch { $failure = $_ }
+    Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like '*contains existing data*') 'A junction redirected the logs folder.'
+    Assert-Initialization (@(Get-ChildItem -LiteralPath $linkedTarget -Force).Count -eq 0) 'Rejected junction wrote into its target.'
+}
+
+function Test-RunClaimProcesses {
+    $raceRoot = Join-Path $sandboxRoot 'claim-race'
+    $null = [IO.Directory]::CreateDirectory($raceRoot)
+    $gate = Join-Path $raceRoot 'start'
+    $folder = Join-Path $raceRoot 'shared-run'
+    $helper = Join-Path $sandboxRoot 'Private/Initialize-MigrationSettings.ps1'
+    $jobs = @()
+    try {
+        foreach ($index in 1..6) {
+            $jobs += Start-Job -ArgumentList $helper, $folder, $gate, (Join-Path $raceRoot "ready-$index"), $raceRoot, $index -ScriptBlock {
+                param($Helper, $Folder, $Gate, $Ready, $RaceRoot, $Index)
+                $ErrorActionPreference = 'Stop'
+                . $Helper
+                [IO.File]::WriteAllText($Ready, '')
+                $deadline = [datetime]::UtcNow.AddSeconds(45)
+                while (-not [IO.File]::Exists($Gate)) {
+                    if ([datetime]::UtcNow -gt $deadline) { throw 'Timed out waiting for claim race.' }
+                    Start-Sleep -Milliseconds 20
+                }
+                $claimed = $false; $message = ''
+                try { $null = New-MigrationRunContext -InitType Full -RequestedDebugFolder $Folder; $claimed = $true } catch { $message = $_.Exception.Message }
+                # Independent migrations must still be able to claim their own folders.
+                $own = New-MigrationRunContext -InitType Full -RequestedDebugFolder (Join-Path $RaceRoot "separate-$Index")
+                [pscustomobject]@{Claimed=$claimed;Message=$message;ProcessId=$PID;OwnFolder=$own.DebugFolder}
+            }
+        }
+        $deadline = [datetime]::UtcNow.AddSeconds(45)
+        while (@(Get-ChildItem -LiteralPath $raceRoot -Filter 'ready-*').Count -ne 6) {
+            if ([datetime]::UtcNow -gt $deadline) { throw 'Separate claim processes did not become ready.' }
+            Start-Sleep -Milliseconds 50
+        }
+        [IO.File]::WriteAllText($gate, '')
+        $completed = @($jobs | Wait-Job -Timeout 45)
+        Assert-Initialization ($completed.Count -eq 6 -and @($jobs | Where-Object State -ne Completed).Count -eq 0) 'Claim processes did not complete.'
+        $results = @($jobs | Receive-Job -ErrorAction Stop)
+        Assert-Initialization ($results.Count -eq 6 -and @($results.ProcessId | Select-Object -Unique).Count -eq 6) 'Claim race did not exercise six independent PowerShell processes.'
+        Assert-Initialization (@($results | Where-Object Claimed).Count -eq 1) 'Competing processes did not produce exactly one folder owner.'
+        Assert-Initialization (@($results | Where-Object { -not $_.Claimed -and $_.Message -notlike '*claim*' }).Count -eq 0) 'A losing process failed for an unrelated reason.'
+        $claim = Get-Content -LiteralPath (Join-Path $folder '.hudu-migration-run.json') -Raw | ConvertFrom-Json
+        Assert-Initialization ($claim.ProcessId -eq ($results | Where-Object Claimed).ProcessId) 'Claim metadata does not identify the winning process.'
+        Assert-Initialization (@($results.OwnFolder | Select-Object -Unique).Count -eq 6) 'Separate migrations did not claim independent folders.'
+    } finally {
+        if ($jobs.Count) { $jobs | Stop-Job; $jobs | Remove-Job -Force }
+    }
+}
+
+function Test-FullRejectsClaimedFolder {
+    $run = Invoke-InitializationScenario -ReturnRunContext
+    $originalSettings = Get-Content -LiteralPath $run.SettingsPath -Raw
+    $ITGlueHuduMigrationRun = $null
+    $settings = $run.SettingsAlias
+    $debugFolder = $run.DebugFolder
+    $script:moduleInitCount = 0; $script:pathEnsureCount = 0
+    . (Join-Path $sandboxRoot 'Public/Init-OptionsAndLogs.ps1')
+    $failure = $null
+    try { $null = . (Join-Path $sandboxRoot 'ITGlue-Hudu-Migration.ps1') } catch { $failure = $_ }
+    Assert-Initialization ($null -ne $failure -and $failure.Exception.Message -like '*already claimed*') 'Full main entry point accepted a claimed debug folder.'
+    Assert-Initialization ($script:moduleInitCount -eq 0 -and $script:pathEnsureCount -eq 0 -and $FirstTimeLoad -eq 0) 'Rejected folder reached module setup or output initialization.'
+    Assert-Initialization ((Get-Content -LiteralPath $run.SettingsPath -Raw) -ceq $originalSettings) 'Rejected startup changed the previous run settings.'
 }
 
 function Test-RunScopeIsolation {
@@ -451,6 +578,8 @@ function Get-ParalellismSettingsInfo { param($MigrationParallelismLimit) return 
 
     Push-Location -LiteralPath $sandboxRoot
     Test-RunFolderSelection
+    Test-NamedRunFolderClaims
+    Test-RunClaimProcesses
     Test-RelationHelper
     Test-LiteRejectsStaleSettings -EntryPoint 'Get-MissingRelations.ps1'
     Test-LiteRejectsStaleSettings -EntryPoint 'Add-HuduAttachmentsViaAPI.ps1'
@@ -468,6 +597,7 @@ function Get-ParalellismSettingsInfo { param($MigrationParallelismLimit) return 
     Invoke-InitializationScenario -Mode Lite -FailModuleLoad
     Invoke-InitializationScenario -EntryPoint 'ITGlue-Hudu-Migration.ps1' -Source Saved
     Invoke-InitializationScenario -EntryPoint 'environment.ps1'
+    Invoke-InitializationScenario -EntryPoint 'environment.ps1' -NamedDebugFolder
     $launchResults = @(
         (Invoke-InitializationScenario -EntryPoint 'ITGlue-Hudu-Migration.ps1' -Source Interactive -PassThru),
         (Invoke-InitializationScenario -EntryPoint 'environment.ps1' -PassThru),
@@ -477,6 +607,7 @@ function Get-ParalellismSettingsInfo { param($MigrationParallelismLimit) return 
         Assert-Initialization ($launchResults[0][$key] -ceq $launchResults[1][$key] -and $launchResults[0][$key] -ceq $launchResults[2][$key]) "Launch methods produced different effective settings: $key"
     }
     Invoke-InitializationScenario -EntryPoint 'gui-environment.ps1' -RelaunchMain
+    Test-FullRejectsClaimedFolder
     Test-RunScopeIsolation
     foreach ($entry in @('Get-MissingRelations.ps1', 'Add-HuduAttachmentsViaAPI.ps1')) {
         Invoke-InitializationScenario -EntryPoint $entry -Source Saved

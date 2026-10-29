@@ -1,5 +1,7 @@
 $project_workdir="$PSScriptRoot"
-# Full initialization creates a fresh debug folder with settings, logs and errors.
+# Optional absolute path for a named, unused run folder. Leave null to generate one.
+$debugFolder = $null # Example: 'C:\Migrations\debug-acme'
+# Full initialization creates settings, logs and errors under this folder.
 
 $InitType = "full"
 $settings = @{

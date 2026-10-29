@@ -164,6 +164,13 @@ $settingsReadPath = $null
 $replaceRunState = $InitType -eq 'Full'
 $hasLauncherSettings = $settings -and ($null -eq $previousMigrationRun -or
     -not [object]::ReferenceEquals($settings, $previousMigrationRun.SettingsAlias))
+$requestedDebugFolder = Get-Variable -Name debugFolder -Scope Local -ValueOnly -ErrorAction Ignore
+# A bare main-script relaunch retains runtime variables. That is not a request
+# to reuse its output folder. New launcher settings may explicitly request a path.
+if ($previousMigrationRun -and -not $hasLauncherSettings -and
+    $requestedDebugFolder -eq $previousMigrationRun.DebugFolder) {
+    $requestedDebugFolder = $null
+}
 if (-not [string]::IsNullOrWhiteSpace($SettingsFile)) {
     if (-not (Test-Path -LiteralPath $SettingsFile -PathType Leaf)) { throw "Selected settings file does not exist: $SettingsFile" }
     $settingsReadPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SettingsFile)
@@ -193,7 +200,7 @@ if (-not [string]::IsNullOrWhiteSpace($SettingsFile)) {
     $HuduAPIKey = $null; $ITGKey = $null; $ITGAPIEndpoint = $null
 }
 $activeMigrationRun = New-MigrationRunContext -InitType $InitType -ProjectDirectory $project_workdir `
-    -SourceSettingsPath $settingsReadPath -Configuration $settings -PreviousRun $previousMigrationRun
+    -RequestedDebugFolder $requestedDebugFolder -SourceSettingsPath $settingsReadPath -Configuration $settings -PreviousRun $previousMigrationRun
 $debugFolder = $activeMigrationRun.DebugFolder
 $errorsfolder = $activeMigrationRun.ErrorsFolder
 $errors_folder = $errorsfolder # Compatibility with the compiled GUI's template.

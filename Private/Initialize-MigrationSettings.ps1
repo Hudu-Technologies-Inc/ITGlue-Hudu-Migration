@@ -43,10 +43,60 @@ function Test-MigrationRunLogs {
     return $false
 }
 
+function Assert-MigrationRunFolderAvailable {
+    param([string]$Path, [switch]$ClaimCreated)
+
+    if (-not (Test-Path -LiteralPath $Path -ErrorAction Stop)) { return }
+    $root = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (-not $root.PSIsContainer -or ($root.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Debug folder must be a regular directory: $Path"
+    }
+    # The GUI may have already created these empty directories. No files,
+    # links, or other directories may be adopted by a new Full run.
+    $allowedDirectories = @('errors', 'errors/itglue', 'settings', 'logs') | ForEach-Object { Join-Path $Path $_ }
+    $claimPath = Join-Path $Path '.hudu-migration-run.json'
+    Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction Stop | ForEach-Object {
+        if ($ClaimCreated -and $_.FullName -eq $claimPath -and -not $_.PSIsContainer) { return }
+        if (-not $_.PSIsContainer -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $_.FullName -notin $allowedDirectories) {
+            throw "Debug folder is already claimed or contains existing data: $Path. Choose a new debug folder; use Lite with -SettingsFile for an existing run."
+        }
+    }
+}
+
+function New-MigrationRunFolderClaim {
+    param([string]$Path)
+
+    Assert-MigrationRunFolderAvailable -Path $Path
+    $null = [IO.Directory]::CreateDirectory($Path)
+    $claimPath = Join-Path $Path '.hudu-migration-run.json'
+    $claim = $null
+    try {
+        # CreateNew is the claim: the filesystem permits only one creator,
+        # including when independent PowerShell processes race for this path.
+        $claim = [IO.File]::Open($claimPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $metadata = @{
+            RunId = [guid]::NewGuid().ToString('N')
+            ProcessId = $PID
+            CreatedUtc = [datetime]::UtcNow.ToString('o')
+        } | ConvertTo-Json
+        $bytes = [Text.Encoding]::UTF8.GetBytes($metadata)
+        $claim.Write($bytes, 0, $bytes.Length)
+    } catch {
+        throw "Could not claim debug folder '$Path'. It may already belong to another run or be inaccessible. Choose a new debug folder. $($_.Exception.Message)"
+    } finally {
+        if ($null -ne $claim) { $claim.Dispose() }
+    }
+    # Recheck after claiming to catch changes between the first check and claim.
+    # Keep the marker after failure, interruption, and completion: it is a
+    # permanent ownership record, not a lock to remove when a process exits.
+    Assert-MigrationRunFolderAvailable -Path $Path -ClaimCreated
+}
+
 function New-MigrationRunContext {
     param(
         [ValidateSet('Full', 'Lite')][string]$InitType,
         [string]$ProjectDirectory,
+        [string]$RequestedDebugFolder,
         [string]$SourceSettingsPath,
         [AllowNull()]$Configuration,
         [AllowNull()]$PreviousRun
@@ -57,9 +107,18 @@ function New-MigrationRunContext {
     }
 
     if ($InitType -eq 'Full') {
-        # Full always owns a new directory. Neither launcher paths nor retained
-        # session variables can select an old run's output folders.
-        $DebugDirectory = Join-Path $ProjectDirectory "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-fffffff')-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+        if (-not [string]::IsNullOrWhiteSpace($RequestedDebugFolder)) {
+            if (-not [IO.Path]::IsPathFullyQualified($RequestedDebugFolder)) {
+                throw 'debugFolder must be an absolute filesystem path (for example C:\Migrations\debug-acme).'
+            }
+            $DebugDirectory = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($RequestedDebugFolder))
+            if ($DebugDirectory -eq [IO.Path]::GetPathRoot($DebugDirectory)) {
+                throw 'debugFolder must be a dedicated run directory, not a drive or share root.'
+            }
+        } else {
+            $DebugDirectory = [IO.Path]::GetFullPath((Join-Path $ProjectDirectory "debug-$(Get-Date -Format 'yyyyMMdd-HHmmss-fffffff')-$([guid]::NewGuid().ToString('N').Substring(0, 8))"))
+        }
+        New-MigrationRunFolderClaim -Path $DebugDirectory
         $paths = @{
             ErrorsFolder = Join-Path $DebugDirectory 'errors'
             SettingsFolder = Join-Path $DebugDirectory 'settings'
