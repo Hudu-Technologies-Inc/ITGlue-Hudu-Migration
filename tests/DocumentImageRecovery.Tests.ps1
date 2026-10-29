@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . "$repoRoot/Public/Resolve-ITGlueDocumentImage.ps1"
 . "$repoRoot/Public/Resolve-ArticleAttachmentImage.ps1"
+. "$repoRoot/Public/Repair-ITGlueLegacyStepScreenshots.ps1"
 $checks = 0
 function Assert-Recovery { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw $Message }; $script:checks++ }
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) "itglue-document-images-$([guid]::NewGuid().ToString('N'))"
@@ -17,6 +18,8 @@ $downloadCalls = [Collections.Generic.List[object]]::new()
 $publicPhotoCalls = [Collections.Generic.List[string]]::new()
 $publicPhotoFailures = @{}
 $downloadFailures = @{}
+$webPages = @{}
+$webCalls = [Collections.Generic.List[object]]::new()
 $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==')
 function New-TestHttpError {
     param([int]$Status)
@@ -35,7 +38,11 @@ function Invoke-RestMethod {
 }
 function Invoke-WebRequest {
     [CmdletBinding()]
-    param($Method, [string]$Uri, [string]$OutFile, $TimeoutSec, $Headers)
+    param($Method, [string]$Uri, [string]$OutFile, $TimeoutSec, $Headers, $WebSession)
+    if ($webPages.ContainsKey($Uri)) {
+        $webCalls.Add([pscustomobject]@{Uri=$Uri; Headers=$Headers; Session=$WebSession})
+        return @{Content=$webPages[$Uri]}
+    }
     $downloadCalls.Add([pscustomobject]@{Uri=$Uri; Headers=$Headers; OutFile=$OutFile})
     if ($downloadFailures.ContainsKey($Uri)) {
         [IO.File]::WriteAllText($OutFile, '<html>Access denied</html>')
@@ -47,7 +54,12 @@ function New-TestArticle {
     return [pscustomobject]@{ITGID=$Id; HuduID=383; Name='Backup'; Company=[pscustomobject]@{CompanyName='Offline'}; HuduObject=[pscustomobject]@{url='https://hudu.invalid/kba/backup'}; ITGLocator="DOC-2395254-$Id"}
 }
 function New-TestContext {
-    $context = New-ITGlueDocumentImageRecoveryContext -ApiBase 'https://api.example.invalid' -ApiKey 'offline-test-key' -MigrationLogsPath $logsPath
+    param([Microsoft.PowerShell.Commands.WebRequestSession]$WebSession)
+    $context = if ($WebSession) {
+        New-ITGlueLegacyScreenshotRecoveryContext -ApiBase 'https://api.example.invalid' -ApiKey 'offline-test-key' -MigrationLogsPath $logsPath -TenantBase 'https://tenant.invalid' -WebSession $WebSession
+    } else {
+        New-ITGlueDocumentImageRecoveryContext -ApiBase 'https://api.example.invalid' -ApiKey 'offline-test-key' -MigrationLogsPath $logsPath
+    }
     $context.RequestGate = $gate
     return $context
 }
@@ -191,6 +203,62 @@ try {
     $result = Resolve-ITGlueDocumentImage (New-TestArticle '3030') -SourceValues @('<img src="">') -ImageIndex 0 -ExportImageTags @('<img src="">') -Context (New-TestContext)
     Assert-Recovery ($null -ne $result.File -and $result.Record.ITGImageId -eq '444') "Verified gallery metadata was not used when the individual image lookup was unavailable: $($result.Reason)"
 
+    # Real legacy shape from document 58145: the gallery exposes signed URLs,
+    # while a Step screenshot is only in content[].resource, with no API URL.
+    Register-TestImage '40108' '58145' 'Dragon_Logo.jpg'
+    $resources['documents/58145'] = @{id='58145'; attributes=@{
+        'resource-url'='https://tenant.invalid/91889/docs/58145'
+        sections=@(
+            @{id='256189'; attributes=@{sort=0; 'resource-type'='Document::Gallery'; 'document-images'=@($resources['document_images/40108'])}}
+            @{id='256231'; attributes=@{sort=1; 'resource-type'='Document::Step'; 'resource-id'=71601; content='<p>Instructions</p>'; 'document-images'=@()}}
+        )
+        content=@(@{id=256231; document_id=58145; sort=1; resource_type='Document::Step'; resource=@{id=71601; screenshot_file_name='Generic_USB_Hub_Properties.jpg'; screenshot_file_size=26880}})
+    }}
+    $legacyTags = @("<img data-src-original='original/Dragon_Logo.jpg' src='thumbnail/Dragon_Logo.jpg'>", "<img data-src-original='original/Generic_USB_Hub_Properties.jpg' src='thumbnail/Generic_USB_Hub_Properties.jpg'>")
+    $legacyArticle = New-TestArticle '58145'
+    $result = Resolve-ITGlueDocumentImage $legacyArticle -SourceValues @($legacyTags[1]) -ImageIndex 1 -ExportImageTags $legacyTags -Context (New-TestContext)
+    Assert-Recovery ($null -eq $result.File -and $result.Record.ImageResourceType -eq 'LegacyStepScreenshot' -and $result.Reason -like '*public API*') 'A legacy screenshot was not recognized or still reported only an image-count alignment error.'
+    Assert-Recovery (@($metadataCalls | Where-Object { $_ -eq 'document_images/71601' }).Count -eq 0) 'A step screenshot ID was incorrectly queried as a document-image ID.'
+    $signedScreenshotUrl = 'https://storage.invalid/document/steps/screenshots/000/071/601/slim/Generic_USB_Hub_Properties.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc%2Bdef%2Fghi%3D'
+    $legacyRefs = Get-ITGlueDocumentImageReferences @($signedScreenshotUrl, 'https://storage.invalid/document/images/images/000/040/108/original/Dragon_Logo.jpg')
+    Assert-Recovery ($legacyRefs.StepIds[0] -eq '71601' -and $legacyRefs.Ids.Count -eq 1 -and $legacyRefs.Ids[0] -eq '40108') 'Legacy screenshot IDs were confused with document-image IDs or double-images storage paths failed to parse.'
+    $webSession = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+    $webPages['https://tenant.invalid/91889/docs/58145'] = '<img src="' + [Net.WebUtility]::HtmlEncode($signedScreenshotUrl) + '">'
+    $context = New-TestContext -WebSession $webSession
+    $result = Resolve-ITGlueDocumentImage (New-TestArticle '58145') -SourceValues @($legacyTags[1]) -ImageIndex 1 -ExportImageTags $legacyTags -Context $context
+    Assert-Recovery ($null -ne $result.File -and $result.File.BaseName -eq 'step-71601' -and $result.Record.ITGSectionId -eq '256231' -and $result.Record.DownloadVariant -eq 'slim' -and -not $result.Record.DownloadedViaApi) "Authenticated web screenshot recovery failed: $($result.Reason)"
+    Assert-Recovery ($downloadCalls[-1].Uri -ceq $signedScreenshotUrl -and $null -eq $downloadCalls[-1].Headers) 'The signed URL was decoded, reconstructed, or downloaded with API credentials.'
+    Assert-Recovery ($webCalls.Count -eq 1 -and [object]::ReferenceEquals($webCalls[0].Session, $webSession) -and $null -eq $webCalls[0].Headers) 'The tenant HTML request did not use the supplied session or received the API key.'
+    $before = $webCalls.Count
+    $result = Resolve-ITGlueDocumentImage (New-TestArticle '58145') -SourceValues @($legacyTags[1]) -ImageIndex 1 -ExportImageTags $legacyTags -Context (New-TestContext)
+    Assert-Recovery ($null -ne $result.File -and $result.Record.UsedCachedDownload -and $result.Record.DownloadUrlSource -eq 'Cache' -and $webCalls.Count -eq $before) 'A cached legacy screenshot unnecessarily required a web session or another download.'
+    $legacySidecar = Join-Path $logsPath 'DocumentImageRecovery/58145.json'
+    Assert-Recovery ((Get-Content -LiteralPath $legacySidecar -Raw) -notmatch 'X-Amz-Signature|offline-test-key') 'A screenshot recovery log retained a signed query string or API key.'
+
+    # Name matching is document scoped and still rejects a different step ID.
+    $result = Resolve-ITGlueDocumentImage (New-TestArticle '58145') -SourceValues @($signedScreenshotUrl.Replace('/071/601/', '/071/602/')) -ImageIndex 1 -ExportImageTags $legacyTags -Context (New-TestContext)
+    Assert-Recovery ($null -eq $result.File -and $result.Reason -like '*another legacy screenshot*') 'A same-named screenshot from another step was accepted.'
+    $context = New-TestContext -WebSession $webSession
+    $context.DocumentUrls['58145'] = 'https://other-tenant.invalid/91889/docs/58145'
+    $rejected = $false; $before = $webCalls.Count
+    try { $null = Get-ITGlueLegacyScreenshotUrls $context '58145' '71601' } catch { $rejected = $true }
+    Assert-Recovery ($rejected -and $webCalls.Count -eq $before) 'An authenticated request was sent to an unverified tenant.'
+    $context = New-TestContext -WebSession $webSession
+    $context.DocumentUrls['58145'] = 'https://tenant.invalid/91889/docs/58145'
+    $savedPage = $webPages[$context.DocumentUrls['58145']]
+    $webPages[$context.DocumentUrls['58145']] = '<html><form>Sign in</form></html>'
+    $failure = ''
+    try { $null = Get-ITGlueLegacyScreenshotUrls $context '58145' '71601' } catch { $failure = $_.Exception.Message }
+    finally { $webPages[$context.DocumentUrls['58145']] = $savedPage }
+    Assert-Recovery ($failure -like '*web session may be expired*') 'A login page was mistaken for a screenshot download or lost its authentication diagnostic.'
+    Register-TestImage '888' '8888' 'repeated.png'
+    $resources['documents/8888'] = @{id='8888'; attributes=@{sections=@(
+        @{attributes=@{sort=0; content='<img src="/1/docs/8888/images/888">'; 'rendered-content'='<img src="https://storage.invalid/document/developer/images/888/original/repeated.png">'}}
+        @{attributes=@{sort=1; 'document-images'=@($resources['document_images/888'])}}
+    )}}
+    $result = Resolve-ITGlueDocumentImage (New-TestArticle '8888') -SourceValues @('repeated.png') -Context (New-TestContext)
+    Assert-Recovery ($null -ne $result.File -and $result.Record.ITGImageId -eq '888') 'The same canonical image appearing inline and in a gallery was treated as two different identities.'
+
     # Exercise the actual main-script image loop with two blank-source DOM nodes.
     # The fake DOM only replaces COM; resolution, validation, and image placement
     # execute the real migration code, with only the Hudu network call mocked.
@@ -266,6 +334,34 @@ try {
     try { Set-StrictMode -Off; $legacyErrors = @($images | ForEach-Object $legacyBlock 6>$null) }
     finally { Set-StrictMode -Version Latest }
     Assert-Recovery ($legacyErrors.Count -eq 0 -and $publicPhotoCalls.Count -eq 2 -and $images[0].src -eq '/images/901.png' -and $images[1].src -eq '/images/902.png') 'The standalone article image path failed recovery or required nonexistent image links.'
+
+    # The regular image loop never opts into web/JWT authentication. It can still
+    # reuse files cached by the standalone repair, without any extra user flow.
+    $stepCache = Join-Path $fixtureRoot 'RecoveredDocumentImages/58145/step-71601.png'
+    Remove-Item -LiteralPath $stepCache
+    $logoDirectory = Join-Path $fixtureRoot 'original'
+    $null = [IO.Directory]::CreateDirectory($logoDirectory)
+    [IO.File]::WriteAllBytes((Join-Path $logoDirectory 'Dragon_Logo.jpg'), $png)
+    $Article = New-TestArticle '58145'
+    $Article | Add-Member -NotePropertyName SourceImages -NotePropertyValue @(Get-ITGlueArticleSourceImages ($legacyTags -join ''))
+    $documentImageRecoveryContext = New-TestContext
+    $domTags = @($legacyTags | ForEach-Object { $_.Replace("'", '"') })
+    $images = @(
+        [pscustomobject]@{src='thumbnail/Dragon_Logo.jpg'; outerHTML=$domTags[0]; innerHTML=''}
+        [pscustomobject]@{src='thumbnail/Generic_USB_Hub_Properties.jpg'; outerHTML=$domTags[1]; innerHTML=''}
+    )
+    $exportImageTags = $domTags; $articleBodyImageIndex = 0; $articleBodyImageTotal = 2
+    $publicPhotoCalls.Clear(); $ManualActions.Clear(); $ImageMap = @{}
+    $before = $webCalls.Count
+    try { Set-StrictMode -Off; . ([scriptblock]::Create($loop.Extent.Text)) 6>$null }
+    finally { Set-StrictMode -Version Latest }
+    Assert-Recovery ($publicPhotoCalls.Count -eq 1 -and $ManualActions.Count -eq 1 -and $images[0].src -eq '/images/dragon_logo.jpg' -and $webCalls.Count -eq $before) 'The regular migration opted into authenticated legacy recovery or stopped uploading the existing export image.'
+    [IO.File]::WriteAllBytes($stepCache, $png)
+    $ManualActions.Clear(); $publicPhotoCalls.Clear()
+    $images = @($images[1]); $exportImageTags = @($domTags[1]); $articleBodyImageIndex = 0; $articleBodyImageTotal = 1
+    try { Set-StrictMode -Off; . ([scriptblock]::Create($loop.Extent.Text)) 6>$null }
+    finally { Set-StrictMode -Version Latest }
+    Assert-Recovery ($publicPhotoCalls.Count -eq 1 -and $ManualActions.Count -eq 0 -and $images[0].src -eq '/images/step-71601.png' -and $webCalls.Count -eq $before) 'Regular uploads could not reuse a cached legacy screenshot without authentication.'
     Write-Output "Passed $checks document-image recovery checks (offline)."
 } finally {
     Remove-Item -LiteralPath $gate.StatePath -Force -ErrorAction SilentlyContinue

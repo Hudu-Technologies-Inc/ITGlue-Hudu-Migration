@@ -95,7 +95,7 @@ if (-not (Get-Command Resolve-ITGlueDocumentImage -ErrorAction SilentlyContinue)
                         $imagePath = $null; $foundFile = $null; $imageRecovery = $null
                         $sourceReferences = Get-ITGlueDocumentImageReferences @([string]$_.src, [string]$_.outerHTML)
 
-                        if (($_.src -notmatch '^http[s]?://') -or ($_.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0) {
+                        if (($_.src -notmatch '^http[s]?://') -or ($_.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0 -or $sourceReferences.StepIds.Count -gt 0) {
                             $imagePathResolvedFromAttachment = $false
                             $script:HasImages = $true
                             $imgHTML = $_.outerHTML

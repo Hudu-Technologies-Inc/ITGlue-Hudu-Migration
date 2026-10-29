@@ -15,6 +15,7 @@ function Get-ITGlueDocumentImageReferences {
     $ids = [Collections.Generic.List[string]]::new()
     $documents = [Collections.Generic.List[string]]::new()
     $names = [Collections.Generic.List[string]]::new()
+    $stepIds = [Collections.Generic.List[string]]::new()
     foreach ($value in $SourceValues) {
         if ([string]::IsNullOrWhiteSpace($value)) { continue }
         $text = [Net.WebUtility]::HtmlDecode([Uri]::UnescapeDataString($value))
@@ -22,8 +23,11 @@ function Get-ITGlueDocumentImageReferences {
             $ids.Add($match.Groups['id'].Value)
             $documents.Add($match.Groups['document'].Value)
         }
-        foreach ($match in [regex]::Matches($text, '(?i)/(?:document/(?:developer/)?images|developer/images)/(?<id>(?:\d{3}/){0,2}\d+)/(?:original|slim|thumbnail)/')) {
+        foreach ($match in [regex]::Matches($text, '(?i)/(?:document/(?:developer/)?images(?:/images)?|developer/images)/(?<id>(?:\d{3}/){0,2}\d+)/(?:original|slim|thumbnail)/')) {
             $ids.Add(($match.Groups['id'].Value.Replace('/', '').TrimStart('0')))
+        }
+        foreach ($match in [regex]::Matches($text, '(?i)/document/steps/screenshots/(?<id>(?:\d{3}/){0,2}\d+)/(?:original|slim|thumbnail)/')) {
+            $stepIds.Add($match.Groups['id'].Value.Replace('/', '').TrimStart('0'))
         }
         foreach ($match in [regex]::Matches($text, '(?i)data-(?:document-)?image-id\s*=\s*["'']?(?<id>\d+)')) { $ids.Add($match.Groups['id'].Value) }
         $sources = if ($text -match '<\w') {
@@ -34,16 +38,18 @@ function Get-ITGlueDocumentImageReferences {
             if ($leaf -and $leaf -match '\.[a-z0-9]{2,5}$') { $names.Add($leaf) }
         }
     }
-    return [pscustomobject]@{Ids=@($ids | Select-Object -Unique); DocumentIds=@($documents | Select-Object -Unique); Names=@($names | Select-Object -Unique)}
+    return [pscustomobject]@{Ids=@($ids | Select-Object -Unique); StepIds=@($stepIds | Select-Object -Unique); DocumentIds=@($documents | Select-Object -Unique); Names=@($names | Select-Object -Unique)}
 }
 
 function New-ITGlueDocumentImageRecoveryContext {
-    param([string]$ApiBase, [string]$ApiKey, [Parameter(Mandatory)][string]$MigrationLogsPath)
+    param([string]$ApiBase, [string]$ApiKey, [Parameter(Mandatory)][string]$MigrationLogsPath,
+        [scriptblock]$LegacyScreenshotUrlResolver)
     return @{
         ApiBase=$ApiBase.Trim().TrimEnd('/'); ApiKey=$ApiKey; LogsPath=$MigrationLogsPath
         CachePath=(Join-Path (Split-Path $MigrationLogsPath -Parent) 'RecoveredDocumentImages')
         Documents=@{}; Images=@{}; ApiUnavailable=$false
         SourceImages=@{}; ArticleBaseLoaded=$false
+        DocumentUrls=@{}; LegacyScreenshotUrlResolver=$LegacyScreenshotUrlResolver
         RequestGate=$null
     }
 }
@@ -135,6 +141,12 @@ function Get-ITGlueDocumentImageSequence {
         $document = Invoke-ITGlueDocumentImageMetadataRequest $Context "documents/$DocumentId"
         if ([string](Get-ITGlueDocumentImageProperty $document 'id') -ne $DocumentId) { throw 'IT Glue returned a different document.' }
         $attributes = Get-ITGlueDocumentImageProperty $document 'attributes'
+        $Context.DocumentUrls[$DocumentId] = [string](Get-ITGlueDocumentImageProperty $attributes 'resource-url')
+        $legacySections = @{}
+        foreach ($legacySection in @(Get-ITGlueDocumentImageProperty $attributes 'content')) {
+            $sectionId = [string](Get-ITGlueDocumentImageProperty $legacySection 'id')
+            if ($sectionId -match '^\d+$') { $legacySections[$sectionId] = $legacySection }
+        }
         $sections = @(Get-ITGlueDocumentImageProperty $attributes 'sections')
         if ($sections.Count -eq 0) { $sections = @(@{attributes=@{content=(Get-ITGlueDocumentImageProperty $attributes 'content')}}) }
         $sequence = [Collections.Generic.List[object]]::new()
@@ -155,6 +167,25 @@ function Get-ITGlueDocumentImageSequence {
                 $id = if ($references.Ids.Count -eq 1) { $references.Ids[0] } else { $null }
                 if ($id) { $sectionIds.Add($id) }
                 $sequence.Add([pscustomobject]@{Id=$id; Sources=$sources; Names=$references.Names; Metadata=$null})
+            }
+            # Legacy step screenshots live only in content[].resource, not in
+            # section.document-images. Keep them at their section's position.
+            $sectionId = [string](Get-ITGlueDocumentImageProperty $section 'id')
+            if ($legacySections.ContainsKey($sectionId)) {
+                $legacySection = $legacySections[$sectionId]
+                $resource = Get-ITGlueDocumentImageProperty $legacySection 'resource'
+                $filename = [string](Get-ITGlueDocumentImageProperty $resource 'screenshot_file_name')
+                $stepId = [string](Get-ITGlueDocumentImageProperty $resource 'id')
+                $owner = [string](Get-ITGlueDocumentImageProperty $legacySection 'document_id')
+                if ($filename -and $stepId -match '^\d+$' -and (-not $owner -or $owner -eq $DocumentId)) {
+                    $legacyMetadata = @{id=$stepId; type='legacy-step-screenshots'; attributes=@{
+                        name=$filename; 'document-id'=$DocumentId; 'section-id'=$sectionId
+                        'section-content'=[string](Get-ITGlueDocumentImageProperty $sectionAttributes 'content')
+                        size=(Get-ITGlueDocumentImageProperty $resource 'screenshot_file_size')
+                    }}
+                    $references = Get-ITGlueDocumentImageReferences @($filename)
+                    $sequence.Add([pscustomobject]@{Id=$stepId; Sources=@(); Names=$references.Names; Metadata=$legacyMetadata})
+                }
             }
             foreach ($image in @(Get-ITGlueDocumentImageProperty $sectionAttributes 'document-images')) {
                 if ($null -eq $image) { continue }
@@ -191,6 +222,7 @@ function Resolve-ITGlueDocumentImage {
         [string[]]$SourceValues,
         [int]$ImageIndex = -1,
         [string[]]$ExportImageTags = @(),
+        [string]$LegacyStepId,
         [Parameter(Mandatory)][hashtable]$Context
     )
     $result = [pscustomobject]@{File=$null; Record=$null; Reason=$null}
@@ -212,14 +244,24 @@ function Resolve-ITGlueDocumentImage {
         }
         if (@($references.DocumentIds | Where-Object { $_ -ne $documentId }).Count -gt 0) { throw 'Image reference belongs to another IT Glue document' }
         $id = $null; $metadata = $null; $method = 'ImageId'
-        if ($references.Ids.Count -eq 1) {
+        if ($LegacyStepId) {
+            if ($LegacyStepId -notmatch '^\d+$') { throw 'No numeric legacy step ID was supplied' }
+            $specific = @(Get-ITGlueDocumentImageSequence $Context $documentId | Where-Object {
+                $_.Id -eq $LegacyStepId -and (Get-ITGlueDocumentImageProperty $_.Metadata 'type') -eq 'legacy-step-screenshots'
+            })
+            if ($specific.Count -ne 1) { throw 'Legacy step ID does not identify one screenshot in this document' }
+            $id = $LegacyStepId; $metadata = $specific[0].Metadata; $method = 'LegacyStepId'
+        } elseif ($references.Ids.Count -eq 1) {
             $id = $references.Ids[0]
         } elseif ($references.Ids.Count -gt 1) {
             throw 'Image references contain conflicting image IDs'
         } else {
             $sequence = @(Get-ITGlueDocumentImageSequence $Context $documentId)
-            $named = @($sequence | Where-Object { @($_.Names | Where-Object { $_ -in $references.Names }).Count -gt 0 } | Group-Object Id)
-            if ($named.Count -eq 1 -and $named[0].Name -match '^\d+$') {
+            $named = @($sequence | Where-Object { @($_.Names | Where-Object { $_ -in $references.Names }).Count -gt 0 } | Group-Object {
+                $kind = if ((Get-ITGlueDocumentImageProperty $_.Metadata 'type') -eq 'legacy-step-screenshots') { 'step' } else { 'image' }
+                "$kind|$($_.Id)"
+            })
+            if ($named.Count -eq 1 -and $named[0].Group[0].Id -match '^\d+$') {
                 $item = $named[0].Group[0]; $method = 'DocumentImageFilename'
             } else {
                 if ($ImageIndex -lt 0 -or $ImageIndex -ge $sequence.Count -or $ExportImageTags.Count -ne $sequence.Count) { throw 'Cannot align exported images with IT Glue document sections' }
@@ -236,14 +278,16 @@ function Resolve-ITGlueDocumentImage {
             $id = $item.Id; $metadata = $item.Metadata
         }
         if ($id -notmatch '^\d+$') { throw 'No unambiguous IT Glue document image could be identified' }
-        if (-not $Context.Images.ContainsKey($id)) {
+        $isLegacyScreenshot = (Get-ITGlueDocumentImageProperty $metadata 'type') -eq 'legacy-step-screenshots'
+        if ($isLegacyScreenshot -and $references.StepIds.Count -gt 0 -and $id -notin $references.StepIds) { throw 'Image reference belongs to another legacy screenshot' }
+        if (-not $isLegacyScreenshot -and -not $Context.Images.ContainsKey($id)) {
             $Context.Images[$id] = $null
             # Read the image endpoint for fresh original URLs. Section metadata is
             # a fallback for gallery images already returned with the document.
             try { $Context.Images[$id] = Invoke-ITGlueDocumentImageMetadataRequest $Context "document_images/$id" }
             catch { if ($metadata) { $Context.Images[$id] = $metadata } else { throw } }
         }
-        $metadata = $Context.Images[$id]
+        if (-not $isLegacyScreenshot) { $metadata = $Context.Images[$id] }
         if ([string](Get-ITGlueDocumentImageProperty $metadata 'id') -ne $id) { throw 'IT Glue returned no matching document image' }
         $attributes = Get-ITGlueDocumentImageProperty $metadata 'attributes'
         $owner = [string](Get-ITGlueDocumentImageProperty $attributes 'document-id')
@@ -253,22 +297,49 @@ function Resolve-ITGlueDocumentImage {
             if ($members.Count -eq 0) { throw 'Cannot verify gallery image membership in this document' }
         }
         $record = [pscustomobject]@{
-            RecoveryKey="${documentId}:${ImageIndex}:$id"; ITGDocumentId=$documentId; ITGImageId=$id
-            DownloadedViaApi=$false; RecoverySource='ITGlueDocumentImagesApi'; MatchMethod=$method
+            RecoveryKey=if ($isLegacyScreenshot) { "${documentId}:${ImageIndex}:step-$id" } else { "${documentId}:${ImageIndex}:$id" }
+            ITGDocumentId=$documentId; ITGImageId=if ($isLegacyScreenshot) { $null } else { $id }
+            ITGStepId=if ($isLegacyScreenshot) { $id } else { $null }
+            DownloadedViaApi=$false; RecoverySource=if ($isLegacyScreenshot) { 'ITGlueLegacyStepScreenshot' } else { 'ITGlueDocumentImagesApi' }; MatchMethod=$method
             ReferenceSource=$referenceSource
+            ImageResourceType=if ($isLegacyScreenshot) { 'LegacyStepScreenshot' } else { 'DocumentImage' }
+            ITGSectionId=(Get-ITGlueDocumentImageProperty $attributes 'section-id')
+            DownloadUrlSource=if ($isLegacyScreenshot) { 'Unavailable' } else { 'DocumentImagesApi' }
             OriginalSources=@($SourceValues | ForEach-Object { [regex]::Replace($_, '(?i)(https?://[^?\s"''<>]+)\?[^"''\s<>]+', '$1') })
             FilePath=$null; DownloadVariant=$null; DownloadUrl=$null
             DownloadedAt=$null; UsedCachedDownload=$false; HuduImageUrl=$null; Status='Pending'; Problem=$null
         }
         $directory = Join-Path $Context.CachePath $documentId
         $null = [IO.Directory]::CreateDirectory($directory)
-        $cached = @(Get-ChildItem -LiteralPath $directory -File | Where-Object { $_.BaseName -eq $id -and $_.Extension -ne '.tmp' })
+        $cacheId = if ($isLegacyScreenshot) { "step-$id" } else { $id }
+        $cached = @(Get-ChildItem -LiteralPath $directory -File | Where-Object { $_.BaseName -eq $cacheId -and $_.Extension -ne '.tmp' })
         $file = $cached | Where-Object { Invoke-ImageTest -FilePath $_.FullName } | Select-Object -First 1
-        if ($file) { $record.UsedCachedDownload = $true }
+        if ($file) {
+            $record.UsedCachedDownload = $true; $record.DownloadUrlSource = 'Cache'
+            $priorDownload = @(Get-ITGlueDocumentImageProperty $Article 'ImageRecoveries' | Where-Object {
+                (Get-ITGlueDocumentImageProperty $_ 'FilePath') -eq $file.FullName -and
+                (Get-ITGlueDocumentImageProperty $_ 'ITGDocumentId') -eq $documentId -and
+                (Get-ITGlueDocumentImageProperty $_ 'ImageResourceType') -eq $record.ImageResourceType
+            }) | Select-Object -Last 1
+            if ($priorDownload) {
+                foreach ($property in @('DownloadUrlSource', 'DownloadVariant', 'DownloadedViaApi')) {
+                    $value = Get-ITGlueDocumentImageProperty $priorDownload $property
+                    if ($null -ne $value) { $record.$property = $value }
+                }
+                $record.DownloadUrl = ([string](Get-ITGlueDocumentImageProperty $priorDownload 'DownloadUrl') -split '\?', 2)[0]
+            }
+        }
         else {
             $downloadProblem = 'No usable image download URL was returned'
-            foreach ($variant in @('original-src', 'slim-src', 'thumbnail-src')) {
-                $url = [string](Get-ITGlueDocumentImageProperty $attributes $variant)
+            $downloadUrls = if ($isLegacyScreenshot) {
+                if (-not $Context.LegacyScreenshotUrlResolver) { throw 'Legacy step screenshot is missing from the export and has no download URL in the public API' }
+                @(& $Context.LegacyScreenshotUrlResolver $Context $documentId $id)
+            } else {
+                @('original-src', 'slim-src', 'thumbnail-src' | ForEach-Object { [pscustomobject]@{Variant=$_; Url=[string](Get-ITGlueDocumentImageProperty $attributes $_)} })
+            }
+            foreach ($download in $downloadUrls) {
+                $variant = $download.Variant
+                $url = $download.Url
                 $uri = $null
                 if (-not [Uri]::TryCreate($url, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne 'https') { continue }
                 $temporaryPath = Join-Path $directory "$id-$([guid]::NewGuid().ToString('N')).tmp"
@@ -281,11 +352,13 @@ function Resolve-ITGlueDocumentImage {
                     $extension = Get-ImageTypeFromSignature $temporaryPath
                     if (-not $extension) { $extension = [IO.Path]::GetExtension([string](Get-ITGlueDocumentImageProperty $attributes 'name')).TrimStart('.') }
                     if ($extension -notmatch '^(png|jpe?g|gif|bmp|tiff?|webp|svg|ico|heic|avif)$') { throw 'Downloaded image format is not supported' }
-                    $destination = Join-Path $directory "$id.$extension"
+                    $destination = Join-Path $directory "$cacheId.$extension"
                     [IO.File]::Move($temporaryPath, $destination, $true)
                     $temporaryPath = $null
                     $file = Get-Item -LiteralPath $destination
                     $record.DownloadVariant = $variant
+                    $downloadSource = Get-ITGlueDocumentImageProperty $download 'Source'
+                    if ($downloadSource) { $record.DownloadUrlSource = $downloadSource }
                     # Signed query strings are deliberately omitted from logs.
                     $record.DownloadUrl = $uri.GetLeftPart([UriPartial]::Path)
                     break
@@ -294,7 +367,7 @@ function Resolve-ITGlueDocumentImage {
             }
             if (-not $file) { throw $downloadProblem }
         }
-        $record.DownloadedViaApi = $true
+        $record.DownloadedViaApi = $record.DownloadedViaApi -or -not $isLegacyScreenshot -or $record.DownloadUrlSource -in @('JWTApi', 'JWTDocumentEditor')
         $record.FilePath = $file.FullName
         $record.DownloadedAt = $file.LastWriteTimeUtc.ToString('o')
         $record.Status = 'Downloaded'

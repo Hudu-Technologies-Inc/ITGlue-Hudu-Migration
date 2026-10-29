@@ -2176,7 +2176,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                     $imagePathResolvedFromAttachment = $false
                     $imageRecovery = $null
                     $sourceReferences = Get-ITGlueDocumentImageReferences @([string]$imageObject.src, [string]$imageObject.outerHTML)
-                    if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0) {
+                    if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0 -or $sourceReferences.StepIds.Count -gt 0) {
                         $script:HasImages = $true
                         $imgHTML = $imageObject.outerHTML
                         Write-Host "Processing HTML: $imgHTML"
