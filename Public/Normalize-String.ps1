@@ -870,7 +870,7 @@ function Format-MigrationSummary {
         $estimateWorkerText = if ($PSBoundParameters.ContainsKey('EstimateCommitWorkerCount') -and $null -ne $EstimateCommitWorkerCount) { " using $EstimateCommitWorkerCount commit worker(s)" } else { '' }
 
         $lines.Add("Estimated Finish: $EstimatedCompletionAt$estimateDurationText$estimateWorkerText")
-        $lines.Add("Estimate Was: $($estimateDeltaDuration.ToString('hh\:mm\:ss')) $estimateDeltaLabel")
+        $lines.Add("Finish vs Estimate: $($estimateDeltaDuration.ToString('hh\:mm\:ss')) $estimateDeltaLabel")
     }
     $lines.Add("Git Info:     $(Get-GitCheckoutInfo)")
     $lines.Add("Hudu Host:    $(Get-HuduBaseurl)")
