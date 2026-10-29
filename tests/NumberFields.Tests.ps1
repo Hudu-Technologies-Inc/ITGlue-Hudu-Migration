@@ -25,7 +25,7 @@ foreach ($text in @('0','0.01','-0.01','12.34','2147483648','9007199254740993','
     $actual = ConvertTo-HuduNumber $text $plain
     Assert-Number ($actual.IsValid -and $actual.Value -ceq $text -and $actual.Value -is [string]) "Plain number lost precision: $text"
 }
-foreach ($text in @('9223372036854775808','-9223372036854775808','9223372036854775807.01','-9223372036854775807.01','1e-325','1e3','$12.34','12.5%','π','NaN','Infinity','1+2i','12,34','1,234.56','null')) {
+foreach ($text in @('9223372036854775808','-9223372036854775808','9223372036854775807.01','-9223372036854775807.01','1e1000000000','1e-1000000000','$12.34','12.5%','π','NaN','Infinity','1+2i','1,234','12,34,567','null')) {
     Assert-Number (-not (ConvertTo-HuduNumber $text $plain).IsValid) "Invalid text accepted: $text"
 }
 foreach ($value in @($false, $true, @(), @{}, [double]::NaN, [double]::PositiveInfinity)) {
@@ -38,15 +38,21 @@ foreach ($value in @($null, '', '  ')) {
 Assert-Number ((ConvertTo-HuduNumber ' +00012.3400 ' $plain).Value -ceq '12.34') 'Canonicalization changed magnitude.'
 Assert-Number ((ConvertTo-HuduNumber '-0.000' $plain).Value -ceq '0') 'Negative zero was not preserved numerically.'
 Assert-Number ((ConvertTo-HuduNumber '12.34' $usd).IsValid) 'USD cents rejected.'
-Assert-Number (-not (ConvertTo-HuduNumber '12.345' $usd).IsValid) 'USD extra decimal was rounded or accepted.'
+Assert-Number ((ConvertTo-HuduNumber '12.345' $usd).Value -ceq '12.35') 'USD extra precision was not rounded.'
 Assert-Number ((ConvertTo-HuduNumber '-1' $usd).IsValid) 'USD negative rejected.'
+foreach ($code in @('USD', 'EUR', 'AUD')) {
+    $regionalCurrency = @{number_type='currency'; currency_code=$code}
+    Assert-Number ((ConvertTo-HuduNumber '12.34' $regionalCurrency).IsValid) "$code cents rejected without a user precision option."
+    $roundedCurrency = ConvertTo-HuduNumber '12.345' $regionalCurrency
+    Assert-Number ($roundedCurrency.IsValid -and $roundedCurrency.Value -ceq '12.35' -and $roundedCurrency.Warning.Contains('12.345')) "$code rounding lost the amount or the audit warning."
+}
 Assert-Number ((ConvertTo-HuduNumber '-2147483649' $percent).IsValid) 'Negative percentage rejected.'
 Assert-Number ((ConvertTo-HuduNumber '100' $percent).IsValid) '100 percent rejected.'
 Assert-Number (-not (ConvertTo-HuduNumber '100.01' $percent).IsValid) 'Percentage above 100 accepted.'
 Assert-Number ((ConvertTo-HuduNumber '12.5' $percent).Value -ceq '12.5') 'Percentage was rescaled.'
 Assert-Number (-not (ConvertTo-HuduNumber '1' @{number_type='currency';currency_code='JPY'}).IsValid) 'Untested currency precision was assumed.'
 Assert-Number ((ConvertTo-HuduNumber '1' @{number_type='currency';currency_code='JPY'} -CurrencyDecimalPlaces 0).IsValid) 'Explicit currency precision ignored.'
-Assert-Number (-not (ConvertTo-HuduNumber '1.1' @{number_type='currency';currency_code='JPY'} -CurrencyDecimalPlaces 0).IsValid) 'Explicit zero-decimal policy ignored.'
+Assert-Number ((ConvertTo-HuduNumber '1.5' @{number_type='currency';currency_code='JPY'} -CurrencyDecimalPlaces 0).Value -ceq '2') 'Destination zero-decimal policy ignored.'
 Assert-Number (-not (ConvertTo-HuduNumber '0.01' $plain -CurrentVersion '2.47.0').IsValid) 'Legacy decimal was rounded.'
 Assert-Number ((ConvertTo-HuduNumber '2147483647' $plain -CurrentVersion '2.47.0').IsValid) 'Legacy integer rejected.'
 Assert-Number (-not (ConvertTo-HuduNumber '2147483648' $plain -CurrentVersion '2.47.0').IsValid) 'Legacy overflow was coerced.'
@@ -72,6 +78,55 @@ try {
 Assert-Number ((Get-CastIfNumeric '0.01') -ceq '0.01') 'Compatibility helper still rounds.'
 Assert-Number ((Get-CastIfNumeric '000123ABC') -ceq '000123ABC') 'Compatibility helper changes identifiers.'
 
+foreach ($example in @(
+    @{Input='.5';Expected='0.5';Definition=$plain},
+    @{Input='12.';Expected='12';Definition=$plain},
+    @{Input='1e3';Expected='1000';Definition=$plain},
+    @{Input='1.234e-2';Expected='0.01234';Definition=$plain},
+    @{Input='9.223372036854775807e18';Expected='9223372036854775807';Definition=$plain},
+    @{Input='1e-325';Expected=('0.' + ('0' * 324) + '1');Definition=$plain},
+    @{Input='1,234.56';Expected='1234.56';Definition=$plain},
+    @{Input='1.234,56';Expected='1234.56';Definition=$plain},
+    @{Input='12,34';Expected='12.34';Definition=$plain},
+    @{Input='1,234,567';Expected='1234567';Definition=$plain},
+    @{Input='1.234.567';Expected='1234567';Definition=$plain},
+    @{Input='1 234.56';Expected='1234.56';Definition=$plain},
+    @{Input="1$([char]0x202f)234,56";Expected='1234.56';Definition=$plain},
+    @{Input="1'234.56";Expected='1234.56';Definition=$plain},
+    @{Input='(12.34)';Expected='-12.34';Definition=$plain},
+    @{Input='12.5%';Expected='12.5';Definition=$percent},
+    @{Input='12,5 %';Expected='12.5';Definition=$percent},
+    @{Input='$1,234.56';Expected='1234.56';Definition=$usd},
+    @{Input='USD 12.345';Expected='12.35';Definition=$usd},
+    @{Input='12.345 USD';Expected='12.35';Definition=$usd},
+    @{Input='-$12.345';Expected='-12.35';Definition=$usd},
+    @{Input='$-12.345';Expected='-12.35';Definition=$usd},
+    @{Input='($1,234.565)';Expected='-1234.57';Definition=$usd},
+    @{Input='€1.234,565';Expected='1234.57';Definition=@{number_type='currency';currency_code='EUR'}},
+    @{Input='$1,234.565';Expected='1234.57';Definition=@{number_type='currency';currency_code='AUD'}},
+    @{Input='1.005';Expected='1.01';Definition=$usd},
+    @{Input='-1.005';Expected='-1.01';Definition=$usd},
+    @{Input='9.995';Expected='10';Definition=$usd},
+    @{Input='-0.004';Expected='0';Definition=$usd},
+    @{Input='1e-325';Expected='0';Definition=$usd},
+    @{Input='12.344999999999999999999999999999999999';Expected='12.34';Definition=$usd},
+    @{Input='12.345000000000000000000000000000000001';Expected='12.35';Definition=$usd}
+)) {
+    $actual = ConvertTo-HuduNumber $example.Input $example.Definition
+    Assert-Number ($actual.IsValid -and $actual.Value -is [string] -and $actual.Value -ceq $example.Expected) "Numeric format conversion failed: $($example.Input) -> $($example.Expected) ($($actual.Reason))"
+}
+foreach ($invalidCurrency in @('€12.34','EUR 12.34','USD -$12.34','(-$12.34)','$1,234','$1,23,45','12 dollars','$12.34%')) {
+    Assert-Number (-not (ConvertTo-HuduNumber $invalidCurrency $usd).IsValid) "Ambiguous, mismatched or malformed currency accepted: $invalidCurrency"
+}
+Assert-Number (-not (ConvertTo-HuduNumber '$12.34' $plain).IsValid) 'Currency markers were stripped from a plain number field.'
+Assert-Number (-not (ConvertTo-HuduNumber '100.01%' $percent).IsValid) 'Formatting bypassed percentage bounds.'
+Assert-Number (-not (ConvertTo-HuduNumber '12.345' @{number_type='currency';currency_code='USD';max='12.34'}).IsValid) 'Rounding bypassed a destination maximum.'
+Assert-Number (-not (ConvertTo-HuduNumber '0.004' @{number_type='currency';currency_code='USD';min='0.001'}).IsValid) 'Rounding bypassed a destination minimum.'
+Assert-Number (-not (ConvertTo-HuduNumber '9223372036854775807.995' $usd).IsValid) 'Rounding overflow bypassed the destination range.'
+Assert-Number (-not (ConvertTo-HuduNumber '12.3400' $usd).Warning) 'Exact conversion incorrectly warned about rounding.'
+Assert-Number ((ConvertTo-HuduNumber '4.0e0' $plain -CurrentVersion '2.47.0').Value -ceq '4') 'Exactly integral numeric text was rejected for a legacy integer field.'
+Assert-Number (-not (ConvertTo-HuduNumber '4.1' $plain -CurrentVersion '2.47.0').IsValid) 'Fractional source was silently truncated for a legacy integer field.'
+
 $source = [pscustomobject]@{id='42'; attributes=[pscustomobject]@{kind='Percent';decimals=6}}
 $mapping = Get-HuduNumberFieldMapping $source
 Assert-Number ($mapping.LayoutAttributes.number_type -eq 'percentage' -and $mapping.SourceDecimals -eq 6) 'Explicit Percent metadata was not mapped.'
@@ -80,37 +135,49 @@ $oldMapping = Get-HuduNumberFieldMapping $source -CurrentVersion '2.47.0'
 Assert-Number (-not $oldMapping.LayoutAttributes.ContainsKey('number_type')) 'Subtype attributes leaked to older Hudu.'
 $source.attributes.kind = 'Number'
 $source.attributes | Add-Member -NotePropertyName name -NotePropertyValue 'Price in USD'
-Assert-Number ((Get-HuduNumberFieldMapping $source -CurrencyInference @{Enabled=$false}).LayoutAttributes.number_type -eq 'number') 'Disabled label inference changed the API kind.'
-$currencyMapping = Get-HuduNumberFieldMapping $source -Overrides @{'42'=@{NumberType='currency';CurrencyCode='USD'}}
-Assert-Number ($currencyMapping.LayoutAttributes.currency_code -eq 'USD' -and $currencyMapping.CurrencyDecimalPlaces -eq 2) 'Explicit currency override not applied.'
-Assert-Number ((Get-HuduNumberFieldMapping $source).LayoutAttributes.number_type -eq 'currency') 'Explicit USD label was not inferred.'
-$inference = @{ Enabled=$true; DefaultCurrencyCode='USD' }
+$currencyMapping = Get-HuduNumberFieldMapping $source
+Assert-Number ($currencyMapping.LayoutAttributes.currency_code -eq 'USD' -and $currencyMapping.CurrencyDecimalPlaces -eq 2) 'Explicit USD label was not inferred.'
 foreach ($label in @('Monthly cost','Annual Spend','Outstanding debt','Unit price','Budget','Expenses','Service fee','Total ($)','cost_per_month')) {
     $source.attributes.name = $label
-    $inferred = Get-HuduNumberFieldMapping $source -CurrencyInference $inference
-    Assert-Number ($inferred.LayoutAttributes.number_type -eq 'currency' -and $inferred.LayoutAttributes.currency_code -eq 'USD' -and $inferred.MappingSource -eq 'LabelHeuristic') "Monetary label not inferred: $label"
+    foreach ($region in @(
+        @{Endpoint='https://api.itglue.com';Code='USD'},
+        @{Endpoint=' https://API.EU.itglue.com/ ';Code='EUR'},
+        @{Endpoint='https://api.au.itglue.com';Code='AUD'}
+    )) {
+        $inferred = Get-HuduNumberFieldMapping $source -ITGAPIEndpoint $region.Endpoint
+        Assert-Number ($inferred.LayoutAttributes.number_type -eq 'currency' -and $inferred.LayoutAttributes.currency_code -eq $region.Code -and $inferred.CurrencyDecimalPlaces -eq 2 -and $inferred.MappingSource -eq 'LabelHeuristic') "Monetary label not inferred for $($region.Code): $label"
+    }
 }
 foreach ($label in @('Costume count','Number of users','Cost center','Debt ratio','Cost (%)','Spending ID','Total USD / EUR')) {
     $source.attributes.name = $label
-    Assert-Number ((Get-HuduNumberFieldMapping $source -CurrencyInference $inference).LayoutAttributes.number_type -eq 'number') "Nonnumeric/ambiguous currency label inferred: $label"
+    Assert-Number ((Get-HuduNumberFieldMapping $source).LayoutAttributes.number_type -eq 'number') "Nonnumeric/ambiguous currency label inferred: $label"
 }
 $source.attributes.name = 'Cost ($)'
-$unresolved = Get-HuduNumberFieldMapping $source
-Assert-Number ($unresolved.LayoutAttributes.number_type -eq 'number' -and $unresolved.CurrencyCandidate -and $unresolved.MappingReason.Contains('unresolved')) 'Dollar symbol assumed USD without configuration.'
+Assert-Number ((Get-HuduNumberFieldMapping $source -ITGAPIEndpoint 'https://api.au.itglue.com').LayoutAttributes.currency_code -eq 'AUD') 'Ambiguous dollar symbol did not use the datacenter default.'
 $source.attributes.name = 'Cost EUR'
-Assert-Number ((Get-HuduNumberFieldMapping $source -CurrencyInference $inference).LayoutAttributes.number_type -eq 'number') 'Unknown EUR precision assumed or explicit EUR replaced with default USD.'
-$euro = Get-HuduNumberFieldMapping $source -CurrencyInference @{Enabled=$true;DefaultCurrencyCode='USD';DecimalPlacesByCurrency=@{EUR=2}}
-Assert-Number ($euro.LayoutAttributes.currency_code -eq 'EUR') 'Explicit label currency did not take precedence over default currency.'
+$euro = Get-HuduNumberFieldMapping $source -ITGAPIEndpoint 'https://api.au.itglue.com'
+Assert-Number ($euro.LayoutAttributes.currency_code -eq 'EUR' -and $euro.CurrencyDecimalPlaces -eq 2) 'Explicit label currency did not take precedence over default currency.'
+$source.attributes.name = 'Cost JPY'
+$unknownPrecision = Get-HuduNumberFieldMapping $source
+Assert-Number ($unknownPrecision.LayoutAttributes.number_type -eq 'number' -and $null -eq $unknownPrecision.CurrencyDecimalPlaces) 'Unknown currency precision was guessed.'
 $source.attributes.name = 'Annual cost'
-Assert-Number ((Get-HuduNumberFieldMapping $source -Overrides @{'42'=@{NumberType='number'}} -CurrencyInference $inference).LayoutAttributes.number_type -eq 'number') 'Explicit plain-number override lost to heuristic.'
+# Stale options in existing sessions cannot override the automatic mapping.
+$ITGlueNumberFieldOverrides = @{'42'=@{NumberType='number'}}
+$ITGlueCurrencyInference = @{Enabled=$false;DefaultCurrencyCode='JPY'}
+Assert-Number ((Get-HuduNumberFieldMapping $source).LayoutAttributes.number_type -eq 'currency') 'Retired user options still alter numeric mapping.'
 $source.attributes.kind = 'Percent'
-Assert-Number ((Get-HuduNumberFieldMapping $source -CurrencyInference $inference).LayoutAttributes.number_type -eq 'percentage') 'Currency heuristic overrode Percent metadata.'
+Assert-Number ((Get-HuduNumberFieldMapping $source).LayoutAttributes.number_type -eq 'percentage') 'Currency heuristic overrode Percent metadata.'
 $source.attributes.kind = 'Number'
-$oldInferred = Get-HuduNumberFieldMapping $source -CurrentVersion '2.47.0' -CurrencyInference $inference
+$oldInferred = Get-HuduNumberFieldMapping $source -CurrentVersion '2.47.0'
 Assert-Number (-not $oldInferred.LayoutAttributes.ContainsKey('number_type') -and $oldInferred.SourceNumberType -eq 'number') 'Label heuristic was applied on older Hudu.'
-$unknownCurrencyFailed = $false
-try { Get-HuduNumberFieldMapping $source -Overrides @{'42'=@{NumberType='currency'}} | Out-Null } catch { $unknownCurrencyFailed = $true }
-Assert-Number $unknownCurrencyFailed 'Currency mapping guessed a code.'
+$source.attributes.kind = 'Currency'
+$nativeCurrency = Get-HuduNumberFieldMapping $source -ITGAPIEndpoint 'https://api.eu.itglue.com'
+Assert-Number ($nativeCurrency.LayoutAttributes.currency_code -eq 'EUR' -and $nativeCurrency.CurrencyDecimalPlaces -eq 2 -and $nativeCurrency.MappingSource -eq 'ITGlueKind') 'Native currency metadata required a user override.'
+$source.attributes | Add-Member -NotePropertyName 'currency-code' -NotePropertyValue 'AUD'
+Assert-Number ((Get-HuduNumberFieldMapping $source).LayoutAttributes.currency_code -eq 'AUD') 'Explicit currency metadata was replaced with the datacenter default.'
+$source.attributes.kind = 'Number'
+$source.attributes.name = 'Amount'
+Assert-Number ((Get-HuduNumberFieldMapping $source).MappingSource -eq 'ITGlueCurrencyMetadata') 'Currency metadata on a Number field was ignored.'
 $numericField = [pscustomobject]@{FieldType='Number';FieldName='cost';HuduLayoutField=$currencyMapping.LayoutAttributes}
 $saved = [pscustomobject]@{fields=@([pscustomobject]@{label='Cost';field_type='Number';number_type='currency';currency_code='USD';min=0})}
 Confirm-HuduNumberLayoutMapping @($numericField) $saved '2.48.0'
@@ -134,13 +201,13 @@ Assert-Number ($prepared.Count -eq 1 -and $prepared[0].Status -eq 'prepared') 'P
 $wire = @{}
 foreach ($entry in $prepared[0].AssetUpdateRequest.Fields) { foreach ($key in $entry.Keys) { $wire[$key] = $entry[$key] } }
 Assert-Number ($wire.amount -ceq $longFraction -and $wire.amount -is [string]) 'Parallel numeric precision lost.'
-Assert-Number (-not $wire.ContainsKey('rate') -and -not $wire.ContainsKey('cost')) 'Rejected numeric fields were sent.'
+Assert-Number (-not $wire.ContainsKey('rate') -and $wire.cost -ceq '12.35') 'Invalid percentage was sent or rounded currency was omitted.'
 Assert-Number ($wire.identifier -ceq '000123') 'Numeric-looking text identifier changed.'
-Assert-Number ($prepared[0].ManualActions.Count -eq 2 -and '12.345' -in $prepared[0].ManualActions.Data) 'Invalid originals missing from manual actions.'
+Assert-Number ($prepared[0].ManualActions.Count -eq 1 -and $prepared[0].ManualActions[0].Data -ceq '100.01') 'Invalid original percentage missing from manual actions.'
 $ManualActions = [System.Collections.ArrayList]@()
 $serial = Start-FlexibleAssetContentsExample $asset -WarningAction SilentlyContinue
 Assert-Number ($serial.amount -ceq $wire.amount -and $serial.identifier -ceq '000123') 'Serial/parallel output differs.'
-Assert-Number (-not $serial.ContainsKey('rate') -and -not $serial.ContainsKey('cost') -and $ManualActions.Count -eq 2) 'Serial path does not report invalid numbers.'
+Assert-Number (-not $serial.ContainsKey('rate') -and $serial.cost -ceq $wire.cost -and $ManualActions.Count -eq 1) 'Serial and parallel rounding or rejection differs.'
 
 # Missing numeric metadata omits only that value and preserves the rest of the asset.
 $missingField = [pscustomobject]@{IGLayoutID=1;ITGParsedName='amount';HuduParsedName='amount';FieldName='Amount';FieldType='Number';HuduLayoutField=$null}
@@ -161,7 +228,6 @@ $observations = @(Import-Csv "$PSScriptRoot/fixtures/number-fields-2.48.0.csv")
 Assert-Number ($observations.Count -eq 12) 'Expected anonymized 2.48.0 regression observations.'
 foreach ($sample in @(
     @{Subtype='Number';Case='decimal-50-string';Accepted=$true},
-    @{Subtype='Currency';Case='decimal-three-string';Accepted=$false},
     @{Subtype='Percentage';Case='percent-over-string';Accepted=$false},
     @{Subtype='Number';Case='int64-over-string';Accepted=$false}
 )) {
@@ -171,12 +237,16 @@ foreach ($sample in @(
     $actual = ConvertTo-HuduNumber $inputText $definition
     Assert-Number ($actual.IsValid -eq $sample.Accepted -and (($row.HttpStatus -eq '200') -eq $sample.Accepted)) "Policy disagrees with live sample $($sample.Case)."
 }
+# The saved API observation rejects 12.345; the migration now sends rounded 12.35.
+$currencyObservation = $observations | Where-Object { $_.Operation -eq 'Create' -and $_.Subtype -eq 'Currency' -and $_.CaseId -eq 'decimal-three-string' }
+$roundedObservation = ConvertTo-HuduNumber (ConvertFrom-Json $currencyObservation.SubmittedJson) $usd
+Assert-Number ($currencyObservation.HttpStatus -eq '422' -and $roundedObservation.IsValid -and $roundedObservation.Value -ceq '12.35' -and $roundedObservation.Warning) 'Raw rejected currency sample was not converted to a supported two-decimal value.'
 # Exercise the companion transfer helper without starting its UI or calling Hudu.
 $tokens = $null; $parseErrors = $null
 $transferAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../Start-HuduAssetLayoutTransfer.ps1'), [ref]$tokens, [ref]$parseErrors)
 $transferFunction = $transferAst.FindAll({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-CastIfNumeric'}, $true) | Select-Object -First 1
 Invoke-Expression $transferFunction.Extent.Text
 Assert-Number ((Get-CastIfNumeric '0.01' -FieldDefinition $plain -CurrentVersion '2.48.0') -ceq '0.01') 'Transfer still rounds decimals.'
-Assert-Number ($null -eq (Get-CastIfNumeric '$12.34' -FieldDefinition $usd -CurrentVersion '2.48.0' -WarningAction SilentlyContinue)) 'Transfer stripped currency symbols into digits.'
+Assert-Number ((Get-CastIfNumeric '$12.34' -FieldDefinition $usd -CurrentVersion '2.48.0') -ceq '12.34') 'Transfer did not convert a matching currency symbol.'
 Assert-Number ($null -eq (Get-CastIfNumeric '9223372036854775808' -FieldDefinition $plain -CurrentVersion '2.48.0' -WarningAction SilentlyContinue)) 'Transfer allows overflow that clears the field.'
 Write-Output "Passed $checks numeric migration checks (offline)."

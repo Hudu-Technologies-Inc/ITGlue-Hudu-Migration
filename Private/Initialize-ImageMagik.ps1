@@ -2,7 +2,7 @@
 Write-Host "Adding Imagemagick commands from dot NET assemblies" -ForegroundColor Cyan
 try {
     if (!('ImageMagick.MagickImage' -as [type])) {
-        Add-Type -Path '.\Magick.NET-Q16-AnyCPU.dll'
+        Add-Type -Path (Join-Path $PSScriptRoot '..\Magick.NET-Q16-AnyCPU.dll')
     }
 }
 catch {

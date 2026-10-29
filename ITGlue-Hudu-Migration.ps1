@@ -1,3 +1,5 @@
+param([string]$SettingsFile)
+
 if ($MyInvocation.InvocationName -eq '.') {
     Write-Host "Script was dot-sourced" -ForegroundColor Green
 } else {
@@ -6,10 +8,7 @@ if ($MyInvocation.InvocationName -eq '.') {
 }
 
 # Main settings load
-$FirstTimeLoad = 1
-. $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full'
-$ITGlueNumberFieldOverrides = $ITGlueNumberFieldOverrides ?? @{}
-$ITGlueCurrencyInference = $ITGlueCurrencyInference ?? @{ Enabled = $true }
+. $PSScriptRoot\Initialize-Module.ps1 -InitType 'Full' -SettingsFile $SettingsFile
 
 # Use this to set the context of the script runs
 
@@ -189,9 +188,11 @@ if ($backups -notin @("Y", "y")) {
 }
 
 
-if (Test-Path -Path "$MigrationLogs") {
-    if (-not ([string]::IsNullOrEmpty($guiSettingsDir)) -and (test-path $guiSettingsDir)){
-        Write-Host "Settings loaded from frontend, skipping path checks for logs/errors dir. Migration log dir was set to: $MigrationLogs; Gui settings at $guiSettingsDir" -ForegroundColor Green
+$ResumeFound = $false
+if (Test-Path -LiteralPath $MigrationLogs -PathType Container) {
+    $hasSavedMigrationLogs = Test-MigrationRunLogs $MigrationLogs
+    if (-not $hasSavedMigrationLogs) {
+        Write-Host "New migration log directory: $MigrationLogs" -ForegroundColor Green
     } elseif ($ResumePrevious -eq $true) {
         Write-Host "A previous attempt has been found job will be resumed from the last successful section" -ForegroundColor Green
         $ResumeFound = $true
@@ -1338,7 +1339,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
     # Match to existing layouts
     $MatchedLayouts = foreach ($ITGLayout in $FlexLayouts) {
         if ($skipIntegratorLayouts -and $true -eq $skipIntegratorLayouts){
-            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or "$($ITGLayout.attributes.name)" -ilike "*(liongard)*" -or "$($ITGLayout.attributes.name)" -ilike "*datto*rmm*" -or "$($ITGLayout.attributes.name)" -ilike "*connectwise*"  -or "$($ITGLayout.attributes.name)" -ilike "*autotask*" -or "$($ITGLayout.attributes.name)" -match '^Office 365 Licenses \[[0-9a-f]{4}\]$' ){
+            if ("$($ITGLayout.attributes.name)" -ilike "*(auto)*" -or "$($ITGLayout.attributes.name)" -ilike "*(liongard)*" -or "$($ITGLayout.attributes.name)" -ilike "*datto*rmm*" -or "$($ITGLayout.attributes.name)" -ilike "*connectwise*"  -or "$($ITGLayout.attributes.name)" -ilike "*autotask*" -or "$($ITGLayout.attributes.name)"  -match '^Office 365 Licenses \[([0-9a-f]{4}([0-9a-f]{2})?|Disconnected)\]$' ){
                 Write-warning "Skipping Integrator Layout $($ITGLayout.attributes.name)"
                 continue
             }
@@ -1464,7 +1465,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
 
         foreach ($UpdateLayout in $MatchedLayouts) {
             if ($skipIntegratorLayouts -and $true -eq $skipIntegratorLayouts){
-                if ("$($UpdateLayout.Name)" -ilike "*(auto)*" -or "$($UpdateLayout.Name)" -ilike "*(liongard)*" -or "$($UpdateLayout.Name)" -ilike "*datto*rmm*" -or "$($UpdateLayout.Name)" -ilike "*connectwise*"  -or "$($UpdateLayout.Name)" -ilike "*autotask*" -or "$($UpdateLayout.Name)" -match '^Office 365 Licenses \[[0-9a-f]{4}\]$' ){ 
+                if ("$($UpdateLayout.Name)" -ilike "*(auto)*" -or "$($UpdateLayout.Name)" -ilike "*(liongard)*" -or "$($UpdateLayout.Name)" -ilike "*datto*rmm*" -or "$($UpdateLayout.Name)" -ilike "*connectwise*"  -or "$($UpdateLayout.Name)" -ilike "*autotask*" -or "$($UpdateLayout.Name)"  -match '^Office 365 Licenses \[([0-9a-f]{4}([0-9a-f]{2})?|Disconnected)\]$' ){
                     Write-Host "Skipping Integrator Layout $($UpdateLayout.Name)" -ForegroundColor Yellow
                     continue
                 }
@@ -1534,7 +1535,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
                         $LayoutField.add("field_type", "Heading")
                     }
                     { $_ -in @('Number', 'Percent', 'Currency') } {
-                        $numberMapping = Get-HuduNumberFieldMapping -SourceField $ITGField -CurrentVersion $CurrentVersion -Overrides $ITGlueNumberFieldOverrides -CurrencyInference $ITGlueCurrencyInference
+                        $numberMapping = Get-HuduNumberFieldMapping -SourceField $ITGField -CurrentVersion $CurrentVersion -ITGAPIEndpoint $ITGAPIEndpoint
                         if ($numberMapping.MappingSource -eq 'LabelHeuristic' -or $numberMapping.CurrencyCandidate) {
                             Write-Host "Numeric mapping '$($ITGField.Attributes.name)' (ITGlue field $($ITGField.id)): $($numberMapping.MappingReason)" -ForegroundColor Yellow
                         }

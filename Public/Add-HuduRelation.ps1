@@ -1,31 +1,37 @@
-# Check if this is a direct run, and load the logs if so the first time.
-if (-not ($FirstTimeLoad -eq 1)) {
-    if (-not $MatchedPasswords) {$MatchedPasswords = (Get-Content -path "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
-    if (-not $MatchedAssetPasswords) {$MatchedAssetPasswords = (Get-Content -path "$MigrationLogs\AssetPasswords.json" | ConvertFrom-json -depth 100) }
-    if (-not $MatchedArticles) {$MatchedArticles = (Get-Content -path "$MigrationLogs\Articles.json" | ConvertFrom-json -depth 100) }
-    if (-not $MatchedCompanies) {$MatchedCompanies = (Get-Content -path "$MigrationLogs\Companies.json" | ConvertFrom-json -depth 100) }
-    # Set the context so logs don't run again unless the powershell window gets closed.
-    $FirstTimeLoad = 1
-}
-
 function Add-HuduRelation {
     param(
         $relation
     )
 
-    switch ($relation.relation_type) {
+    # Loading this helper during initialization must not read logs or mark the
+    # module initialized. Only look for logs when a relation is actually requested.
+    $targetSources = switch ($relation.relation_type) {
         "AssetPassword" {
-            if (!($HuduLinkedObject = $MatchedPasswords | Where-Object {$_.ITGID -eq $relation.itg_to_id})) {
-                $HuduLinkedObject = $MatchedAssetPasswords | Where-Object {$_.ITGID -eq $relation.itg_to_id}
-            }
+            @{ Variable = 'MatchedPasswords'; File = 'Passwords.json' }
+            @{ Variable = 'MatchedAssetPasswords'; File = 'AssetPasswords.json' }
         }
         "Article" {
-            $HuduLinkedObject = $MatchedArticles | Where-Object {$_.ITGID -eq $relation.itg_to_id}
+            @{ Variable = 'MatchedArticles'; File = 'Articles.json' }
         }
         "Company" {
-            $HuduLinkedObject = $MatchedCompanies | Where-Object {$_.ITGID -eq $relation.itg_to_id}
+            @{ Variable = 'MatchedCompanies'; File = 'Companies.json' }
         }
-        default {Write-Warning "No matching relationship type found"}
+        default { Write-Warning "No matching relationship type found" }
+    }
+    $HuduLinkedObject = $null
+    foreach ($source in $targetSources) {
+        $targets = Get-Variable -Name $source.Variable -ValueOnly -ErrorAction Ignore
+        if (-not $targets) {
+            $logsPath = Get-Variable -Name MigrationLogs -ValueOnly -ErrorAction Ignore
+            if (-not [string]::IsNullOrWhiteSpace($logsPath)) {
+                $path = Join-Path $logsPath $source.File
+                if (Test-Path -LiteralPath $path -PathType Leaf) {
+                    $targets = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -Depth 100
+                }
+            }
+        }
+        $HuduLinkedObject = $targets | Where-Object { $_.ITGID -eq $relation.itg_to_id }
+        if ($HuduLinkedObject) { break }
     }
 
     if ($HuduLinkedObject) {

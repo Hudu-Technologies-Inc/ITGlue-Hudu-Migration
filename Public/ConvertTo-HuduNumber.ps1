@@ -36,15 +36,105 @@ function ConvertTo-HuduDecimalText {
     } elseif ($Value -is [double] -or $Value -is [single]) {
         $text = $Value.ToString('R', [cultureinfo]::InvariantCulture)
     } else { return $null }
-    $match = [regex]::Match($text, '^(?<sign>[+-]?)(?<whole>[0-9]+)(?:\.(?<fraction>[0-9]+))?$')
+    $match = [regex]::Match($text, '^(?<sign>[+-]?)(?:(?<whole>[0-9]+)(?:\.(?<fraction>[0-9]*))?|\.(?<fraction>[0-9]+))(?:[eE](?<exponent>[+-]?[0-9]+))?$')
     if (-not $match.Success) { return $null }
-    $whole = $match.Groups['whole'].Value.TrimStart('0')
+    $whole = $match.Groups['whole'].Value
+    $fraction = $match.Groups['fraction'].Value
+    $digits = $whole + $fraction
+    if (-not $digits.Trim('0')) { return '0' }
+    $exponent = 0
+    if ($match.Groups['exponent'].Success -and -not [int]::TryParse($match.Groups['exponent'].Value, [ref]$exponent)) { return $null }
+    $point = [long]$whole.Length + $exponent
+    # Bound exponent expansion so malformed input cannot allocate enormous strings.
+    $expandedLength = if ($point -le 0) { 2 - $point + $digits.Length } else { [math]::Max($point, $digits.Length) + 1 }
+    if ($expandedLength -gt 10000) { return $null }
+    if ($point -le 0) {
+        $whole = '0'; $fraction = ('0' * [int](-$point)) + $digits
+    } elseif ($point -ge $digits.Length) {
+        $whole = $digits + ('0' * [int]($point - $digits.Length)); $fraction = ''
+    } else {
+        $whole = $digits.Substring(0, [int]$point); $fraction = $digits.Substring([int]$point)
+    }
+    $whole = $whole.TrimStart('0')
     if (-not $whole) { $whole = '0' }
-    $fraction = $match.Groups['fraction'].Value.TrimEnd('0')
+    $fraction = $fraction.TrimEnd('0')
     $negative = $match.Groups['sign'].Value -eq '-' -and ($whole -ne '0' -or $fraction)
     $sign = if ($negative) { '-' } else { '' }
     $suffix = if ($fraction) { ".$fraction" } else { '' }
     return "$sign$whole$suffix"
+}
+
+function ConvertTo-HuduFormattedNumberText {
+    param([AllowNull()]$Value, [string]$NumberType, [string]$CurrencyCode)
+    if ($Value -isnot [string]) { return ConvertTo-HuduDecimalText $Value }
+    $text = $Value.Trim()
+    $accountingNegative = $text.StartsWith('(') -and $text.EndsWith(')')
+    if ($accountingNegative) { $text = $text.Substring(1, $text.Length - 2).Trim() }
+    $sign = ''
+    if ($text -match '^[+-]') { $sign = $text.Substring(0, 1); $text = $text.Substring(1).TrimStart() }
+    if ($NumberType -eq 'currency') {
+        $markers = @()
+        if ($text -match '^(?<marker>[a-zA-Z]{3}|[$€£¥₹₩₽])\s*') {
+            $markers += $Matches.marker; $text = $text.Substring($Matches[0].Length)
+        }
+        if ($text -match '\s*(?<marker>[a-zA-Z]{3}|[$€£¥₹₩₽])$') {
+            $markers += $Matches.marker; $text = $text.Substring(0, $text.Length - $Matches[0].Length)
+        }
+        $symbolCurrencies = @{
+            '$' = @('USD', 'AUD', 'CAD', 'NZD', 'HKD', 'SGD', 'MXN')
+            '€' = @('EUR'); '£' = @('GBP'); '¥' = @('JPY', 'CNY')
+            '₹' = @('INR'); '₩' = @('KRW'); '₽' = @('RUB')
+        }
+        foreach ($marker in $markers) {
+            if ($marker -ine $CurrencyCode -and $CurrencyCode -notin $symbolCurrencies[$marker]) { return $null }
+        }
+        # Both -$12 and $-12 occur in exports; two signs remain invalid.
+        if ($text -match '^[+-]') {
+            if ($sign) { return $null }
+            $sign = $text.Substring(0, 1); $text = $text.Substring(1).TrimStart()
+        }
+    } elseif ($NumberType -eq 'percentage' -and $text.EndsWith('%')) {
+        $text = $text.Substring(0, $text.Length - 1).TrimEnd()
+    }
+    if ($accountingNegative) {
+        if ($sign) { return $null }
+        $sign = '-'
+    }
+    $exponent = ''
+    if ($text -match '^(?<mantissa>.*?)(?<exponent>[eE][+-]?[0-9]+)$') {
+        $exponent = $Matches.exponent; $text = $Matches.mantissa
+    }
+    if ($text -match '^[0-9]{1,3}(?<separator>[ \u00a0\u202f''\u2019])[0-9]{3}(?:\k<separator>[0-9]{3})*(?:[.,][0-9]+)?$') {
+        $text = ($text -replace '[ \u00a0\u202f''\u2019]', '') -replace ',', '.'
+    } elseif ($text.Contains(',') -and $text.Contains('.')) {
+        if ($text -match '^[0-9]{1,3}(?:,[0-9]{3})+\.[0-9]+$') { $text = $text.Replace(',', '') }
+        elseif ($text -match '^[0-9]{1,3}(?:\.[0-9]{3})+,[0-9]+$') { $text = $text.Replace('.', '').Replace(',', '.') }
+        else { return $null }
+    } elseif ($text.Contains(',')) {
+        if ($text -match '^[0-9]{1,3}(?:,[0-9]{3}){2,}$') { $text = $text.Replace(',', '') }
+        elseif ($text -match '^[0-9]*,(?<fraction>[0-9]+)$' -and $Matches.fraction.Length -ne 3) { $text = $text.Replace(',', '.') }
+        else { return $null } # 1,234 can mean either 1234 or 1.234.
+    } elseif ($text -match '^[0-9]{1,3}(?:\.[0-9]{3}){2,}$') {
+        $text = $text.Replace('.', '')
+    }
+    return ConvertTo-HuduDecimalText "$sign$text$exponent"
+}
+
+function Round-HuduNumberText {
+    param([string]$Text, [ValidateRange(0, 99)][int]$DecimalPlaces)
+    $negative = $Text.StartsWith('-')
+    $parts = $Text.TrimStart('-').Split('.')
+    if ($parts.Length -eq 1 -or $parts[1].Length -le $DecimalPlaces) { return $Text }
+    $digits = $parts[0] + $parts[1].Substring(0, $DecimalPlaces)
+    if ($parts[1][$DecimalPlaces] -ge [char]'5') {
+        $digits = ([System.Numerics.BigInteger]::Parse($digits, [cultureinfo]::InvariantCulture) + [System.Numerics.BigInteger]::One).ToString([cultureinfo]::InvariantCulture)
+    }
+    if ($DecimalPlaces -gt 0) {
+        $digits = $digits.PadLeft($DecimalPlaces + 1, '0')
+        $digits = $digits.Insert($digits.Length - $DecimalPlaces, '.')
+    }
+    if ($negative) { $digits = "-$digits" }
+    return ConvertTo-HuduDecimalText $digits
 }
 
 function Compare-HuduNumberText {
@@ -82,47 +172,60 @@ function Get-HuduCurrencyLabelHint {
     [pscustomobject]@{ IsCandidate = $candidate; CanInfer = $candidate -and -not $excluded -and $codes.Count -le 1; Codes = $codes; Reason = $reason }
 }
 
+function Get-ITGlueDefaultCurrencyCode {
+    param([string]$ITGAPIEndpoint = 'https://api.itglue.com')
+    switch ($ITGAPIEndpoint.Trim().TrimEnd('/')) {
+        'https://api.eu.itglue.com' { 'EUR' }
+        'https://api.au.itglue.com' { 'AUD' }
+        default { 'USD' }
+    }
+}
+
+function Get-HuduCurrencyDecimalPlaces {
+    param([string]$CurrencyCode)
+    # The three ITGlue datacenter defaults use two fractional places. Other
+    # currencies retain plain numeric storage unless their precision is known.
+    if ($CurrencyCode -in @('USD', 'EUR', 'AUD')) { return 2 }
+    return $null
+}
+
 function Get-HuduNumberFieldMapping {
-    param([Parameter(Mandatory)]$SourceField, [version]$CurrentVersion = '2.48.0', [System.Collections.IDictionary]$Overrides = @{}, [System.Collections.IDictionary]$CurrencyInference = @{ Enabled = $true })
+    param([Parameter(Mandatory)]$SourceField, [version]$CurrentVersion = '2.48.0', [string]$ITGAPIEndpoint = 'https://api.itglue.com')
     $attributes = Get-HuduNumberProperty $SourceField 'attributes'
     $kind = [string](Get-HuduNumberProperty $attributes 'kind')
     if ($kind -notin @('Number', 'Percent', 'Currency')) { throw "Cannot map nonnumeric ITGlue kind '$kind' as a number." }
     $sourceId = [string](Get-HuduNumberProperty $SourceField 'id')
-    $override = Get-HuduNumberProperty $Overrides $sourceId
     $numberType = if ($kind -eq 'Percent') { 'percentage' } elseif ($kind -eq 'Currency') { 'currency' } else { 'number' }
     $mappingSource = 'ITGlueKind'; $mappingReason = "ITGlue kind '$kind'."; $candidate = $false
-    $configuredType = Get-HuduNumberProperty $override 'NumberType'
     $hint = $null; $inferredCode = $null
-    if ($configuredType) {
-        $numberType = ([string]$configuredType).ToLowerInvariant()
-        $mappingSource = 'Override'; $mappingReason = "Explicit override for ITGlue field $sourceId."
-    } elseif ($kind -eq 'Number' -and $CurrentVersion -ge [version]'2.48.0' -and (Get-HuduNumberProperty $CurrencyInference 'Enabled') -eq $true) {
+    $metadataCode = Get-HuduNumberProperty $attributes 'currency-code'
+    if (-not $metadataCode) { $metadataCode = Get-HuduNumberProperty $attributes 'currency_code' }
+    if ($kind -eq 'Number' -and $CurrentVersion -ge [version]'2.48.0') {
         $hint = Get-HuduCurrencyLabelHint ([string](Get-HuduNumberProperty $attributes 'name'))
         $candidate = $hint.IsCandidate
         if ($candidate) { $mappingReason = $hint.Reason }
-        if ($hint.CanInfer) {
-            $inferredCode = Get-HuduNumberProperty $override 'CurrencyCode'
-            if (-not $inferredCode -and $hint.Codes.Count -eq 1) { $inferredCode = $hint.Codes[0] }
-            if (-not $inferredCode) { $inferredCode = Get-HuduNumberProperty $CurrencyInference 'DefaultCurrencyCode' }
-            if ($inferredCode) { $numberType = 'currency'; $mappingSource = 'LabelHeuristic' }
-            else { $mappingReason += ' Currency code unresolved; kept as plain number. Configure DefaultCurrencyCode or a field override.' }
+        if ($metadataCode) {
+            $inferredCode = $metadataCode
+            $numberType = 'currency'; $mappingSource = 'ITGlueCurrencyMetadata'
+            $mappingReason = 'Explicit ITGlue currency metadata.'
+        } elseif ($hint.CanInfer) {
+            $inferredCode = if ($hint.Codes.Count -eq 1) { $hint.Codes[0] } else { Get-ITGlueDefaultCurrencyCode $ITGAPIEndpoint }
+            $numberType = 'currency'; $mappingSource = 'LabelHeuristic'
         }
     }
-    if ($numberType -notin @('number', 'currency', 'percentage')) { throw "Unknown NumberType '$numberType' for ITGlue field $sourceId." }
     $currencyCode = $null; $places = $null
     if ($numberType -eq 'currency') {
-        $currencyCode = ([string](Get-HuduNumberProperty $override 'CurrencyCode')).ToUpperInvariant()
-        if (-not $currencyCode -and $mappingSource -eq 'LabelHeuristic') { $currencyCode = ([string]$inferredCode).ToUpperInvariant() }
-        if ($currencyCode -cnotmatch '^[A-Z]{3}$') { throw "ITGlue field $sourceId needs an explicit three-letter CurrencyCode override." }
-        $places = Get-HuduNumberProperty $override 'DecimalPlaces'
-        if ($null -eq $places) { $places = Get-HuduNumberProperty (Get-HuduNumberProperty $CurrencyInference 'DecimalPlacesByCurrency') $currencyCode }
-        if ($null -eq $places -and $currencyCode -eq 'USD') { $places = 2 }
-        if ($null -eq $places -or [string]$places -notmatch '^(0|[1-9][0-9]?)$') {
-            if ($mappingSource -eq 'LabelHeuristic' -and $null -eq $places) {
-                $numberType = 'number'; $mappingSource = 'ITGlueKind'
-                $mappingReason += " Currency $currencyCode precision unresolved; kept as plain number. Configure DecimalPlacesByCurrency or a field override."
-                $currencyCode = $null
-            } else { throw "ITGlue field $sourceId needs explicit DecimalPlaces for currency $currencyCode; only USD precision has been tested." }
+        if (-not $inferredCode) { $inferredCode = $metadataCode }
+        if (-not $inferredCode) {
+            $hint = Get-HuduCurrencyLabelHint ([string](Get-HuduNumberProperty $attributes 'name'))
+            $inferredCode = if ($hint.CanInfer -and $hint.Codes.Count -eq 1) { $hint.Codes[0] } else { Get-ITGlueDefaultCurrencyCode $ITGAPIEndpoint }
+        }
+        $currencyCode = ([string]$inferredCode).Trim().ToUpperInvariant()
+        $places = Get-HuduCurrencyDecimalPlaces $currencyCode
+        if ($null -eq $places) {
+            $numberType = 'number'; $mappingSource = 'ITGlueKind'
+            $mappingReason += " Currency '$currencyCode' precision is unknown; kept as plain number to preserve values."
+            $currencyCode = $null
         }
         if ($numberType -eq 'currency') { $mappingReason += " Currency $currencyCode, $places fractional places." }
     }
@@ -155,11 +258,6 @@ function ConvertTo-HuduNumber {
     if ($null -eq $Value -or ($Value -is [string] -and [string]::IsNullOrWhiteSpace($Value))) {
         $result.IsValid = $true; $result.IsEmpty = $true; return $result
     }
-    $text = ConvertTo-HuduDecimalText $Value
-    if ($null -eq $text) {
-        $result.Reason = 'Expected a finite plain decimal value. Symbols, grouping, exponents, booleans, arrays, and objects are not converted.'
-        return $result
-    }
     if ($Value -is [double] -or $Value -is [single]) {
         $result.Warning = 'Source was already a floating-point value; any precision lost while reading ITGlue cannot be recovered.'
     }
@@ -184,6 +282,23 @@ function ConvertTo-HuduNumber {
     if ($numberType -notin @('number', 'currency', 'percentage')) {
         $result.Reason = "Unknown destination number_type '$numberType'."; return $result
     }
+    $text = ConvertTo-HuduFormattedNumberText -Value $Value -NumberType $numberType -CurrencyCode $code
+    if ($null -eq $text) {
+        $result.Reason = 'Cannot unambiguously convert this value for the destination numeric field. Check separators, currency/percentage markers, and finite numeric syntax.'
+        return $result
+    }
+    if ($numberType -eq 'currency' -and $CurrentVersion -ge [version]'2.48.0') {
+        if ($null -eq $CurrencyDecimalPlaces) { $CurrencyDecimalPlaces = Get-HuduCurrencyDecimalPlaces $code }
+        if (-not $code -or $null -eq $CurrencyDecimalPlaces -or [string]$CurrencyDecimalPlaces -notmatch '^(0|[1-9][0-9]?)$') {
+            $result.Reason = "Currency '$code' needs a known decimal-place policy; automatic precision is available for USD, EUR and AUD (2)."; return $result
+        }
+        $rounded = Round-HuduNumberText $text -DecimalPlaces ([int]$CurrencyDecimalPlaces)
+        if ($rounded -cne $text) {
+            $roundingWarning = "Rounded $code amount from $text to $rounded ($CurrencyDecimalPlaces decimal places; midpoints away from zero)."
+            $result.Warning = (@($result.Warning, $roundingWarning) | Where-Object { $_ }) -join ' '
+            $text = $rounded
+        }
+    }
     if ($CurrentVersion -lt [version]'2.48.0') {
         # Keep the historical integer envelope, without rounding or overflowing.
         if ($text.Contains('.') -or (Compare-HuduNumberText $text '-2147483648') -lt 0 -or (Compare-HuduNumberText $text '2147483647') -gt 0) {
@@ -195,16 +310,6 @@ function ConvertTo-HuduNumber {
         }
         if ($numberType -eq 'percentage' -and (Compare-HuduNumberText $text '100') -gt 0) {
             $result.Reason = 'Percentage exceeds Hudu 2.48.0 maximum 100. Values are not rescaled.'; return $result
-        }
-        if ($numberType -eq 'currency') {
-            if ($null -eq $CurrencyDecimalPlaces -and $code -eq 'USD') { $CurrencyDecimalPlaces = 2 }
-            if (-not $code -or $null -eq $CurrencyDecimalPlaces -or [string]$CurrencyDecimalPlaces -notmatch '^(0|[1-9][0-9]?)$') {
-                $result.Reason = "Currency '$code' needs a known decimal-place policy; only USD (2) has been tested."; return $result
-            }
-            $parts = $text.Split('.')
-            if ($parts.Length -gt 1 -and $parts[1].Length -gt [int]$CurrencyDecimalPlaces) {
-                $result.Reason = "Currency $code exceeds $CurrencyDecimalPlaces decimal places. Value was not rounded."; return $result
-            }
         }
     }
     foreach ($boundName in @('min', 'max')) {

@@ -1,25 +1,28 @@
 # Check if this is a direct run, and load the logs if so the first time.
-if (-not (Get-Command -Name Get-EnsuredPath -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Init-OptionsAndLogs.ps1 }
-$ErroredItemsFolder = $(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))
+param([string]$SettingsFile)
 
-if (-not ($FirstTimeLoad -eq 1)) {
+$knownRun = Get-Variable -Name ITGlueHuduMigrationRun -Scope Local -ValueOnly -ErrorAction Ignore
+$loadedRunPath = Get-Variable -Name MigrationLogs -Scope Local -ValueOnly -ErrorAction Ignore
+$loadedRunFlag = Get-Variable -Name FirstTimeLoad -Scope Local -ValueOnly -ErrorAction Ignore
+if ($loadedRunFlag -ne 1 -or -not $knownRun -or $loadedRunPath -ne $knownRun.LogsFolder -or $SettingsFile) {
     # General Settings Load
-    . $PSScriptRoot\..\Initialize-Module.ps1 -InitType 'Lite'
+    . $PSScriptRoot\Initialize-Module.ps1 -InitType 'Lite' -SettingsFile $SettingsFile
     
     # Add Replace URL functions
-    . $PSScriptRoot\..\Private\ConvertTo-HuduURL.ps1
+    . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1
 
     Write-Host "Checking for Matched Variables"
-    if (-not $MatchedPasswords) {$MatchedPasswords = (Get-Content -path "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
-    if (-not $MatchedAssetPasswords) {$MatchedAssetPasswords = (Get-Content -path "$MigrationLogs\AssetPasswords.json" | ConvertFrom-json -depth 100) }
-    if (-not $MatchedArticleBase) {$MatchedArticleBase = Get-Content "$MigrationLogs\ArticleBase.json" -raw | Out-String | ConvertFrom-Json -depth 100}
-    if (-not $MatchedArticles) {$MatchedArticles = (Get-Content -path "$MigrationLogs\Articles.json" | ConvertFrom-json -depth 100) }
-    if (-not $MatchedCompanies) {$MatchedCompanies = (Get-Content -path "$MigrationLogs\Companies.json" | ConvertFrom-json -depth 100) }
-    if (-not $MatchedConfigurations) {$MatchedConfigurations = Get-Content "$MigrationLogs\Configurations.json" -raw | Out-String | ConvertFrom-Json -depth 100}
-    if (-not $MatchedAssets) {$MatchedAssets = Get-Content "$MigrationLogs\Assets.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+    if (-not $MatchedPasswords -and (Test-Path -LiteralPath "$MigrationLogs\Passwords.json")) {$MatchedPasswords = (Get-Content -literalPath "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedAssetPasswords -and (Test-Path -LiteralPath "$MigrationLogs\AssetPasswords.json")) {$MatchedAssetPasswords = (Get-Content -literalPath "$MigrationLogs\AssetPasswords.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedArticleBase -and (Test-Path -LiteralPath "$MigrationLogs\ArticleBase.json")) {$MatchedArticleBase = Get-Content -literalPath "$MigrationLogs\ArticleBase.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+    if (-not $MatchedArticles -and (Test-Path -LiteralPath "$MigrationLogs\Articles.json")) {$MatchedArticles = (Get-Content -literalPath "$MigrationLogs\Articles.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedCompanies -and (Test-Path -LiteralPath "$MigrationLogs\Companies.json")) {$MatchedCompanies = (Get-Content -literalPath "$MigrationLogs\Companies.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedConfigurations -and (Test-Path -LiteralPath "$MigrationLogs\Configurations.json")) {$MatchedConfigurations = Get-Content -literalPath "$MigrationLogs\Configurations.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+    if (-not $MatchedAssets -and (Test-Path -LiteralPath "$MigrationLogs\Assets.json")) {$MatchedAssets = Get-Content -literalPath "$MigrationLogs\Assets.json" -raw | Out-String | ConvertFrom-Json -depth 100}
     # Set the context so logs don't run again unless the powershell window gets closed.
     $FirstTimeLoad = 1
 }
+$ErroredItemsFolder = Get-EnsuredPath -Path $errorsfolder
 
 # Load Invoke-ImageTest()
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
@@ -32,7 +35,7 @@ $HuduUploadLookup = $HuduUploadLookup ?? @{}
 $HuduUploadLookupLoaded = $HuduUploadLookupLoaded ?? $false
 $MaxHuduUploadBytes = 100MB
 
-if (-not (Get-Variable -Name ManualActions -Scope Global -ErrorAction SilentlyContinue) -and -not (Get-Variable -Name ManualActions -Scope Script -ErrorAction SilentlyContinue)) {
+if (-not (Get-Variable -Name ManualActions -Scope Local -ErrorAction Ignore)) {
     if (Test-Path -LiteralPath "$MigrationLogs\ManualActions.json") {
         $ManualActions = [System.Collections.ArrayList](Get-Content "$MigrationLogs\ManualActions.json" -Raw | ConvertFrom-Json -Depth 100)
     } else {
@@ -604,14 +607,14 @@ else {
 Write-Host "Starting script in 3 seconds. Press CTRL+C to cancel" -ForegroundColor Yellow
 start-sleep 3
 
-if (-not $MatchedAssets) {$MatchedAssets = (Get-Content -path "$MigrationLogs\Assets.json" | ConvertFrom-json -depth 100) }
-if (-not $matchedConfigurations) {$matchedConfigurations = (Get-Content -path "$MigrationLogs\Configurations.json" | ConvertFrom-json -depth 100) }
-if (-not $MatchedPasswords) {$MatchedPasswords = (Get-Content -path "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
-if (-not $MatchedContacts) {$MatchedContacts = (Get-Content -path "$MigrationLogs\Contacts.json" | ConvertFrom-json -depth 100) }
-if (-not $MatchedArticles) {$MatchedArticles = (Get-Content -path "$MigrationLogs\Articles.json" | ConvertFrom-json -depth 100) }
-if (-not $MatchedLocations) {$MatchedLocations = (Get-Content -path "$MigrationLogs\Locations.json" | ConvertFrom-json -depth 100) }
-if (-not $MatchedPasswords) {$MatchedPasswords = (Get-Content -path "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
-if (-not $MatchedWebsites) {$MatchedWebsites = (Get-Content -path "$MigrationLogs\websites.json" | ConvertFrom-json -depth 100) }
+if (-not $MatchedAssets -and (Test-Path -LiteralPath "$MigrationLogs\Assets.json")) {$MatchedAssets = Get-Content -literalPath "$MigrationLogs\Assets.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+if (-not $MatchedConfigurations -and (Test-Path -LiteralPath "$MigrationLogs\Configurations.json")) {$MatchedConfigurations = Get-Content -literalPath "$MigrationLogs\Configurations.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+if (-not $MatchedPasswords -and (Test-Path -LiteralPath "$MigrationLogs\Passwords.json")) {$MatchedPasswords = (Get-Content -literalPath "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
+if (-not $MatchedContacts -and (Test-Path -LiteralPath "$MigrationLogs\Contacts.json")) {$MatchedContacts = (Get-Content -literalPath "$MigrationLogs\Contacts.json" | ConvertFrom-json -depth 100) }
+if (-not $MatchedArticles -and (Test-Path -LiteralPath "$MigrationLogs\Articles.json")) {$MatchedArticles = (Get-Content -literalPath "$MigrationLogs\Articles.json" | ConvertFrom-json -depth 100) }
+if (-not $MatchedLocations -and (Test-Path -LiteralPath "$MigrationLogs\Locations.json")) {$MatchedLocations = (Get-Content -literalPath "$MigrationLogs\Locations.json" | ConvertFrom-json -depth 100) }
+if (-not $MatchedPasswords -and (Test-Path -LiteralPath "$MigrationLogs\Passwords.json")) {$MatchedPasswords = (Get-Content -literalPath "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
+if (-not $MatchedWebsites -and (Test-Path -LiteralPath "$MigrationLogs\Websites.json")) {$MatchedWebsites = (Get-Content -literalPath "$MigrationLogs\Websites.json" | ConvertFrom-json -depth 100) }
 
 $AttachmentsToUpload = Get-ChildItem -Path $AttachmentsPath -Recurse -File
 $filesById = $AttachmentsToUpload | Group-Object { $_.Directory.Name } -AsHashTable -AsString
