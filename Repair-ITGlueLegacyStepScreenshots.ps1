@@ -7,6 +7,8 @@
     Removed tags can be restored at their original HTML locations when the saved
     source and current article structure agree. A pre-repair source snapshot is
     retained in logs/LegacyScreenshotSources for partial repairs and retries.
+    Reuses uploaded photos, embeds Hudu-hosted images using relative URLs, and
+    verifies saved article content before reporting a screenshot as Placed.
     Reuses the checklist $ITGlueJWT variable when -JWTAuthToken is omitted.
     A bearer JWT and a browser cookie session are different authentication methods.
     Uses that JWT to read signed screenshot URLs from the tenant's published

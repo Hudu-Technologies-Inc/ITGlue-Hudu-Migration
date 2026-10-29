@@ -18,6 +18,7 @@ $downloads = [Collections.Generic.List[object]]::new()
 $webRequests = [Collections.Generic.List[object]]::new()
 $documentOverrides = @{}; $jwtOverrides = @{}
 $photoCalls = 0; $commitCalls = 0
+$photoMode = 'default'; $sanitizationMode = ''; $pendingSanitization = ''
 $articleReads = 0; $simulateConcurrentEdit = $false
 $originalContent = '<p>Keep this current user edit.</p><img src="/images/logo.png"><img class="screenshot" data-src-original="original/Generic_USB_Hub_Properties.jpg" src="thumbnail/Generic_USB_Hub_Properties.jpg" alt="USB settings">'
 $liveContent = $originalContent
@@ -64,6 +65,15 @@ function Get-HuduArticles {
     [CmdletBinding()]
     param($Id)
     $script:articleReads++
+    if ($pendingSanitization) {
+        $script:liveContent = [regex]::Replace($script:liveContent, '(?is)<img\b[^>]*>', {
+            param($match)
+            $absolute = $match.Value -match '(?i)(?<![\w-])src\s*=\s*["'']https://hudu.invalid/public_photo/'
+            $publicPhoto = $match.Value -match '/public_photo/'
+            if ($absolute -or ($pendingSanitization -eq 'all-public-photos' -and $publicPhoto)) { '' } else { $match.Value }
+        })
+        $script:pendingSanitization = ''
+    }
     if ($simulateConcurrentEdit -and $articleReads -eq 2) { $script:liveContent += '<p>Concurrent edit.</p>' }
     return @{article=[pscustomobject]@{id=$Id; content=$script:liveContent; name='Current article title'}}
 }
@@ -74,6 +84,7 @@ function New-HuduPublicPhoto {
     $script:photoCalls++
     $leaf = [IO.Path]::GetFileName($FilePath)
     $url = if ($leaf -eq 'step-71601.png') { 'https://hudu.invalid/images/repaired.png' } else { "https://hudu.invalid/images/$leaf" }
+    if ($photoMode -eq 'public-photo') { $url = 'https://hudu.invalid/public_photo/repaired' }
     return @{public_photo=@{url=$url}}
 }
 function Set-HuduArticle {
@@ -82,6 +93,7 @@ function Set-HuduArticle {
     $script:commitCalls++
     if ($failCommit) { throw 'Simulated article commit failure' }
     $script:liveContent = $Content
+    $script:pendingSanitization = $sanitizationMode
     return @{article=[pscustomobject]@{id=$Id; content=$Content; name='Current article title'}}
 }
 function New-LegacyTestArticle {
@@ -90,8 +102,9 @@ function New-LegacyTestArticle {
 }
 function New-LegacyTestContext {
     param([string]$Token = 'test-jwt', [Microsoft.PowerShell.Commands.WebRequestSession]$Session)
-    $context = New-ITGlueLegacyScreenshotRecoveryContext -ApiBase 'https://api.example.invalid' -ApiKey 'offline-test-key' -MigrationLogsPath $logsPath -TenantBase 'https://tenant.invalid' -JWTAuthToken $Token -WebSession $Session
+    $context = New-ITGlueLegacyScreenshotRecoveryContext -ApiBase 'https://api.example.invalid' -ApiKey 'offline-test-key' -MigrationLogsPath $logsPath -TenantBase 'https://tenant.invalid' -HuduBase 'https://hudu.invalid' -JWTAuthToken $Token -WebSession $Session
     $context.RequestGate = $gate
+    $context.PlacementVerificationDelayMilliseconds = 0
     $context.DocumentUrls['58145'] = 'https://tenant.invalid/91889/docs/58145'
     return $context
 }
@@ -117,6 +130,36 @@ try {
     Assert-Legacy ($article.ImageRecoveries[-1].HuduImageUrl -eq 'https://hudu.invalid/images/repaired.png' -and $article.ImageRecoveries[-1].Status -eq 'Placed') 'A later download-only run erased prior placement metadata.'
     $result = @(Invoke-ITGlueLegacyScreenshotRepair -Articles @($article) -Context $context)
     Assert-Legacy ($result[0].Status -eq 'AlreadyPlaced' -and $photoCalls -eq 1 -and $commitCalls -eq 1) 'Rerunning the repair uploaded or committed an already placed image.'
+
+    # Hudu accepts absolute photo URLs in a PUT response, then can strip those
+    # embeds in post-processing. Match its regular-import relative URL format.
+    $photoMode='public-photo'; $sanitizationMode='absolute-public-photos'
+    $liveContent=$originalContent
+    $publicPhotoSource=Join-Path $fixtureRoot 'public-photo-source.html'
+    [IO.File]::WriteAllText($publicPhotoSource, $originalContent)
+    $publicPhotoArticle=New-LegacyTestArticle
+    $publicPhotoArticle | Add-Member -NotePropertyName LocalContentPath -NotePropertyValue $publicPhotoSource
+    $publicPhotoArticle.SourceImages=@(Get-ITGlueArticleSourceImages $originalContent)
+    $result=@(Invoke-ITGlueLegacyScreenshotRepair -Articles @($publicPhotoArticle) -Context (New-LegacyTestContext))
+    Assert-Legacy ($result[-1].Status -eq 'Placed' -and $liveContent.Contains('src="/public_photo/repaired"') -and $liveContent -notmatch 'src="https://hudu.invalid/public_photo/') 'Hudu-hosted screenshots were embedded using absolute URLs that its post-processing can remove.'
+    Assert-Legacy ($publicPhotoArticle.ImageRecoveries[-1].PlacementVerified -and $publicPhotoArticle.ImageRecoveries[-1].PlacementVerifiedAt) 'Placement was reported without checking the persisted article.'
+    $beforePhotos=$photoCalls; $beforeCommits=$commitCalls
+    $result=@(Invoke-ITGlueLegacyScreenshotRepair -Articles @($publicPhotoArticle) -Context (New-LegacyTestContext))
+    Assert-Legacy ($result[0].Status -eq 'AlreadyPlaced' -and $photoCalls -eq $beforePhotos -and $commitCalls -eq $beforeCommits) 'Relative photo embeds were not recognized using their absolute recovery-log URLs.'
+    $sanitizationMode='all-public-photos'; $liveContent=$originalContent
+    $result=@(Invoke-ITGlueLegacyScreenshotRepair -Articles @($publicPhotoArticle) -Context (New-LegacyTestContext))
+    Assert-Legacy ($result[-1].Status -eq 'Failed' -and $result[-1].Problem -like '*did not retain*' -and $publicPhotoArticle.ImageRecoveries[-1].Status -eq 'Uploaded' -and -not $publicPhotoArticle.ImageRecoveries[-1].PlacementVerified -and $photoCalls -eq $beforePhotos) 'A photo stripped after a successful PUT was falsely logged as placed or its upload was lost.'
+    Assert-Legacy ((Get-Content -LiteralPath $publicPhotoArticle.LocalContentPath -Raw) -notmatch '/public_photo/') 'The local cache retained optimistic embeds missing from the persisted article.'
+    $sanitizationMode=''
+    $result=@(Invoke-ITGlueLegacyScreenshotRepair -Articles @($publicPhotoArticle) -Context (New-LegacyTestContext))
+    Assert-Legacy ($result[-1].Status -eq 'Placed' -and $publicPhotoArticle.ImageRecoveries[-1].PlacementVerified -and $photoCalls -eq $beforePhotos) 'A stripped embed could not be retried with its existing photo and original source layout.'
+    $linkedImage='<p>Keep</p><a href="large/1.png"> <img src="thumbnail/1.png"> </a>'
+    $linkedImage=Set-ITGlueLegacyScreenshotTagUrl $linkedImage 0 '/public_photo/repaired'
+    Assert-Legacy ($linkedImage.Contains('href="/public_photo/repaired"') -and $linkedImage.Contains('src="/public_photo/repaired"')) 'The screenshot retained a broken export-only full-size link.'
+    $meaningfulLink='<a href="https://docs.invalid/instructions"><img src="thumbnail/1.png"></a>'
+    Assert-Legacy ((Set-ITGlueLegacyScreenshotTagUrl $meaningfulLink 0 '/public_photo/repaired').Contains('href="https://docs.invalid/instructions"')) 'Repair replaced an unrelated meaningful link around an image.'
+    Assert-Legacy ((ConvertTo-ITGlueLegacyHuduImageSrc 'https://other.invalid/public_photo/repaired' 'https://hudu.invalid') -eq 'https://other.invalid/public_photo/repaired') 'A different host was incorrectly converted into a local Hudu photo path.'
+    $photoMode='default'
 
     $article = New-LegacyTestArticle
     $liveContent = '<p>Keep this current user edit.</p><img src="/images/logo.png"><img src="">'
@@ -279,7 +322,7 @@ try {
     $entryArticle = New-LegacyTestArticle
     @($entryArticle) | ConvertTo-Json -Depth 30 -AsArray | Set-Content -LiteralPath (Join-Path $logsPath 'Articles.json')
     $ITGlueHuduMigrationRun = @{LogsFolder=$logsPath}; $MigrationLogs=$logsPath; $FirstTimeLoad=1
-    $ITGAPIEndpoint='https://api.example.invalid'; $ITGKey='offline-test-key'; $ITGURL='https://tenant.invalid'; $ITGlueJWT='test-jwt'
+    $ITGAPIEndpoint='https://api.example.invalid'; $ITGKey='offline-test-key'; $ITGURL='https://tenant.invalid'; $HuduBaseDomain='https://hudu.invalid'; $ITGlueJWT='test-jwt'
     $before = @($requests | Where-Object JWT).Count
     $entryResult = @(. "$repoRoot/Repair-ITGlueLegacyStepScreenshots.ps1" -DocumentId 58145 -DownloadOnly)
     Assert-Legacy ($entryResult.Count -eq 1 -and $entryResult[0].Status -eq 'Downloaded' -and @($requests | Where-Object JWT).Count -eq ($before + 1) -and $ITGlueJWT -ceq 'test-jwt') 'The entry point did not reuse the existing checklist JWT or changed its caller variable.'

@@ -333,6 +333,12 @@ function Get-ITGlueLegacyScreenshotTarget {
                 $stepId = [string](Get-ITGlueDocumentImageProperty $record 'ITGStepId')
                 if ($url -and (Test-ITGlueLegacyScreenshotPlaced $existing.Html $url $Plan.HuduBase) -and $Plan.StepIndices.ContainsKey($stepId)) { $knownIndex=$Plan.StepIndices[$stepId]; break }
             }
+            if ($knownIndex -lt 0 -and ($existing.References.Ids.Count + $existing.References.StepIds.Count + $existing.References.Names.Count) -gt 0) {
+                $originalSlots = @($sourceSlots | Where-Object { Test-ITGlueLegacyImageReference $_.References $existing.References })
+                if ($originalSlots.Count -eq 1 -and @($atBoundary | Where-Object { Test-ITGlueLegacyImageReference $originalSlots[0].References $_.References }).Count -eq 1) {
+                    $knownIndex = $originalSlots[0].Index
+                }
+            }
             if ($knownIndex -lt 0) { throw 'An existing image at the original screenshot position cannot be identified safely' }
             if ($knownIndex -eq $sourceIndex) { return [pscustomobject]@{Kind='Existing'; Index=$existing.Index; SourceIndex=$sourceIndex; Method='RecoveryLog'; Html=$null; Offset=0} }
             if ($knownIndex -gt $sourceIndex) { $offset=[Math]::Min($offset, $existing.Offset) }
@@ -435,8 +441,9 @@ function Invoke-ITGlueLegacyScreenshotRepair {
                     Save-ITGlueDocumentImageRecovery $article $record $Context
                     $imageSrc = ConvertTo-ITGlueLegacyHuduImageSrc $url $Context.HuduBase
                     if ($target.Kind -eq 'Insert') {
-                        $imageHtml = Set-ITGlueLegacyScreenshotTagUrl -Content $target.Html -ImageIndex 0 -Url $imageSrc
-                        $content = $content.Insert($target.Offset, $imageHtml)
+                        $insertIndex = @(Get-ITGlueArticleSourceImages $content.Substring(0, $target.Offset)).Count
+                        $content = $content.Insert($target.Offset, $target.Html)
+                        $content = Set-ITGlueLegacyScreenshotTagUrl -Content $content -ImageIndex $insertIndex -Url $imageSrc
                     } else {
                         $content = Set-ITGlueLegacyScreenshotTagUrl -Content $content -ImageIndex $target.Index -Url $imageSrc
                     }
