@@ -307,13 +307,15 @@ function Resolve-ITGlueDocumentImage {
             DownloadUrlSource=if ($isLegacyScreenshot) { 'Unavailable' } else { 'DocumentImagesApi' }
             OriginalSources=@($SourceValues | ForEach-Object { [regex]::Replace($_, '(?i)(https?://[^?\s"''<>]+)\?[^"''\s<>]+', '$1') })
             FilePath=$null; DownloadVariant=$null; DownloadUrl=$null
-            DownloadedAt=$null; UsedCachedDownload=$false; HuduImageUrl=$null; Status='Pending'; Problem=$null
+            DownloadedAt=$null; UsedCachedDownload=$false; HuduImageUrl=$null
+            HuduArticleId=(Get-ITGlueDocumentImageProperty $Article 'HuduID'); Status='Pending'; Problem=$null
         }
         $directory = Join-Path $Context.CachePath $documentId
         $null = [IO.Directory]::CreateDirectory($directory)
         $cacheId = if ($isLegacyScreenshot) { "step-$id" } else { $id }
         $cached = @(Get-ChildItem -LiteralPath $directory -File | Where-Object { $_.BaseName -eq $cacheId -and $_.Extension -ne '.tmp' })
         $file = $cached | Where-Object { Invoke-ImageTest -FilePath $_.FullName } | Select-Object -First 1
+        $retainedUploadStatus = $null
         if ($file) {
             $record.UsedCachedDownload = $true; $record.DownloadUrlSource = 'Cache'
             $priorDownload = @(Get-ITGlueDocumentImageProperty $Article 'ImageRecoveries' | Where-Object {
@@ -327,6 +329,19 @@ function Resolve-ITGlueDocumentImage {
                     if ($null -ne $value) { $record.$property = $value }
                 }
                 $record.DownloadUrl = ([string](Get-ITGlueDocumentImageProperty $priorDownload 'DownloadUrl') -split '\?', 2)[0]
+                $priorArticleId = Get-ITGlueDocumentImageProperty $priorDownload 'HuduArticleId'
+                if ((Get-ITGlueDocumentImageProperty $priorDownload 'HuduImageUrl') -and
+                    (-not $priorArticleId -or [string]$priorArticleId -eq [string]$record.HuduArticleId)) {
+                    # Persist the existing upload before any later retry step.
+                    # Otherwise interruption here could erase its reusable URL.
+                    $record.HuduImageUrl = Get-ITGlueDocumentImageProperty $priorDownload 'HuduImageUrl'
+                    $record.Problem = Get-ITGlueDocumentImageProperty $priorDownload 'Problem'
+                    $retainedUploadStatus = if ((Get-ITGlueDocumentImageProperty $priorDownload 'Status') -eq 'Placed') { 'Placed' } else { 'Uploaded' }
+                    foreach ($property in @('OriginalImageIndex', 'PlacementMethod', 'PlacementVerified', 'PlacementVerifiedAt')) {
+                        $value = Get-ITGlueDocumentImageProperty $priorDownload $property
+                        if ($null -ne $value) { $record | Add-Member -NotePropertyName $property -NotePropertyValue $value -Force }
+                    }
+                }
             }
         }
         else {
@@ -370,7 +385,7 @@ function Resolve-ITGlueDocumentImage {
         $record.DownloadedViaApi = $record.DownloadedViaApi -or -not $isLegacyScreenshot -or $record.DownloadUrlSource -in @('JWTApi', 'JWTDocumentEditor')
         $record.FilePath = $file.FullName
         $record.DownloadedAt = $file.LastWriteTimeUtc.ToString('o')
-        $record.Status = 'Downloaded'
+        $record.Status = if ($retainedUploadStatus) { $retainedUploadStatus } else { 'Downloaded' }
         Save-ITGlueDocumentImageRecovery $Article $record $Context
         $result.File = $file; $result.Record = $record
     } catch {

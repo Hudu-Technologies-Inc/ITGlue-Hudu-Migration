@@ -21,11 +21,11 @@
 .PARAMETER DownloadOnly
     Cache screenshots and record provenance without uploading or editing Hudu.
 .EXAMPLE
-    . .\Repair-ITGlueLegacyStepScreenshots.ps1 -DocumentId 58145 -JWTAuthToken $ITGlueJWT
+    . .\Private\Repair-ITGlueLegacyStepScreenshots.ps1 -DocumentId 58145 -JWTAuthToken $ITGlueJWT
 .EXAMPLE
-    . .\Repair-ITGlueLegacyStepScreenshots.ps1 -SettingsFile 'C:\migration\settings\settings.json' -JWTAuthToken $ITGlueJWT -DownloadOnly
+    . .\Private\Repair-ITGlueLegacyStepScreenshots.ps1 -SettingsFile 'C:\migration\settings\settings.json' -JWTAuthToken $ITGlueJWT -DownloadOnly
 .EXAMPLE
-    . .\Repair-ITGlueLegacyStepScreenshots.ps1 -DocumentId 58145 -WebSession $ITGlueWebSession
+    . .\Private\Repair-ITGlueLegacyStepScreenshots.ps1 -DocumentId 58145 -WebSession $ITGlueWebSession
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -37,14 +37,15 @@ param(
     [switch]$DownloadOnly
 )
 
+$legacyRepairRoot = Split-Path $PSScriptRoot -Parent
 $legacyRepairJwt = if ($PSBoundParameters.ContainsKey('JWTAuthToken')) { $JWTAuthToken } else { Get-Variable -Name ITGlueJWT -ValueOnly -ErrorAction Ignore }
 $knownRun = Get-Variable -Name ITGlueHuduMigrationRun -Scope Local -ValueOnly -ErrorAction Ignore
 $loadedRunPath = Get-Variable -Name MigrationLogs -Scope Local -ValueOnly -ErrorAction Ignore
 $loadedRunFlag = Get-Variable -Name FirstTimeLoad -Scope Local -ValueOnly -ErrorAction Ignore
 if ($loadedRunFlag -ne 1 -or -not $knownRun -or $loadedRunPath -ne $knownRun.LogsFolder -or $SettingsFile) {
-    . "$PSScriptRoot/Initialize-Module.ps1" -InitType Lite -SettingsFile $SettingsFile
+    . "$legacyRepairRoot/Initialize-Module.ps1" -InitType Lite -SettingsFile $SettingsFile
 }
-. "$PSScriptRoot/Public/Repair-ITGlueLegacyStepScreenshots.ps1"
+. "$legacyRepairRoot/Public/Repair-ITGlueLegacyStepScreenshots.ps1"
 
 $legacyArticlesPath = Join-Path $MigrationLogs 'Articles.json'
 if (-not (Test-Path -LiteralPath $legacyArticlesPath)) { throw 'Articles.json is required. Complete the article migration before running this repair.' }

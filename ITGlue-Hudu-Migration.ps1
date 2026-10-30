@@ -2696,7 +2696,10 @@ Start-PreloadedRelationDataJob -RelationType Passwords -ItgObjects @($MatchedPas
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
 if ($true -eq $ImportConfigInterfaces){
     write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"; $null = Start-MigrationJob -Name "Wrap-Up - IPAM/Networks/Addresses";
-    $MatchedInterfaces = Invoke-OmniIPAMSyncByAssetLayout -IPAddressFieldLabels $IPaddressFieldLabels -HostnameFieldLabels $HostnameFieldLabels -DefaultGatewayFieldLabels $gatewayFieldLabels -AssetLayouts $MatchedLayouts.HuduObject -CachedAssets $MatchedAssets.HuduObject
+    $ipamCompanyIds = @($CompaniesToMigrate.HuduID | Where-Object { [int]$_ -gt 0 } | ForEach-Object { [int]$_ } | Select-Object -Unique)
+    $ipamMigrationItems = @($MatchedConfigurations) + @($MatchedLocations) + @($MatchedContacts) + @($MatchedAssets)
+    $ipamAssets = @(Get-OmniIPAMMigrationAsset -MigrationItems $ipamMigrationItems -AllowedCompanyId $ipamCompanyIds)
+    $MatchedInterfaces = @(Invoke-OmniIPAMSyncByAssetLayout -IPAddressFieldLabels $IPaddressFieldLabels -HostnameFieldLabels $HostnameFieldLabels -DefaultGatewayFieldLabels $gatewayFieldLabels -AssetLayouts $MatchedLayouts.HuduObject -CachedAssets $ipamAssets -AllowedCompanyId $ipamCompanyIds)
 }
 
 write-host "wrapup 4/10... $(if ($true -eq $allowSettingFlagsAndTypes) {"Setting"} else {"Skipping"}) optional flags and flag types..."

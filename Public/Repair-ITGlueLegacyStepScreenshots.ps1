@@ -394,7 +394,12 @@ function Invoke-ITGlueLegacyScreenshotRepair {
                 $record = $null
                 try {
                     $filename = [string](Get-ITGlueDocumentImageProperty (Get-ITGlueDocumentImageProperty $step.Metadata 'attributes') 'name')
-                    $previous = @(Get-ITGlueDocumentImageProperty $article 'ImageRecoveries' | Where-Object { [string](Get-ITGlueDocumentImageProperty $_ 'ITGStepId') -eq $step.Id -and (Get-ITGlueDocumentImageProperty $_ 'HuduImageUrl') }) | Select-Object -Last 1
+                    $previous = @(Get-ITGlueDocumentImageProperty $article 'ImageRecoveries' | Where-Object {
+                        $owner = Get-ITGlueDocumentImageProperty $_ 'HuduArticleId'
+                        [string](Get-ITGlueDocumentImageProperty $_ 'ITGStepId') -eq $step.Id -and
+                        (Get-ITGlueDocumentImageProperty $_ 'HuduImageUrl') -and
+                        (-not $owner -or [string]$owner -eq [string]$article.HuduID)
+                    }) | Select-Object -Last 1
                     $alreadyPlaced = $false
                     if ($previous) {
                         $alreadyPlaced = Test-ITGlueLegacyScreenshotPlaced $content ([string]$previous.HuduImageUrl) $Context.HuduBase

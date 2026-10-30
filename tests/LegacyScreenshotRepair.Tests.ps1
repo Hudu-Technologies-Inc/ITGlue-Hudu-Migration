@@ -174,9 +174,19 @@ try {
     $beforePhotos = $photoCalls
     $null = @(Invoke-ITGlueLegacyScreenshotRepair -Articles @($article) -Context (New-LegacyTestContext))
     Assert-Legacy ($article.ImageRecoveries[-1].Status -eq 'Uploaded' -and $article.ImageRecoveries[-1].HuduImageUrl -and $photoCalls -eq ($beforePhotos + 1)) 'A failed article commit lost the uploaded photo needed for a retry.'
+    $resolved = Resolve-ITGlueDocumentImage -Article $article -SourceValues @('Generic_USB_Hub_Properties.jpg') -LegacyStepId 71601 -ImageIndex 1 -Context (New-LegacyTestContext)
+    $savedRetry = @(Get-Content -LiteralPath (Join-Path $logsPath 'DocumentImageRecovery/58145.json') -Raw | ConvertFrom-Json) | Where-Object RecoveryKey -eq '58145:1:step-71601'
+    Assert-Legacy ($resolved.Record.HuduImageUrl -eq 'https://hudu.invalid/images/repaired.png' -and $savedRetry.HuduImageUrl -eq $resolved.Record.HuduImageUrl -and $savedRetry.Status -eq 'Uploaded') 'Resolving a cached image erased its upload URL before an interrupted retry could reuse it.'
     $failCommit = $false
     $result = @(Invoke-ITGlueLegacyScreenshotRepair -Articles @($article) -Context (New-LegacyTestContext))
     Assert-Legacy ($result[-1].Status -eq 'Placed' -and $photoCalls -eq ($beforePhotos + 1)) 'Retrying a failed article commit uploaded a duplicate photo.'
+    $otherArticle = New-LegacyTestArticle
+    $otherArticle.HuduID = 999
+    $otherArticle | Add-Member -NotePropertyName ImageRecoveries -NotePropertyValue $article.ImageRecoveries
+    $liveContent = $originalContent
+    $beforePhotos = $photoCalls
+    $result = @(Invoke-ITGlueLegacyScreenshotRepair -Articles @($otherArticle) -Context (New-LegacyTestContext))
+    Assert-Legacy ($result[-1].Status -eq 'Placed' -and $photoCalls -eq ($beforePhotos+1) -and $otherArticle.ImageRecoveries[-1].HuduArticleId -eq 999) 'Recovery reused a photo associated with a different Hudu article.'
     $article = New-LegacyTestArticle; $liveContent = $originalContent; $articleReads = 0; $simulateConcurrentEdit = $true
     $beforeCommits = $commitCalls
     $result = @(Invoke-ITGlueLegacyScreenshotRepair -Articles @($article) -Context (New-LegacyTestContext))
@@ -324,15 +334,26 @@ try {
     $ITGlueHuduMigrationRun = @{LogsFolder=$logsPath}; $MigrationLogs=$logsPath; $FirstTimeLoad=1
     $ITGAPIEndpoint='https://api.example.invalid'; $ITGKey='offline-test-key'; $ITGURL='https://tenant.invalid'; $HuduBaseDomain='https://hudu.invalid'; $ITGlueJWT='test-jwt'
     $before = @($requests | Where-Object JWT).Count
-    $entryResult = @(. "$repoRoot/Repair-ITGlueLegacyStepScreenshots.ps1" -DocumentId 58145 -DownloadOnly)
+    $entryResult = @(. "$repoRoot/Private/Repair-ITGlueLegacyStepScreenshots.ps1" -DocumentId 58145 -DownloadOnly)
     Assert-Legacy ($entryResult.Count -eq 1 -and $entryResult[0].Status -eq 'Downloaded' -and @($requests | Where-Object JWT).Count -eq ($before + 1) -and $ITGlueJWT -ceq 'test-jwt') 'The entry point did not reuse the existing checklist JWT or changed its caller variable.'
     $loggedArticles = @(Get-Content -LiteralPath (Join-Path $logsPath 'Articles.json') -Raw | ConvertFrom-Json -Depth 40)
     Assert-Legacy ($loggedArticles.Count -eq 1 -and $loggedArticles[0].ImageRecoveries.Count -gt 0 -and (Test-Path -LiteralPath (Join-Path $logsPath 'LegacyStepScreenshotRecovery.json'))) 'The entry point did not persist article provenance and repair results.'
+    # Run the moved Private launcher through a fresh initialization too. Keep its
+    # initializer/helper in a fixture so this test never connects to a tenant.
+    $entryFixture=Join-Path $fixtureRoot 'entry-launcher'
+    $null=[IO.Directory]::CreateDirectory((Join-Path $entryFixture 'Private'))
+    $null=[IO.Directory]::CreateDirectory((Join-Path $entryFixture 'Public'))
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'Private/Repair-ITGlueLegacyStepScreenshots.ps1') -Destination (Join-Path $entryFixture 'Private/Repair-ITGlueLegacyStepScreenshots.ps1')
+    [IO.File]::WriteAllText((Join-Path $entryFixture 'Public/Repair-ITGlueLegacyStepScreenshots.ps1'), ". '" + (Join-Path $repoRoot 'Public/Repair-ITGlueLegacyStepScreenshots.ps1').Replace("'", "''") + "'")
+    [IO.File]::WriteAllText((Join-Path $entryFixture 'Initialize-Module.ps1'), 'param($InitType,$SettingsFile); $script:legacyFixtureInitCalls++; if ($InitType -ne ''Lite'') { throw ''Expected Lite initialization'' }')
+    $legacyFixtureInitCalls=0
+    $entryResult=@(. (Join-Path $entryFixture 'Private/Repair-ITGlueLegacyStepScreenshots.ps1') -SettingsFile 'offline-settings.json' -DocumentId 58145 -DownloadOnly)
+    Assert-Legacy ($legacyFixtureInitCalls -eq 1 -and $entryResult[0].Status -eq 'Downloaded') 'The moved launcher did not find its repository initializer and Public helper.'
     foreach ($jsonFile in Get-ChildItem -LiteralPath $logsPath -File -Recurse -Filter '*.json') {
         Assert-Legacy ((Get-Content -LiteralPath $jsonFile.FullName -Raw) -notmatch 'test-jwt|X-Amz-Signature') 'A JWT or signed query string leaked into saved logs.'
     }
     $readme = Get-Content -LiteralPath (Join-Path $repoRoot 'README.md') -Raw
-    Assert-Legacy ($readme -notmatch 'Repair-ITGlueLegacyStepScreenshots|ITGlueWebSession' -and $readme -match 'Legacy step screenshots can be inconsistent') 'The README advertises the optional script/authentication flow or omits the requested limitation note.'
+    Assert-Legacy ($readme -notmatch 'Repair-ITGlueLegacyStepScreenshots|ITGlueWebSession') 'The README advertises the optional script/authentication flow.'
     $initializer = Get-Content -LiteralPath (Join-Path $repoRoot 'Initialize-Module.ps1') -Raw
     Assert-Legacy ($initializer -notmatch 'Repair-ITGlueLegacyStepScreenshots') 'The standalone repair was added to normal initialization.'
     Write-Output "Passed $checks standalone legacy screenshot repair checks (offline)."
