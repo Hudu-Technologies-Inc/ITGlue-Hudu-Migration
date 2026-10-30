@@ -2705,7 +2705,7 @@ if ($true -eq $ImportConfigInterfaces){
 write-host "wrapup 4/10... $(if ($true -eq $allowSettingFlagsAndTypes) {"Setting"} else {"Skipping"}) optional flags and flag types..."
 if ($true -eq $allowSettingFlagsAndTypes){
     $null = Start-MigrationJob -Name "Wrap-Up - Flags and Flag Types";
-    . .\public\Add-HuduFlagsFlagtypes.ps1
+    . .\public\jobs\Add-HuduFlagsFlagtypes.ps1
 }
 
 write-host "wrapup 5/10... Standalone article attachment placeholders were handled during local article commit"; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
