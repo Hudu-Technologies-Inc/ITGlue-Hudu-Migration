@@ -1,3 +1,253 @@
+function Get-OmniIPAMNormalizedLabel {
+  param([AllowNull()][string]$Label)
+
+  if ([string]::IsNullOrWhiteSpace($Label)) { return $null }
+  return ($Label.Trim() -replace '[^\w\s]', '' -replace '\s+', '_').ToLowerInvariant()
+}
+
+function Get-OmniIPAMFieldLabel {
+  param([AllowNull()]$Field)
+
+  foreach ($candidate in @($Field.label, $Field.caption, $Field.name, $Field.field_name, $Field.fieldName)) {
+    if (-not [string]::IsNullOrWhiteSpace("$candidate")) {
+      return "$candidate"
+    }
+  }
+
+  return $null
+}
+
+function Get-OmniIPAMLayoutId {
+  param([AllowNull()]$Layout)
+
+  foreach ($candidate in @($Layout.id, $Layout.asset_layout_id, $Layout.assetLayoutId, $Layout.layout_id, $Layout.layoutId)) {
+    if ($null -ne $candidate -and "$candidate" -match '^\d+$') {
+      return [int]$candidate
+    }
+  }
+
+  return $null
+}
+
+function Get-OmniIPAMLayoutName {
+  param([AllowNull()]$Layout)
+
+  foreach ($candidate in @($Layout.name, $Layout.Name, $Layout.title, $Layout.Title)) {
+    if (-not [string]::IsNullOrWhiteSpace("$candidate")) {
+      return "$candidate"
+    }
+  }
+
+  return $null
+}
+
+function Get-OmniIPAMAssetObject {
+  param([AllowNull()]$Asset)
+
+  foreach ($candidate in @($Asset.HuduObject, $Asset.asset, $Asset.Asset)) {
+    if ($null -ne $candidate) {
+      return $candidate
+    }
+  }
+
+  return $Asset
+}
+
+function Get-OmniIPAMMigrationAsset {
+  param(
+    [AllowNull()][AllowEmptyCollection()][object[]]$MigrationItems,
+    [AllowNull()][AllowEmptyCollection()][int[]]$AllowedCompanyId
+  )
+  $seen = [Collections.Generic.HashSet[string]]::new()
+  foreach ($item in $MigrationItems) {
+    if ($null -eq $item) { continue }
+    $status = ([string]($item.Imported ?? $item.Status) -replace '[-_\s]', '').ToLowerInvariant()
+    if ($status -notin @('createdbyscript', 'updatedbyscript', 'created', 'updated', 'preexisting')) { continue }
+    foreach ($cachedObject in @($item.HuduObject)) {
+      $asset = Get-OmniIPAMAssetObject $cachedObject
+      if ($null -eq $asset -or -not (Get-OmniIPAMAssetLayoutId $asset)) { continue }
+      $companyId = Get-HuduIPAMAssetCompanyId $asset
+      $assetId = Get-HuduIPAMAssetId $asset
+      if (-not $companyId -or $assetId -le 0) { continue }
+      if ($PSBoundParameters.ContainsKey('AllowedCompanyId') -and $companyId -notin $AllowedCompanyId) { continue }
+      if (-not $seen.Add("${companyId}:$assetId")) { continue }
+      $fields = @($asset.fields | Where-Object { $null -ne $_ })
+      $interfaces = $item.ITGObject.attributes.'configuration-interfaces'
+      if ($null -ne $interfaces -and -not [string]::IsNullOrWhiteSpace("$interfaces")) {
+        $fields = @($fields | Where-Object { (Get-OmniIPAMNormalizedLabel (Get-OmniIPAMFieldLabel $_)) -ne 'configuration_interfaces' })
+        $fields += [pscustomobject]@{label='Configuration Interfaces'; value=$interfaces}
+      }
+      # Preserve source interface masks/VLANs without altering cached Hudu objects.
+      [pscustomobject]@{id=$assetId; company_id=$companyId; asset_layout_id=(Get-OmniIPAMAssetLayoutId $asset); name=$asset.name; fields=$fields}
+    }
+  }
+}
+
+function Get-OmniIPAMAssetLayoutId {
+  param([AllowNull()]$Asset)
+
+  $assetObject = Get-OmniIPAMAssetObject -Asset $Asset
+  foreach ($candidate in @(
+    $assetObject.asset_layout_id,
+    $assetObject.assetLayoutId,
+    $assetObject.AssetLayoutId,
+    $assetObject.layout_id,
+    $assetObject.layoutId
+  )) {
+    if ($null -ne $candidate -and "$candidate" -match '^\d+$') {
+      return [int]$candidate
+    }
+  }
+
+  return $null
+}
+
+function Get-OmniIPAMLayoutFields {
+  param([AllowNull()]$Layout)
+
+  foreach ($candidate in @(
+    $Layout.fields,
+    $Layout.asset_layout_fields,
+    $Layout.assetLayoutFields,
+    $Layout.layout_fields,
+    $Layout.layoutFields
+  )) {
+    if ($null -ne $candidate) {
+      return @($candidate)
+    }
+  }
+
+  return @()
+}
+
+function Resolve-OmniIPAMPreferredLabel {
+  param(
+    [AllowNull()][string[]]$AvailableLabels,
+    [AllowNull()][string[]]$CandidateLabels
+  )
+
+  $available = @($AvailableLabels | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  if ($available.Count -eq 0 -or -not $CandidateLabels) { return $null }
+
+  $availableByNormalizedLabel = @{}
+  foreach ($label in $available) {
+    $normalized = Get-OmniIPAMNormalizedLabel -Label $label
+    if ($normalized -and -not $availableByNormalizedLabel.ContainsKey($normalized)) {
+      $availableByNormalizedLabel[$normalized] = $label
+    }
+  }
+
+  foreach ($candidate in @($CandidateLabels)) {
+    $normalizedCandidate = Get-OmniIPAMNormalizedLabel -Label $candidate
+    if ($normalizedCandidate -and $availableByNormalizedLabel.ContainsKey($normalizedCandidate)) {
+      return $availableByNormalizedLabel[$normalizedCandidate]
+    }
+  }
+
+  return $null
+}
+
+function Resolve-OmniIPAMFieldLabels {
+  param([string[]]$AvailableLabels, [string[]]$CandidateLabels)
+  $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  foreach ($candidate in $CandidateLabels) {
+    foreach ($label in $AvailableLabels) {
+      if ((Get-OmniIPAMNormalizedLabel $label) -eq (Get-OmniIPAMNormalizedLabel $candidate) -and $seen.Add($label)) { $label }
+    }
+  }
+}
+
+function Resolve-OmniIPAMAssetLayouts {
+  param(
+    [AllowNull()][object[]]$AssetLayouts,
+    [AllowNull()][int[]]$AssetLayoutId
+  )
+
+  $layouts = if ($PSBoundParameters.ContainsKey('AssetLayouts')) {
+    @($AssetLayouts)
+  } else {
+    @(Get-HuduAssetLayouts)
+  }
+
+  foreach ($layout in $layouts) {
+    $resolvedLayout = if ($layout.asset_layout) { $layout.asset_layout } else { $layout }
+    $layoutId = Get-OmniIPAMLayoutId -Layout $resolvedLayout
+    if ($AssetLayoutId -and $layoutId -notin $AssetLayoutId) { continue }
+    $resolvedLayout
+  }
+}
+
+function Get-OmniIPAMEligibleAssetLayout {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [Alias('IPFieldLabels','IPLabels')]
+    [string[]]$IPAddressFieldLabels,
+
+    [string[]]$HostnameFieldLabels = @('Hostname', 'Host Name', 'Device Name', 'DNS Name', 'FQDN', 'Name'),
+    [string[]]$DefaultGatewayFieldLabels = @('Default Gateway', 'Gateway', 'Default Gateway IP', 'Gateway IP'),
+    [AllowNull()][object[]]$AssetLayouts,
+    [AllowNull()][int[]]$AssetLayoutId,
+    [switch]$RequireHostname,
+    [switch]$RequireGateway,
+    [switch]$SkipLayoutHydration,
+    [switch]$EligibleOnly
+  )
+
+  $layoutParams = @{AssetLayoutId=$AssetLayoutId}
+  if ($PSBoundParameters.ContainsKey('AssetLayouts')) { $layoutParams.AssetLayouts = $AssetLayouts }
+  foreach ($layout in Resolve-OmniIPAMAssetLayouts @layoutParams) {
+    $layoutId = Get-OmniIPAMLayoutId -Layout $layout
+    $layoutName = Get-OmniIPAMLayoutName -Layout $layout
+    $fieldLabels = @(
+      Get-OmniIPAMLayoutFields -Layout $layout |
+        ForEach-Object { Get-OmniIPAMFieldLabel -Field $_ } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+    )
+    if (-not $SkipLayoutHydration -and $fieldLabels.Count -eq 0 -and $layoutId -and (Get-Command -Name Get-HuduAssetLayouts -ErrorAction SilentlyContinue)) {
+      $hydratedLayoutResponse = Get-HuduAssetLayouts -layoutid $layoutId
+      $hydratedLayout = if ($hydratedLayoutResponse.asset_layout) { $hydratedLayoutResponse.asset_layout } else { $hydratedLayoutResponse }
+      $hydratedFieldLabels = @(
+        Get-OmniIPAMLayoutFields -Layout $hydratedLayout |
+          ForEach-Object { Get-OmniIPAMFieldLabel -Field $_ } |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+          Select-Object -Unique
+      )
+      if ($hydratedFieldLabels.Count -gt 0) {
+        $layout = $hydratedLayout
+        $fieldLabels = $hydratedFieldLabels
+      }
+    }
+
+    $ipLabels = @(Resolve-OmniIPAMFieldLabels -AvailableLabels $fieldLabels -CandidateLabels $IPAddressFieldLabels)
+    $ipFieldLabel = $ipLabels | Select-Object -First 1
+    $hostnameFieldLabel = Resolve-OmniIPAMPreferredLabel -AvailableLabels $fieldLabels -CandidateLabels $HostnameFieldLabels
+    $gatewayFieldLabel = Resolve-OmniIPAMPreferredLabel -AvailableLabels $fieldLabels -CandidateLabels $DefaultGatewayFieldLabels
+
+    $reasons = New-Object System.Collections.Generic.List[string]
+    if (-not $ipFieldLabel) { $reasons.Add('No eligible IP address field label found.') | Out-Null }
+    if ($RequireHostname -and -not $hostnameFieldLabel) { $reasons.Add('No eligible hostname field label found.') | Out-Null }
+    if ($RequireGateway -and -not $gatewayFieldLabel) { $reasons.Add('No eligible gateway field label found.') | Out-Null }
+
+    $eligible = ($reasons.Count -eq 0)
+    if ($EligibleOnly -and -not $eligible) { continue }
+
+    [pscustomobject]@{
+      Eligible                 = $eligible
+      LayoutId                 = $layoutId
+      LayoutName               = $layoutName
+      IPAddressFieldLabel      = $ipFieldLabel
+      IPAddressFieldLabels     = $ipLabels
+      HostnameFieldLabel       = $hostnameFieldLabel
+      DefaultGatewayFieldLabel = $gatewayFieldLabel
+      FieldLabels              = $fieldLabels
+      Reason                   = if ($eligible) { 'Eligible' } else { $reasons -join ' ' }
+      Layout                   = $layout
+    }
+  }
+}
+
 
 
 function Get-Mask32 {
@@ -18,6 +268,13 @@ function Convert-IPv4ToUInt32 {
   if ($bytes.Length -ne 4) { throw "IPv4 only: $Ip" }
   [Array]::Reverse($bytes)
   [BitConverter]::ToUInt32($bytes, 0)
+}
+
+function Convert-UInt32ToIPv4 {
+  param([Parameter(Mandatory)][uint32]$Value)
+  $bytes = [BitConverter]::GetBytes($Value)
+  [Array]::Reverse($bytes)
+  ([System.Net.IPAddress]::new($bytes)).ToString()
 }
 
 function Parse-Cidr {
@@ -97,7 +354,7 @@ function Get-HuduAssetFieldValue {
 
   $field = @(
     $Asset.fields | Where-Object {
-      $_.label -ieq $Label -or $_.caption -ieq $Label
+      (Get-OmniIPAMNormalizedLabel (Get-OmniIPAMFieldLabel $_)) -eq (Get-OmniIPAMNormalizedLabel $Label)
     } | Select-Object -First 1
   )[0]
 
@@ -128,12 +385,12 @@ function Extract-IPv4sFromInterfaces {
   foreach ($piece in (Get-AsArray $InterfacesValue)) {
     $raw = $piece
     # try JSON first
-    if ($raw -is [string] -and $raw.Trim().StartsWith('[')) {
+    if ($raw -is [string] -and $raw.TrimStart() -match '^[\[{]') {
       try {
         $arr = $raw | ConvertFrom-Json -ErrorAction Stop
-        foreach ($it in $arr) {
+        foreach ($it in @($arr)) {
           $ip  = $it.ip ?? $it.address
-          $cidr= $it.cidr
+          $cidr= $it.cidr ?? $it.prefix
           $mask= $it.mask ?? $it.netmask
           $vid = $it.vlan_id ?? $it.vlan ?? $it.vlanId
           if ($ip -and ($ip -match $__Ipv4Rx)) {
@@ -147,13 +404,13 @@ function Extract-IPv4sFromInterfaces {
           }
         }
         continue
-      } catch {}
+      } catch { Write-Warning 'Skipping an invalid JSON interface value.'; continue }
     }
 
     # structured object (PSCustomObject/Hashtable)
     if ($raw -isnot [string]) {
       $ip  = $raw.ip ?? $raw.address ?? $raw.IP
-      $cidr= $raw.cidr ?? $raw.CIDR
+      $cidr= $raw.cidr ?? $raw.CIDR ?? $raw.prefix ?? $raw.Prefix
       $mask= $raw.mask ?? $raw.netmask ?? $raw.Netmask
       $vid = $raw.vlan_id ?? $raw.vlan ?? $raw.VlanId ?? $raw.Vlan
       if ($ip -and ($ip -match $__Ipv4Rx)) {
@@ -261,10 +518,210 @@ function Collect-CompanyIpObservations {
     $bucket[$k].Gateways      = @($bucket[$k].Gateways      | Select-Object -Unique)
     $bucket[$k].Hostnames     = @($bucket[$k].Hostnames     | Where-Object { $_ } | Select-Object -Unique)
     $bucket[$k].VlanIds       = @($bucket[$k].VlanIds       | Where-Object { $_ -ne 0 } | Select-Object -Unique)
-    $bucket[$k].ObservedMasks = @($bucket[$k].ObservedMasks | Where-Object { $_ -ge 8 -and $_ -le 30 } | Select-Object -Unique)
+    $bucket[$k].ObservedMasks = @($bucket[$k].ObservedMasks | Where-Object { $_ -ge 8 -and $_ -le 32 } | Select-Object -Unique)
   }
 
   $bucket.Values
+}
+
+function Convert-HuduIPAMAddressFieldToInterfaces {
+  param(
+    [Parameter(Mandatory)]$AddressValue,
+    [ValidateRange(8,30)][int]$DefaultPrivatePrefix = 24,
+    [ValidateRange(0,32)][int]$DefaultPublicPrefix = 32,
+    [switch]$DeferDefaultPrefix
+  )
+
+  $interfaces = New-Object System.Collections.Generic.List[object]
+  $seen = New-Object System.Collections.Generic.HashSet[string]
+
+  foreach ($iface in Extract-IPv4sFromInterfaces -InterfacesValue $AddressValue) {
+    $ip, $inlinePrefix = [string]$iface.IP -split '/', 2
+    if ([string]::IsNullOrWhiteSpace("$ip")) { continue }
+    if ([regex]::Match($ip, "^$__Ipv4Rx`$").Value -ne $ip) { continue }
+
+    $prefix = $null
+    $explicitPrefix = $iface.Prefix ?? $inlinePrefix
+    if (-not [string]::IsNullOrWhiteSpace("$explicitPrefix")) {
+      if ("$explicitPrefix" -notmatch '(?:^|/)(\d{1,2})$') { Write-Warning "Skipping invalid prefix for $ip."; continue }
+      $prefix = [int]$Matches[1]
+      if ($prefix -gt 32) { Write-Warning "Skipping invalid prefix for $ip."; continue }
+    }
+    if ($null -eq $prefix -and -not [string]::IsNullOrWhiteSpace("$($iface.Netmask)")) {
+      $mask = [string]$iface.Netmask
+      if ($mask -match '^\d{1,2}$' -and [int]$mask -le 32) { $prefix = [int]$mask }
+      else {
+        $maskAddress = $null
+        if (-not [Net.IPAddress]::TryParse($mask, [ref]$maskAddress) -or $maskAddress.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { Write-Warning "Skipping invalid netmask for $ip."; continue }
+        $bits = ($maskAddress.GetAddressBytes() | ForEach-Object { [Convert]::ToString($_, 2).PadLeft(8, '0') }) -join ''
+        if ($bits -notmatch '^1*0*$') { Write-Warning "Skipping noncontiguous netmask for $ip."; continue }
+        $prefix = ($bits -replace '0', '').Length
+      }
+    }
+    if ($null -eq $prefix -and -not $DeferDefaultPrefix) {
+      $prefix = if (Test-Rfc1918 -Ip $ip) { $DefaultPrivatePrefix } else { $DefaultPublicPrefix }
+    }
+
+    $key = "$ip|$prefix|$($iface.Netmask)|$($iface.VlanId)"
+    if (-not $seen.Add($key)) { continue }
+
+    $interfaces.Add([pscustomobject]@{
+      IP      = $ip
+      Prefix  = $prefix
+      Netmask = $iface.Netmask
+      VlanId  = $iface.VlanId
+    }) | Out-Null
+  }
+
+  $interfaces | ForEach-Object { $_ }
+}
+
+function Get-HuduIPAMAssetCompanyId {
+  param(
+    [Parameter(Mandatory)]$Asset,
+    [int]$CompanyId = 0
+  )
+
+  if ($CompanyId -gt 0) { return $CompanyId }
+  foreach ($candidate in @($Asset.company_id, $Asset.companyId, $Asset.CompanyId, $Asset.company.id)) {
+    if ($null -ne $candidate -and "$candidate" -match '^\d+$' -and [int]$candidate -gt 0) {
+      return [int]$candidate
+    }
+  }
+
+  return $null
+}
+
+function Get-HuduIPAMAssetId {
+  param([Parameter(Mandatory)]$Asset)
+
+  foreach ($candidate in @($Asset.id, $Asset.asset_id, $Asset.assetId, $Asset.AssetId)) {
+    if ($null -ne $candidate -and "$candidate" -match '^\d+$') {
+      return [int]$candidate
+    }
+  }
+
+  return 0
+}
+
+function Get-HuduIPAMAssetName {
+  param([Parameter(Mandatory)]$Asset)
+
+  foreach ($candidate in @($Asset.name, $Asset.Name, $Asset.title, $Asset.Title)) {
+    if (-not [string]::IsNullOrWhiteSpace("$candidate")) {
+      return "$candidate"
+    }
+  }
+
+  return $null
+}
+
+function Invoke-HuduAssetIPAMSync {
+  <#
+    Builds Hudu IPAM from an arbitrary Hudu asset array by reading one field label
+    as the IP source. Example:
+      Invoke-HuduAssetIPAMSync -Assets $assets -IPAddressFieldLabel 'Management IP'
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory, ValueFromPipeline)]$Assets,
+    [Parameter(Mandatory)]
+    [Alias('FieldLabel','IPFieldLabel','Label','IPAddressFieldLabels')]
+    [string[]]$IPAddressFieldLabel,
+    [int]$CompanyId = 0,
+    [string]$HostnameFieldLabel = 'Hostname',
+    [string]$DefaultGatewayFieldLabel = 'Default Gateway',
+    [ValidateRange(8,30)][int]$DefaultPrivatePrefix = 24,
+    [ValidateRange(0,32)][int]$DefaultPublicPrefix = 32
+  )
+
+  begin {
+    $assetList = New-Object System.Collections.Generic.List[object]
+  }
+
+  process {
+    foreach ($asset in (Get-AsArray $Assets)) {
+      if ($null -ne $asset) {
+        $assetList.Add($asset) | Out-Null
+      }
+    }
+  }
+
+  end {
+    $matchedAssets = @(
+      foreach ($asset in $assetList) {
+        $companyIdForAsset = Get-HuduIPAMAssetCompanyId -Asset $asset -CompanyId $CompanyId
+        if ($null -eq $companyIdForAsset) {
+          Write-Warning "Skipping asset '$((Get-HuduIPAMAssetName -Asset $asset) ?? '<unnamed>')' because it has no company_id. Pass -CompanyId to override."
+          continue
+        }
+
+        $interfaces = @(
+          foreach ($label in $IPAddressFieldLabel) {
+            $value = Get-HuduAssetFieldValue -Asset $asset -Label $label
+            if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace("$value")) {
+              Convert-HuduIPAMAddressFieldToInterfaces -AddressValue $value -DeferDefaultPrefix
+            }
+          }
+        )
+        if ($interfaces.Count -eq 0) { continue }
+        foreach ($group in @($interfaces | Group-Object IP)) {
+          $explicit = @($group.Group | Where-Object { $null -ne $_.Prefix })
+          foreach ($iface in $group.Group) {
+            if ($null -eq $iface.Prefix) {
+              $iface.Prefix = if ($explicit.Count -gt 0) { $explicit[0].Prefix } elseif (Test-Rfc1918 $iface.IP) { $DefaultPrivatePrefix } else { $DefaultPublicPrefix }
+            }
+          }
+        }
+
+        $assetId = Get-HuduIPAMAssetId -Asset $asset
+        $assetName = Get-HuduIPAMAssetName -Asset $asset
+
+        $hostname = $null
+        if (-not [string]::IsNullOrWhiteSpace($HostnameFieldLabel)) {
+          $hostname = Get-HuduAssetFieldValue -Asset $asset -Label $HostnameFieldLabel
+        }
+        if ([string]::IsNullOrWhiteSpace("$hostname")) {
+          $hostname = $assetName
+        }
+
+        $defaultGateway = $null
+        if (-not [string]::IsNullOrWhiteSpace($DefaultGatewayFieldLabel)) {
+          $defaultGateway = Get-HuduAssetFieldValue -Asset $asset -Label $DefaultGatewayFieldLabel
+        }
+
+        $attributes = [pscustomobject]@{
+          # Feed only parsed host addresses to the observation/assignment path;
+          # regex-scanning a JSON blob would also import its dotted netmasks.
+          'primary-ip'                 = (@($interfaces.IP | Select-Object -Unique) -join "`n")
+          'default-gateway'            = $defaultGateway
+          hostname                     = $hostname
+          'configuration-interfaces'   = $interfaces
+        }
+
+        $huduObject = [pscustomobject]@{
+          id         = $assetId
+          company_id = $companyIdForAsset
+          name       = $assetName
+          fields     = @()
+        }
+
+        [pscustomobject]@{
+          HuduID     = $assetId
+          HuduObject = $huduObject
+          ITGObject  = [pscustomobject]@{ attributes = $attributes }
+          Name       = $assetName
+        }
+      }
+    )
+
+    if ($matchedAssets.Count -eq 0) {
+      Write-Host "No assets with field '$IPAddressFieldLabel' found for IPAM import."
+      return
+    }
+
+    Invoke-HuduConfigurationIPAMSync -MatchedConfigurations $matchedAssets
+  }
 }
 
 function Invoke-HuduConfigurationIPAMSync {
@@ -334,6 +791,7 @@ function Invoke-HuduConfigurationIPAMSync {
     $CompanyResults["Observations"]=$obs
 
     $cidrs = @(Guess-NetworksFromObservations -Observations $obs)
+    $cidrs = @(Convert-OmniIPAMPublicNetworksToHostCidrs -Cidrs $cidrs -Observations $obs)
     Write-Host "$($cidrs.Count) observed CIDRs for company ID $companyId"
     if ($cidrs.Count -gt 0) {
       Write-Host "Inferred $($cidrs.Count) candidate networks for company ID ${companyId}: $($cidrs -join ', ')"
@@ -437,7 +895,7 @@ function Invoke-HuduConfigurationIPAMSync {
     $CompanyResults["Networks"]=$ensuredNetworks
     $CompanyResults["Addresses"]=$ensuredIpAddresses
     $CompanyResults["VLANIDs"]=$vlanIds
-    $IPAMResults.Add($CompanyResults)
+    [void]$IPAMResults.Add($CompanyResults)
 
     Write-Host "Company ID $companyId IPAM summary: $($ensuredNetworks.Count) networks, $($ensuredIpAddresses.Count) IP addresses"
   }
@@ -487,15 +945,14 @@ function Guess-NetworksFromObservations {
     }
 
     if ($chosenPrefix) {
-      $octets = $g.Name.Split('.')
-      $netStart = switch ($chosenPrefix) {
-        24 { "$($octets[0]).$($octets[1]).$($octets[2]).0" }
-        default {
-          # fallback to /24 if we don't implement fancy supernetting here
-          "$($octets[0]).$($octets[1]).$($octets[2]).0"
-        }
+      $firstPeerIp = @($peers | Select-Object -ExpandProperty IP -First 1)[0]
+      try {
+        $network = Parse-Cidr ("{0}/{1}" -f $firstPeerIp, [int]$chosenPrefix)
+        $netStart = Convert-UInt32ToIPv4 -Value ([uint32]$network.Start)
+        $cidrs.Add("$netStart/$chosenPrefix") | Out-Null
+      } catch {
+        Write-Warning "Could not infer network base for $firstPeerIp/$chosenPrefix. $($_.Exception.Message)"
       }
-      $cidrs.Add("$netStart/$chosenPrefix") | Out-Null
     }
   }
 
@@ -505,10 +962,7 @@ function Guess-NetworksFromObservations {
       try {
         # derive network base from host/prefix
         $row = Parse-Cidr ("{0}/{1}" -f $o.IP, [int]$p)
-        # convert start to dotted
-        $bytes = [BitConverter]::GetBytes([uint32]$row.Start)
-        [Array]::Reverse($bytes)
-        $netIp = ([System.Net.IPAddress]::new($bytes)).ToString()
+        $netIp = Convert-UInt32ToIPv4 -Value ([uint32]$row.Start)
         $cidrs.Add("$netIp/$p") | Out-Null
       } catch {}
     }
@@ -534,17 +988,6 @@ function Compress-IntsToRanges {
   }
   if ($start -eq $prev) { $ranges.Add("$start") | Out-Null } else { $ranges.Add("$start-$prev") | Out-Null } 
   ($ranges -join ',')
-}
-function Build-NetworkIndex {
-  param([object[]]$Networks) # not mandatory
-  if (-not $Networks -or $Networks.Count -eq 0) { return @() }
-
-  $rows = @()
-  foreach ($n in @($Networks)) {
-    $cidrObj = if ($n.address) { Parse-Cidr $n.address } else { $null }
-    if ($cidrObj) { $rows += [pscustomobject]@{ Network = $n; Cidr = $cidrObj } }
-  }
-  @($rows | Sort-Object { $_.Cidr.Prefix } -Descending)
 }
 function Test-CidrEquivalent {
   param([Parameter(Mandatory)][string]$A, [Parameter(Mandatory)][string]$B)
@@ -631,6 +1074,35 @@ function Ensure-Cidr {
   if ($AddressOrHost -match '/\d{1,2}$') { return $AddressOrHost }
   return "$AddressOrHost/$DefaultPrefix"
 }
+
+function Convert-OmniIPAMPublicNetworksToHostCidrs {
+  param(
+    [AllowNull()][string[]]$Cidrs,
+    [Parameter(Mandatory)][object[]]$Observations
+  )
+
+  $results = New-Object System.Collections.Generic.HashSet[string]
+
+  foreach ($cidr in @($Cidrs)) {
+    if ([string]::IsNullOrWhiteSpace($cidr)) { continue }
+
+    $baseIp = ($cidr -split '/', 2)[0]
+    if (Test-Rfc1918 -Ip $baseIp) {
+      $results.Add($cidr) | Out-Null
+    }
+  }
+
+  foreach ($observation in @($Observations)) {
+    $ip = [string]$observation.IP
+    if ([string]::IsNullOrWhiteSpace($ip)) { continue }
+    if (-not (Test-Rfc1918 -Ip $ip)) {
+      $results.Add("$ip/32") | Out-Null
+    }
+  }
+
+  $results | ForEach-Object { $_ }
+}
+
 function Ensure-HuduIPAddress {
   param(
     [Parameter(Mandatory)][string]$Address,
@@ -702,6 +1174,10 @@ function Ensure-HuduNetwork {
     $NetworkType = if (Test-Rfc1918 -Ip $baseIp) { 0 } else { 1 }
   }
 
+  if ($NetworkType -eq 1 -and -not (Test-Rfc1918 -Ip $baseIp) -and $Address -notmatch '/32$') {
+    $Address = "$baseIp/32"
+  }
+
   $Name = $Name ?? $Address
 
   $existing = Get-HuduNetworks -CompanyId $CompanyId | Where-Object {
@@ -764,3 +1240,821 @@ function Ensure-HuduVlan {
   Write-Host "Creating VLAN $VlanId ($Name) for company $CompanyId (zone=$ZoneId)"
   New-HuduVlan -CompanyId $CompanyId -Name $Name -VlanId $VlanId -VlanZoneId $ZoneId
 }
+
+
+function Invoke-OmniIPAMSyncByAssetLayout {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [Alias('IPFieldLabels','IPLabels')]
+    [string[]]$IPAddressFieldLabels,
+    [string[]]$HostnameFieldLabels = @('Hostname', 'Host Name', 'Device Name', 'DNS Name', 'FQDN', 'Name'),
+    [string[]]$DefaultGatewayFieldLabels = @('Default Gateway', 'Gateway', 'Default Gateway IP', 'Gateway IP'),
+    [AllowNull()][object[]]$AssetLayouts,
+    [AllowNull()][object[]]$CachedAssets,
+    [AllowNull()][int[]]$AssetLayoutId,
+    [AllowNull()][AllowEmptyCollection()][int[]]$AllowedCompanyId,
+    [switch]$RequireHostname,
+    [switch]$RequireGateway,
+    [switch]$DryRun,
+    [switch]$IncludeEmptyLayouts,
+    [ValidateRange(8,30)][int]$DefaultPrivatePrefix = 24,
+    [ValidateRange(0,32)][int]$DefaultPublicPrefix = 32
+  )
+  $cacheProvided = $PSBoundParameters.ContainsKey('CachedAssets')
+  $companyScopeProvided = $PSBoundParameters.ContainsKey('AllowedCompanyId')
+  if ($companyScopeProvided -and @($AllowedCompanyId | Where-Object { $_ -gt 0 }).Count -eq 0) { return }
+  $cachedAssetObjects = @()
+  $layoutParams = @{
+    IPAddressFieldLabels=$IPAddressFieldLabels; HostnameFieldLabels=$HostnameFieldLabels
+    DefaultGatewayFieldLabels=$DefaultGatewayFieldLabels; AssetLayoutId=$AssetLayoutId
+    RequireHostname=$RequireHostname; RequireGateway=$RequireGateway; EligibleOnly=$true
+  }
+  if ($cacheProvided) {
+    $layoutParams.SkipLayoutHydration = $true
+    $cachedAssetObjects = @($CachedAssets | ForEach-Object { Get-OmniIPAMAssetObject $_ } | Where-Object {
+      $null -ne $_ -and (Get-HuduIPAMAssetId $_) -gt 0 -and
+      (Get-OmniIPAMAssetLayoutId $_) -gt 0 -and (Get-HuduIPAMAssetCompanyId $_) -gt 0 -and
+      (-not $companyScopeProvided -or (Get-HuduIPAMAssetCompanyId $_) -in $AllowedCompanyId)
+    })
+    # Explicitly supplied migration caches are authoritative, including empty or
+    # partial caches. Never expand them to every asset/layout in the tenant.
+    if ($cachedAssetObjects.Count -eq 0) { return }
+    $layoutParams.AssetLayouts = @(
+      foreach ($group in @($cachedAssetObjects | Group-Object { Get-OmniIPAMAssetLayoutId $_ })) {
+        $id = [int]$group.Name
+        $metadata = $AssetLayouts | ForEach-Object { if ($_.asset_layout) { $_.asset_layout } else { $_ } } |
+          Where-Object { (Get-OmniIPAMLayoutId $_) -eq $id } | Select-Object -First 1
+        $name = if ($metadata) { Get-OmniIPAMLayoutName $metadata } else { "Asset layout $id" }
+        $labels = @($group.Group.fields | ForEach-Object { Get-OmniIPAMFieldLabel $_ } | Where-Object { $_ } | Select-Object -Unique)
+        [pscustomobject]@{id=$id; name=$name; fields=@($labels | ForEach-Object { [pscustomobject]@{label=$_} })}
+      }
+    )
+  } elseif ($PSBoundParameters.ContainsKey('AssetLayouts')) {
+    $layoutParams.AssetLayouts = $AssetLayouts
+  }
+  $eligibleLayouts = @(Get-OmniIPAMEligibleAssetLayout @layoutParams)
+  if ($DryRun) { return $eligibleLayouts }
+
+  foreach ($layoutCandidate in $eligibleLayouts) {
+    if (-not $layoutCandidate.LayoutId) {
+      Write-Warning "Skipping eligible layout '$($layoutCandidate.LayoutName)' because it has no layout ID."
+      continue
+    }
+    $assets = if ($cacheProvided) {
+      @($cachedAssetObjects | Where-Object { (Get-OmniIPAMAssetLayoutId $_) -eq $layoutCandidate.LayoutId })
+    } elseif ($companyScopeProvided) {
+      @(foreach ($companyId in $AllowedCompanyId) { Get-HuduAssets -assetlayoutid $layoutCandidate.LayoutId -companyid $companyId })
+    } else {
+      @(Get-HuduAssets -assetlayoutid $layoutCandidate.LayoutId)
+    }
+    $assets = @($assets | Where-Object {
+      (Get-HuduIPAMAssetId $_) -gt 0 -and (Get-HuduIPAMAssetCompanyId $_) -gt 0 -and
+      (-not $companyScopeProvided -or (Get-HuduIPAMAssetCompanyId $_) -in $AllowedCompanyId)
+    })
+    $assetsWithIpValues = @(
+      foreach ($asset in $assets) {
+        foreach ($label in $layoutCandidate.IPAddressFieldLabels) {
+          $value = Get-HuduAssetFieldValue -Asset $asset -Label $label
+          if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace("$value") -and
+              @(Convert-HuduIPAMAddressFieldToInterfaces -AddressValue $value -DeferDefaultPrefix).Count -gt 0) {
+            $asset
+            break
+          }
+        }
+      }
+    )
+    if ($assetsWithIpValues.Count -eq 0 -and -not $IncludeEmptyLayouts) { continue }
+    $syncParams = @{
+      Assets=$assetsWithIpValues; IPAddressFieldLabel=$layoutCandidate.IPAddressFieldLabels
+      DefaultPrivatePrefix=$DefaultPrivatePrefix; DefaultPublicPrefix=$DefaultPublicPrefix
+    }
+    if ($layoutCandidate.HostnameFieldLabel) { $syncParams.HostnameFieldLabel=$layoutCandidate.HostnameFieldLabel }
+    if ($layoutCandidate.DefaultGatewayFieldLabel) { $syncParams.DefaultGatewayFieldLabel=$layoutCandidate.DefaultGatewayFieldLabel }
+    [pscustomobject]@{
+      LayoutId=$layoutCandidate.LayoutId; LayoutName=$layoutCandidate.LayoutName
+      IPAddressFieldLabel=$layoutCandidate.IPAddressFieldLabel; IPAddressFieldLabels=$layoutCandidate.IPAddressFieldLabels
+      HostnameFieldLabel=$layoutCandidate.HostnameFieldLabel; DefaultGatewayFieldLabel=$layoutCandidate.DefaultGatewayFieldLabel
+      AssetCount=$assets.Count; ProcessedAssetCount=$assetsWithIpValues.Count
+      Result=if ($assetsWithIpValues.Count -gt 0) { @(Invoke-HuduAssetIPAMSync @syncParams) } else { @() }
+    }
+  }
+}
+
+
+$IPaddressFieldLabels = $ipAddressFieldLabels ?? @(
+    # English
+    'IP'
+    'Secondary IP'
+    'IP Address'
+    'IP Block'
+    'Management IP'
+    'Primary IP Address'
+    'Management Ip Address / Url'
+    'Ip Address(Es)'
+    'interface'
+    'interfaces'
+    'Management IP Address/URL'
+    'Management URL/IP'
+    'Primary IP'
+    'Static IP'
+    'WAN Usable Static IP Range'
+
+    # English - General
+    'IP Addr'
+    'IP Addr.'
+    'IPAddress'
+    'IP Addresses'
+    'IP Address(es)'
+    'IPv4'
+    'IPv4 Address'
+    'IPv4 Addresses'
+    'IPv6'
+    'IPv6 Address'
+    'IPv6 Addresses'
+    'Device IP'
+    'Device IP Address'
+    'Host IP'
+    'Host IP Address'
+    'Network IP'
+    'Network Address'
+    'Interface IP'
+    'Interface IP Address'
+    'Interface Address'
+    'NIC IP'
+    'NIC IP Address'
+    'Assigned IP'
+    'Assigned IP Address'
+    'Configured IP'
+    'Current IP'
+    'Main IP'
+    'Primary IP Address(es)'
+    'Secondary IP Address'
+    'Alternate IP'
+    'Additional IP'
+    'Local IP'
+    'Remote IP'
+    'Public IP'
+    'Public IP Address'
+    'Private IP'
+    'Private IP Address'
+    'Internal IP'
+    'External IP'
+    'LAN IP'
+    'LAN IP Address'
+    'WAN IP'
+    'WAN IP Address'
+    'WAN Address'
+    'Static IP Address'
+    'DHCP Address'
+    'Management Address'
+    'Mgmt IP'
+    'Mgmt IP Address'
+    'MGMT IP'
+    'BMC IP'
+    'BMC IP Address'
+    'iLO IP'
+    'iDRAC IP'
+    'OOB IP'
+    'OOB Management IP'
+    'Out-of-Band IP'
+    'Loopback IP'
+    'Loopback Address'
+    'Virtual IP'
+    'Virtual IP Address'
+    'VIP'
+    'Service IP'
+    'Floating IP'
+    'IP Range'
+    'IP Address Range'
+    'IP Subnet'
+    'IP CIDR'
+    'IP/CIDR'
+    'IP / Mask'
+
+    # German (Deutsch)
+    'IP-Adresse'
+    'IP Adresse'
+    'IP-Adressen'
+    'IPv4-Adresse'
+    'IPv6-Adresse'
+    'Primäre IP-Adresse'
+    'Sekundäre IP-Adresse'
+    'Statische IP'
+    'Statische IP-Adresse'
+    'Öffentliche IP-Adresse'
+    'Private IP-Adresse'
+    'Interne IP-Adresse'
+    'Externe IP-Adresse'
+    'Lokale IP-Adresse'
+    'Management-IP-Adresse'
+    'Verwaltungs-IP'
+    'Verwaltungs-IP-Adresse'
+    'Geräte-IP'
+    'Geräte-IP-Adresse'
+    'Schnittstellen-IP'
+    'Schnittstellenadresse'
+    'Netzwerkadresse'
+    'IP-Adressbereich'
+
+    # French (Français)
+    'Adresse IP'
+    'Adresses IP'
+    'Adresse IPv4'
+    'Adresse IPv6'
+    'Adresse IP principale'
+    'Adresse IP primaire'
+    'Adresse IP secondaire'
+    'Adresse IP statique'
+    'IP statique'
+    'Adresse IP publique'
+    'Adresse IP privée'
+    'Adresse IP interne'
+    'Adresse IP externe'
+    'Adresse IP locale'
+    'Adresse IP de gestion'
+    'IP de gestion'
+    'Adresse IP de management'
+    'Adresse IP du périphérique'
+    'Adresse IP de l''interface'
+    'Adresse réseau'
+    'Plage d''adresses IP'
+
+    # Italian (Italiano)
+    'Indirizzo IP'
+    'Indirizzi IP'
+    'Indirizzo IPv4'
+    'Indirizzo IPv6'
+    'IP principale'
+    'Indirizzo IP principale'
+    'Indirizzo IP primario'
+    'Indirizzo IP secondario'
+    'IP statico'
+    'Indirizzo IP statico'
+    'IP pubblico'
+    'Indirizzo IP pubblico'
+    'IP privato'
+    'Indirizzo IP privato'
+    'Indirizzo IP interno'
+    'Indirizzo IP esterno'
+    'Indirizzo IP locale'
+    'IP di gestione'
+    'Indirizzo IP di gestione'
+    'Indirizzo IP del dispositivo'
+    'Indirizzo IP dell''interfaccia'
+    'Indirizzo di rete'
+    'Intervallo di indirizzi IP'
+
+    # Spanish (Español)
+    'Dirección IP'
+    'Direcciones IP'
+    'Dirección IPv4'
+    'Dirección IPv6'
+    'IP principal'
+    'Dirección IP principal'
+    'Dirección IP primaria'
+    'Dirección IP secundaria'
+    'IP estática'
+    'Dirección IP estática'
+    'IP pública'
+    'Dirección IP pública'
+    'IP privada'
+    'Dirección IP privada'
+    'Dirección IP interna'
+    'Dirección IP externa'
+    'Dirección IP local'
+    'IP de gestión'
+    'Dirección IP de gestión'
+    'IP de administración'
+    'Dirección IP de administración'
+    'Dirección IP del dispositivo'
+    'Dirección IP de interfaz'
+    'Dirección de red'
+    'Rango de IP'
+    'Rango de direcciones IP'
+
+    # Portuguese (Português - BR/PT)
+    'Endereço IP'
+    'Endereços IP'
+    'Endereço IPv4'
+    'Endereço IPv6'
+    'IP principal'
+    'Endereço IP principal'
+    'IP primário'
+    'Endereço IP primário'
+    'IP secundário'
+    'Endereço IP secundário'
+    'IP estático'
+    'IP estática'
+    'Endereço IP estático'
+    'IP público'
+    'Endereço IP público'
+    'IP privado'
+    'Endereço IP privado'
+    'Endereço IP interno'
+    'Endereço IP externo'
+    'Endereço IP local'
+    'IP de gerenciamento'
+    'Endereço IP de gerenciamento'
+    'IP de gestão'
+    'Endereço IP de gestão'
+    'Endereço IP do dispositivo'
+    'Endereço IP da interface'
+    'Endereço de rede'
+    'Faixa de IP'
+    'Intervalo de endereços IP'
+    'Gama de endereços IP'
+
+    # Dutch (Nederlands)
+    'IP-adres'
+    'IP adres'
+    'IP-adressen'
+    'IPv4-adres'
+    'IPv6-adres'
+    'Primair IP-adres'
+    'Secundair IP-adres'
+    'Statisch IP'
+    'Statisch IP-adres'
+    'Openbaar IP-adres'
+    'Publiek IP-adres'
+    'Privé-IP-adres'
+    'Intern IP-adres'
+    'Extern IP-adres'
+    'Lokaal IP-adres'
+    'Beheer-IP'
+    'Beheer-IP-adres'
+    'Management-IP-adres'
+    'Apparaat-IP'
+    'Apparaat-IP-adres'
+    'Interface-IP'
+    'Interface-IP-adres'
+    'Netwerkadres'
+    'IP-adresbereik'
+
+    # Polish (Polski)
+    'Adres IP'
+    'Adresy IP'
+    'Adres IPv4'
+    'Adres IPv6'
+    'Główny adres IP'
+    'Podstawowy adres IP'
+    'Pomocniczy adres IP'
+    'Dodatkowy adres IP'
+    'Statyczny adres IP'
+    'Stały adres IP'
+    'Publiczny adres IP'
+    'Prywatny adres IP'
+    'Wewnętrzny adres IP'
+    'Zewnętrzny adres IP'
+    'Lokalny adres IP'
+    'Adres IP zarządzania'
+    'Adres IP do zarządzania'
+    'Adres IP urządzenia'
+    'Adres IP interfejsu'
+    'Adres sieci'
+    'Zakres adresów IP'
+)
+  
+
+$HostnameFieldLabels = $hostnameFieldLabels ?? @(
+    # English
+    'Hostname'
+    'Host Name'
+    'Device Name'
+    'FQDN'
+    'Host'
+    'Host Dashboard URL'
+    'Name of Host (Vendor Tag)'
+
+    # English - General
+    'HostName'
+    'Host_Name'
+    'Host-Name'
+    'Hostnames'
+    'Host Names'
+    'Computer Name'
+    'ComputerName'
+    'Computer_Name'
+    'Machine Name'
+    'MachineName'
+    'System Name'
+    'SystemName'
+    'Server Name'
+    'ServerName'
+    'Node Name'
+    'NodeName'
+    'Network Name'
+    'Network Device Name'
+    'Network Hostname'
+    'Device Hostname'
+    'Device Host Name'
+    'Equipment Name'
+    'Appliance Name'
+    'Switch Name'
+    'Router Name'
+    'Firewall Name'
+    'DNS Name'
+    'DNS Hostname'
+    'DNS Host Name'
+    'DNS Host'
+    'DNS Record Name'
+    'DNS Entry'
+    'DNS Label'
+    'Fully Qualified Domain Name'
+    'Fully Qualified Hostname'
+    'Full Hostname'
+    'Full Host Name'
+    'Host FQDN'
+    'Device FQDN'
+    'Server FQDN'
+    'Short Hostname'
+    'Short Name'
+    'NetBIOS Name'
+    'NetBIOS Computer Name'
+    'Windows Computer Name'
+    'Linux Hostname'
+    'VM Name'
+    'Virtual Machine Name'
+    'VM Hostname'
+    'Instance Name'
+    'Instance Hostname'
+    'Asset Name'
+    'Asset Hostname'
+    'Inventory Name'
+    'CI Name'
+    'Configuration Item Name'
+    'sysName'
+    'SNMP sysName'
+    'SNMP System Name'
+
+    # German (Deutsch)
+    'Hostname'
+    'Host-Name'
+    'Rechnername'
+    'Computername'
+    'Gerätename'
+    'Gerätebezeichnung'
+    'Systemname'
+    'Servername'
+    'Knotenname'
+    'Netzwerkname'
+    'Netzwerkgerätename'
+    'DNS-Name'
+    'DNS-Hostname'
+    'Vollqualifizierter Domänenname'
+    'Vollständiger Hostname'
+    'Maschinenname'
+    'Anlagenname'
+
+    # French (Français)
+    'Nom d''hôte'
+    'Nom de l''hôte'
+    'Nom hôte'
+    'Nom du serveur'
+    'Nom de serveur'
+    'Nom de l''ordinateur'
+    'Nom de l''appareil'
+    'Nom du périphérique'
+    'Nom du dispositif'
+    'Nom de la machine'
+    'Nom du système'
+    'Nom du nœud'
+    'Nom réseau'
+    'Nom DNS'
+    'Nom d''hôte DNS'
+    'Nom de domaine complet'
+    'Nom de domaine pleinement qualifié'
+    'Nom d''hôte complet'
+
+    # Italian (Italiano)
+    'Nome host'
+    'Nome dell''host'
+    'Nome del computer'
+    'Nome computer'
+    'Nome dispositivo'
+    'Nome del dispositivo'
+    'Nome del server'
+    'Nome server'
+    'Nome macchina'
+    'Nome della macchina'
+    'Nome sistema'
+    'Nome del sistema'
+    'Nome nodo'
+    'Nome del nodo'
+    'Nome di rete'
+    'Nome DNS'
+    'Nome host DNS'
+    'Nome di dominio completo'
+    'Nome di dominio pienamente qualificato'
+
+    # Spanish (Español)
+    'Nombre de host'
+    'Nombre del host'
+    'Nombre del anfitrión'
+    'Nombre de equipo'
+    'Nombre del equipo'
+    'Nombre de computadora'
+    'Nombre del ordenador'
+    'Nombre del dispositivo'
+    'Nombre de dispositivo'
+    'Nombre del servidor'
+    'Nombre de servidor'
+    'Nombre de máquina'
+    'Nombre de la máquina'
+    'Nombre del sistema'
+    'Nombre de nodo'
+    'Nombre del nodo'
+    'Nombre de red'
+    'Nombre DNS'
+    'Nombre de host DNS'
+    'Nombre de dominio completo'
+    'Nombre de dominio totalmente cualificado'
+    'Nombre de dominio totalmente calificado'
+
+    # Portuguese (Português - BR/PT)
+    'Nome do host'
+    'Nome de host'
+    'Nome do anfitrião'
+    'Nome do computador'
+    'Nome de computador'
+    'Nome do dispositivo'
+    'Nome de dispositivo'
+    'Nome do equipamento'
+    'Nome do servidor'
+    'Nome de servidor'
+    'Nome da máquina'
+    'Nome da maquina'
+    'Nome do sistema'
+    'Nome do nó'
+    'Nome da rede'
+    'Nome DNS'
+    'Nome de host DNS'
+    'Nome de domínio completo'
+    'Nome de domínio totalmente qualificado'
+    'Nome de domínio totalmente qualificado (FQDN)'
+
+    # Dutch (Nederlands)
+    'Hostnaam'
+    'Host naam'
+    'Computernaam'
+    'Apparaatnaam'
+    'Naam van apparaat'
+    'Naam van het apparaat'
+    'Servernaam'
+    'Systeemnaam'
+    'Machinenaam'
+    'Knooppuntnaam'
+    'Netwerknaam'
+    'Netwerkapparaatnaam'
+    'DNS-naam'
+    'DNS-hostnaam'
+    'Volledig gekwalificeerde domeinnaam'
+    'Volledige hostnaam'
+    'Virtuele machinenaam'
+
+    # Polish (Polski)
+    'Nazwa hosta'
+    'Nazwa hostu'
+    'Nazwa komputera'
+    'Nazwa urządzenia'
+    'Nazwa serwera'
+    'Nazwa systemu'
+    'Nazwa maszyny'
+    'Nazwa węzła'
+    'Nazwa sieciowa'
+    'Nazwa sieci'
+    'Nazwa DNS'
+    'Nazwa hosta DNS'
+    'Pełna nazwa domenowa'
+    'Pełna nazwa hosta'
+    'W pełni kwalifikowana nazwa domenowa'
+    'Nazwa maszyny wirtualnej'
+)
+
+
+$gatewayFieldLabels = $gatewayFieldLabels ?? @(
+    # English
+    'Default Gateway'
+    'Gateway'
+    'WAN Default Gateway'
+    'Gateway Address'
+    'Gateway(S)'
+
+    # English - General
+    'DefaultGateway'
+    'Default_Gateway'
+    'Default-Gateway'
+    'GW'
+    'GW IP'
+    'GW Address'
+    'GW IP Address'
+    'DG'
+    'DGW'
+    'Gateway IP'
+    'Gateway IP Address'
+    'Gateway Addr'
+    'Gateway IPv4'
+    'Gateway IPv6'
+    'IPv4 Gateway'
+    'IPv6 Gateway'
+    'IPv4 Default Gateway'
+    'IPv6 Default Gateway'
+    'Default Gateway IP'
+    'Default Gateway Address'
+    'Default GW'
+    'Default GW IP'
+    'Primary Gateway'
+    'Secondary Gateway'
+    'Main Gateway'
+    'Network Gateway'
+    'Network Gateway IP'
+    'LAN Gateway'
+    'LAN Gateway IP'
+    'WAN Gateway'
+    'WAN Gateway IP'
+    'WAN Gateway Address'
+    'Internet Gateway'
+    'Internet Gateway IP'
+    'Router Gateway'
+    'Router Gateway IP'
+    'Router IP'
+    'Router IP Address'
+    'Router Address'
+    'Default Router'
+    'Default Router IP'
+    'Default Router Address'
+    'Next Hop'
+    'Next-Hop'
+    'Next Hop IP'
+    'Next Hop Address'
+    'Next-Hop IP Address'
+    'Upstream Gateway'
+    'Upstream Router IP'
+    'Management Gateway'
+    'Management Default Gateway'
+    'Management Gateway IP'
+    'Subnet Gateway'
+    'Subnet Gateway IP'
+    'VLAN Gateway'
+    'VLAN Gateway IP'
+    'VPN Gateway'
+    'VPN Gateway IP'
+    'Default Route Gateway'
+    'Route Gateway'
+    'Gateway(s)'
+
+    # German (Deutsch)
+    'Standardgateway'
+    'Standard-Gateway'
+    'Standard Gateway'
+    'Standardgateway-Adresse'
+    'Standardgateway-IP'
+    'Gateway-Adresse'
+    'Gateway-IP'
+    'Gateway-IP-Adresse'
+    'Netzwerk-Gateway'
+    'Netzwerkgateway'
+    'Router-Adresse'
+    'Router-IP'
+    'Router-IP-Adresse'
+    'Standardrouter'
+    'Standardroute'
+    'Nächster Hop'
+    'Nächster-Hop-Adresse'
+    'Verwaltungsgateway'
+
+    # French (Français)
+    'Passerelle'
+    'Passerelle par défaut'
+    'Passerelle réseau'
+    'Passerelle principale'
+    'Passerelle secondaire'
+    'Adresse de passerelle'
+    'Adresse IP de la passerelle'
+    'IP de la passerelle'
+    'Adresse de la passerelle par défaut'
+    'Adresse IP de la passerelle par défaut'
+    'Passerelle Internet'
+    'Passerelle WAN'
+    'Passerelle de gestion'
+    'Routeur par défaut'
+    'Adresse du routeur'
+    'Adresse IP du routeur'
+    'Prochain saut'
+    'Adresse du prochain saut'
+
+    # Italian (Italiano)
+    'Gateway predefinito'
+    'Gateway di default'
+    'Gateway principale'
+    'Gateway secondario'
+    'Gateway di rete'
+    'Indirizzo gateway'
+    'Indirizzo del gateway'
+    'Indirizzo IP del gateway'
+    'IP del gateway'
+    'Indirizzo del gateway predefinito'
+    'Gateway Internet'
+    'Gateway WAN'
+    'Gateway di gestione'
+    'Router predefinito'
+    'Indirizzo del router'
+    'Indirizzo IP del router'
+    'Router di default'
+    'Salto successivo'
+    'Hop successivo'
+
+    # Spanish (Español)
+    'Puerta de enlace'
+    'Puerta de enlace predeterminada'
+    'Puerta de enlace por defecto'
+    'Puerta de enlace principal'
+    'Puerta de enlace secundaria'
+    'Puerta de enlace de red'
+    'Dirección de puerta de enlace'
+    'Dirección de la puerta de enlace'
+    'Dirección IP de la puerta de enlace'
+    'IP de la puerta de enlace'
+    'Gateway predeterminado'
+    'Gateway por defecto'
+    'Puerta de enlace WAN'
+    'Puerta de enlace de Internet'
+    'Puerta de enlace de administración'
+    'Enrutador predeterminado'
+    'Router predeterminado'
+    'Dirección del router'
+    'Dirección IP del router'
+    'Siguiente salto'
+    'Próximo salto'
+    'Dirección del siguiente salto'
+
+    # Portuguese (Português - BR/PT)
+    'Gateway padrão'
+    'Gateway padrao'
+    'Gateway predefinido'
+    'Gateway de rede'
+    'Gateway principal'
+    'Gateway secundário'
+    'Gateway secundario'
+    'Endereço do gateway'
+    'Endereço IP do gateway'
+    'IP do gateway'
+    'Endereço do gateway padrão'
+    'Gateway da Internet'
+    'Gateway WAN'
+    'Gateway de gerenciamento'
+    'Gateway de gestão'
+    'Roteador padrão'
+    'Roteador padrao'
+    'Roteador predefinido'
+    'Router predefinido'
+    'Endereço do roteador'
+    'Endereço IP do roteador'
+    'Endereço do router'
+    'Próximo salto'
+    'Salto seguinte'
+
+    # Dutch (Nederlands)
+    'Standaardgateway'
+    'Standaard-gateway'
+    'Standaard gateway'
+    'Standaardpoort'
+    'Gatewayadres'
+    'Gateway-adres'
+    'Gateway IP-adres'
+    'IP-adres van gateway'
+    'IP-adres van de gateway'
+    'Netwerkgateway'
+    'Hoofdgateway'
+    'Secundaire gateway'
+    'Internetgateway'
+    'WAN-gateway'
+    'Beheergateway'
+    'Standaardrouter'
+    'Routeradres'
+    'Router IP-adres'
+    'Volgende hop'
+    'Volgende-hopadres'
+
+    # Polish (Polski)
+    'Brama'
+    'Brama domyślna'
+    'Brama domyslna'
+    'Brama sieciowa'
+    'Brama główna'
+    'Brama zapasowa'
+    'Adres bramy'
+    'Adres IP bramy'
+    'IP bramy'
+    'Adres bramy domyślnej'
+    'Adres IP bramy domyślnej'
+    'Brama internetowa'
+    'Brama WAN'
+    'Brama zarządzania'
+    'Router domyślny'
+    'Domyślny router'
+    'Adres routera'
+    'Adres IP routera'
+    'Następny skok'
+    'Adres następnego skoku'
+)

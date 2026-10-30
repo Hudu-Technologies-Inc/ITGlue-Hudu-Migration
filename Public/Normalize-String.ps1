@@ -790,35 +790,58 @@ function Write-InternalCompanyValidationError {
         [string]$InternalCompany
     )
 
-    $matchCount = @($Matches).Count
-
-    Write-Host "`nInternal company validation failed." -ForegroundColor Red
-    Write-Host "Expected exactly 1 organization named '$InternalCompany', but found $matchCount." -ForegroundColor Red
-
+    $matchCount = @($Matches | Where-Object { $null -ne $_ }).Count
     if ($matchCount -gt 1) {
-        $renameCount = $matchCount - 1
-
-        Write-Host @"
-
-IT Glue contains multiple organizations named '$InternalCompany'.
-
-You can resolve this by doing one of the following:
-
-1. Rename $renameCount of the matching organizations so that only your internal company has this name, then create a new IT Glue export and rerun the script.
-2. Set `$PlaceInternalDocsInInternalCompany to `$true to skip the internal-company matching requirement. [Note, organizations with the same name will have an appended number attached to them since Hudu does not allow duplicate company names ($InternalCompany-1, $InternalCompany-2, etc.)]
-"@ -ForegroundColor Red
+        Write-Host "Found $matchCount organizations matching the internal company name '$InternalCompany'." -ForegroundColor Yellow
     }
-    else {
-        Write-Host @"
-
-The internal company '$InternalCompany' was not found in IT Glue.
-
-You can resolve this by doing one of the following:
-
-1. Confirm that the organization exists in IT Glue and that `$InternalCompany exactly matches its name.
-2. Set `$PlaceInternalDocsInInternalCompany to `$true to skip the internal-company matching requirement.
-"@ -ForegroundColor Red
+    elseif ($matchCount -eq 0) {
+        Write-Host "No organizations matched the internal company name '$InternalCompany' (0 matches)." -ForegroundColor Yellow
     }
+}
+
+function Resolve-InternalCompany {
+    param (
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$Companies,
+
+        [Parameter(Mandatory)]
+        [string]$InternalCompany,
+
+        [switch]$NonInteractive
+    )
+
+    $companiesInScope = @($Companies | Where-Object { $null -ne $_ })
+    $internalMatches = @($companiesInScope | Where-Object { $_.InternalCompany -eq $true })
+    if ($internalMatches.Count -eq 1) { return $internalMatches[0] }
+
+    Write-InternalCompanyValidationError -Matches $internalMatches -InternalCompany $InternalCompany
+    if ($companiesInScope.Count -eq 0) { throw 'No companies are available in the migration scope to select as the internal company.' }
+    if ($NonInteractive) {
+        throw "Internal company '$InternalCompany' has $($internalMatches.Count) matches. Run interactively to select the internal company."
+    }
+
+    $choices = if ($internalMatches.Count -gt 1) { $internalMatches } else { $companiesInScope }
+    $options = @($choices | Sort-Object CompanyName, ITGID | ForEach-Object {
+        [pscustomobject]@{
+            OptionMessage = "$($_.CompanyName) (ITGlue ID: $($_.ITGID))"
+            Company = $_
+        }
+    })
+    $message = if ($internalMatches.Count -gt 1) {
+        'Select your internal company from the matching organizations'
+    } else {
+        'Select your internal company from the organizations in this migration'
+    }
+    $selection = Select-ObjectFromList -objects $options -message $message -allowNull $false
+    if ($null -eq $selection -or $null -eq $selection.PSObject.Properties['Company'] -or
+        @($choices | Where-Object { [object]::ReferenceEquals($_, $selection.Company) }).Count -ne 1) {
+        throw 'No valid internal company was selected.'
+    }
+    foreach ($company in $companiesInScope) {
+        $company.InternalCompany = [object]::ReferenceEquals($company, $selection.Company)
+    }
+    return $selection.Company
 }
 
 function Get-SafeCount {
@@ -870,7 +893,7 @@ function Format-MigrationSummary {
         $estimateWorkerText = if ($PSBoundParameters.ContainsKey('EstimateCommitWorkerCount') -and $null -ne $EstimateCommitWorkerCount) { " using $EstimateCommitWorkerCount commit worker(s)" } else { '' }
 
         $lines.Add("Estimated Finish: $EstimatedCompletionAt$estimateDurationText$estimateWorkerText")
-        $lines.Add("Estimate Was: $($estimateDeltaDuration.ToString('hh\:mm\:ss')) $estimateDeltaLabel")
+        $lines.Add("Finish vs Estimate: $($estimateDeltaDuration.ToString('hh\:mm\:ss')) $estimateDeltaLabel")
     }
     $lines.Add("Git Info:     $(Get-GitCheckoutInfo)")
     $lines.Add("Hudu Host:    $(Get-HuduBaseurl)")

@@ -375,16 +375,24 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
         $ITGCompaniesHashTable[$ITGC.itgid] = $ITGC
     }
     # Check if the internal company was found and that there was only 1 of them
-    $PrimaryCompany = $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.InternalCompany -eq $true } | Select-Object CompanyName
+    $PrimaryCompany = @($MatchedCompanies | Where-Object { $null -ne $_ -and $_.InternalCompany -eq $true } | Sort-Object CompanyName)
 
-    if (($PrimaryCompany | measure-object).count -ne 1 -and -not ($PlaceInternalDocsInInternalCompany ?? $false)) {
-        Write-InternalCompanyValidationError -Matches $PrimaryCompany -InternalCompany $InternalCompany
-        exit 1
+    if ($PrimaryCompany.Count -ne 1 -and -not ($PlaceInternalDocsInInternalCompany ?? $false)) {
+        try {
+            $PrimaryCompany = @(Resolve-InternalCompany -Companies $MatchedCompanies -InternalCompany $InternalCompany -NonInteractive:($NonInteractive ?? $false))
+        } catch {
+            Write-Host $_.Exception.Message -ForegroundColor Red
+            exit 1
+        }
     }
 
     # Lets confirm it is the correct one
-    Write-Host "Your Internal Company has been matched to: $(($MatchedCompanies | Sort-Object CompanyName | Where-Object {$_.InternalCompany -eq $true} | Select-Object CompanyName).companyname) in IT Glue. $(if ($true -eq $PlaceInternalDocsInInternalCompany){'The articles under this company will stay in that company in Hudu'} else {'The articles under this company will be migrated to the Global KB in Hudu'})" -ForegroundColor Green
-    if ($true -eq $PlaceInternalDocsInInternalCompany){Write-TimedMessage -Message "Internal Company Correct? Press Return to continue or CTRL+C to quit if this is not correct" -Timeout 12 -DefaultResponse "Assuming found match on '$(($MatchedCompanies | Sort-Object CompanyName | Where-Object {$_.InternalCompany -eq $true} | Select-Object CompanyName).companyname)' is correct."}
+    if ($PrimaryCompany.Count -eq 1) {
+        Write-Host "Your Internal Company has been matched to: $($PrimaryCompany[0].CompanyName) in IT Glue. $(if ($true -eq $PlaceInternalDocsInInternalCompany){'The articles under this company will stay in that company in Hudu'} else {'The articles under this company will be migrated to the Global KB in Hudu'})" -ForegroundColor Green
+        if ($true -eq $PlaceInternalDocsInInternalCompany){Write-TimedMessage -Message "Internal Company Correct? Press Return to continue or CTRL+C to quit if this is not correct" -Timeout 12 -DefaultResponse "Assuming found match on '$($PrimaryCompany[0].CompanyName)' is correct."}
+    } else {
+        Write-Host 'Internal company matching is optional when documents stay under their companies in Hudu.' -ForegroundColor Green
+    }
 
     Write-Host "Matched Companies (Already exist so will not be migrated)"
     $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.Matched -eq $true } | Select-Object CompanyName | Format-Table
@@ -476,6 +484,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 
 
 }
+$PrimaryCompany = @($MatchedCompanies | Where-Object { $null -ne $_ -and $_.InternalCompany -eq $true })
+if ($PrimaryCompany.Count -eq 1) { $InternalCompany = $PrimaryCompany[0].CompanyName }
 $CompaniesToMigrate = $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.Matched -eq $true }
 $HuduCompanies = Get-HuduCompanies
 
@@ -2116,8 +2126,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
     if ($ImportArticles -eq $true) {
         $null = Start-MigrationJob -Name "ArticleContents"
 
-        $Attachfiles = Get-ChildItem (Join-Path -Path $ITGlueExportPath -ChildPath "attachments\documents") -recurse
+        $articleAttachmentRoot = Join-Path $ITGlueExportPath 'attachments/documents'
+        $Attachfiles = @(if (Test-Path -LiteralPath $articleAttachmentRoot) { Get-ChildItem -LiteralPath $articleAttachmentRoot -Recurse })
         $ImageMap = $ImageMap ?? @{}
+        $documentImageRecoveryContext = New-ITGlueDocumentImageRecoveryContext -ApiBase $ITGAPIEndpoint -ApiKey $ITGKey -MigrationLogsPath $MigrationLogs
         # Now do the actual work of populating the content of articles
         $articleBodyProgressId = 32
         $articleBodyImageProgressId = 33
@@ -2149,11 +2161,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 				
                 $html = New-Object -ComObject "HTMLFile"
                 $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
+                if ($null -eq $Article.PSObject.Properties['SourceImages']) {
+                    $Article | Add-Member -NotePropertyName SourceImages -NotePropertyValue @(Get-ITGlueArticleSourceImages -Content $rawsource)
+                }
                 if ($rawsource.Length -gt 0) {
                     $source = [regex]::replace($rawsource , '\xa0+', ' ')
                     $src = [System.Text.Encoding]::Unicode.GetBytes($source)
                     $html.write($src)
                     $images = @($html.Images)
+                    $exportImageTags = @($images | ForEach-Object { [string]$_.outerHTML })
                     $articleBodyImageTotal = @($images).Count
                     $articleBodyImageIndex = 0
 
@@ -2168,7 +2184,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                     $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
                     $matchedImage = $null; $foundFile = $null; $imagePath = $null
                     $imagePathResolvedFromAttachment = $false
-                    if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL))) {
+                    $imageRecovery = $null
+                    $sourceReferences = Get-ITGlueDocumentImageReferences @([string]$imageObject.src, [string]$imageObject.outerHTML)
+                    if (($imageObject.src -notmatch '^http[s]?://') -or ($imageObject.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0 -or $sourceReferences.StepIds.Count -gt 0) {
                         $script:HasImages = $true
                         $imgHTML = $imageObject.outerHTML
                         Write-Host "Processing HTML: $imgHTML"
@@ -2201,6 +2219,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                             $imagePath = $foundFile.FullName
                             $imagePathResolvedFromAttachment = $true
                             Write-Host "Resolved inline attachment image from article attachments: $imagePath" -ForegroundColor Cyan
+                        } elseif (($imageRecovery = Resolve-ITGlueDocumentImage -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, [string]$imageObject.src, $imgHTML) -ImageIndex ($articleBodyImageIndex - 1) -ExportImageTags $exportImageTags -Context $documentImageRecoveryContext).File) {
+                            $imagePath = $imageRecovery.File.FullName
+                            Write-Host "Recovered missing document image through the IT Glue API: $imagePath" -ForegroundColor Cyan
                         } else { 
                             Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
                             Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
@@ -2216,6 +2237,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                     Data          = "$InFile"
                                     Hudu_URL      = $Article.HuduObject.url
                                     ITG_URL       = "$ITGURL/$($Article.ITGLocator)"
+                                    ImageSources  = @($fullImgUrl, $tnImgUrl, [string]$imageObject.src, $imgHTML)
+                                    ImageRecoveryReason = $imageRecovery.Reason
                             }
                             $null = $ManualActions.add($ManualLog)
                             continue
@@ -2239,11 +2262,17 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                                         $NewImageURL = Convert-ITGlueArticleAttachmentImageToPublicPhoto -ImageFile (Get-Item -LiteralPath $imagePath) -Article $Article
                                         $ImageMap["$OriginalFullImagePath"] = $NewImageURL
                                     } else {
-                                        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article'
+                                        $UploadImage = New-HuduPublicPhoto -FilePath $imagePath.ToLower() -record_id $Article.HuduID -record_type 'Article' -ErrorAction Stop
                                         $ImageMap["$OriginalFullImagePath"] = "$($UploadImage.public_photo.url)"
                                     }
+                                    if ([string]::IsNullOrWhiteSpace([string]$ImageMap["$OriginalFullImagePath"])) { throw 'Hudu returned no image URL' }
                                 } catch {
                     # issue during Upload
+                                    if ($imageRecovery -and $imageRecovery.Record) {
+                                        $imageRecovery.Record.Status = 'UploadFailed'
+                                        $imageRecovery.Record.Problem = 'Recovered image could not be uploaded to Hudu'
+                                        Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                    }
                                     $ManualLog = [PSCustomObject]@{
                                         Document_Name = $Article.Name
                                         Type          = "Article - Image"
@@ -2267,6 +2296,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 
                                     # Update the <img> tag src
                                     $imageObject.src = [string]$NewImageURL
+                                    if ($imageRecovery -and $imageRecovery.Record) {
+                                        $imageRecovery.Record.Status = 'Placed'
+                                        $imageRecovery.Record.HuduImageUrl = [string]$NewImageURL
+                                        Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                    }
                                     Write-Host "Setting <img>.src to: $NewImageURL"
 
                                     # Try to find a matching <a> link around the image
@@ -2659,16 +2693,19 @@ Start-PreloadedRelationDataJob -RelationType Passwords -ItgObjects @($MatchedPas
 
 . "$PSScriptRoot\Public\Jobs\Invoke-LinkReplacement.ps1"
 
-write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
+write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($ImportConfigInterfaces)"
 if ($true -eq $ImportConfigInterfaces){
     write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"; $null = Start-MigrationJob -Name "Wrap-Up - IPAM/Networks/Addresses";
-    $MatchedInterfaces = Invoke-HuduConfigurationIPAMSync -MatchedConfigurations $MatchedConfigurations
+    $ipamCompanyIds = @($CompaniesToMigrate.HuduID | Where-Object { [int]$_ -gt 0 } | ForEach-Object { [int]$_ } | Select-Object -Unique)
+    $ipamMigrationItems = @($MatchedConfigurations) + @($MatchedLocations) + @($MatchedContacts) + @($MatchedAssets)
+    $ipamAssets = @(Get-OmniIPAMMigrationAsset -MigrationItems $ipamMigrationItems -AllowedCompanyId $ipamCompanyIds)
+    $MatchedInterfaces = @(Invoke-OmniIPAMSyncByAssetLayout -IPAddressFieldLabels $IPaddressFieldLabels -HostnameFieldLabels $HostnameFieldLabels -DefaultGatewayFieldLabels $gatewayFieldLabels -AssetLayouts $MatchedLayouts.HuduObject -CachedAssets $ipamAssets -AllowedCompanyId $ipamCompanyIds)
 }
 
 write-host "wrapup 4/10... $(if ($true -eq $allowSettingFlagsAndTypes) {"Setting"} else {"Skipping"}) optional flags and flag types..."
 if ($true -eq $allowSettingFlagsAndTypes){
     $null = Start-MigrationJob -Name "Wrap-Up - Flags and Flag Types";
-    . .\public\Add-HuduFlagsFlagtypes.ps1
+    . .\public\jobs\Add-HuduFlagsFlagtypes.ps1
 }
 
 write-host "wrapup 5/10... Standalone article attachment placeholders were handled during local article commit"; $null = Start-MigrationJob -Name "Wrap-Up - Articles as Attachments";
@@ -2726,7 +2763,7 @@ $migratedItems = [ordered]@{
     'Locations Migrated'                         = Get-SafeCount $($MatchedLocations | where-object {[int]($_.HuduID) -gt 0})
     'Websites Migrated'                          = Get-SafeCount $($MatchedWebsites | where-object {[int]($_.HuduID) -gt 0})
     'Configurations Migrated'                    = Get-SafeCount $($MatchedConfigurations | where-object {[int]($_.HuduID) -gt 0})
-    'IPAM Interfaces/Networks/Addresses Migrated'= Get-SafeCount $MatchedInterfaces
+    'IPAM Interfaces/Networks/Addresses Migrated'= $($MatchedInterfaces.ProcessedAssetCount | Measure-Object -Sum).sum ?? 0
     'Contacts Migrated'                          = Get-SafeCount $($MatchedContacts | where-object {[int]($_.HuduID) -gt 0})
     'Layouts Migrated'                           = Get-SafeCount $($MatchedLayouts | where-object {[int]($_.HuduID) -gt 0})
     'Assets Migrated'                            = Get-SafeCount $($MatchedAssets | where-object {[int]($_.HuduID) -gt 0})
@@ -2737,8 +2774,8 @@ $migratedItems = [ordered]@{
     'Passwords From Vault'                       = $VaultedPasswords.count ?? 0
     'Passwords Left Unvaulted'                   = ([int]($VaultedPasswords.count ?? 0) - [int]($unvaultedMatches.count ?? 0))
     'Relations Created'                          = Get-SafeCount $NewRelationsCreated
-    'Upload Fields Migrated'                     = $MatchedUploadFields.count ?? 0
-    'Upload Fields Unresolved'                   = $UnresolvedUploadFields.count ?? 0
+    'Upload Field Files Migrated'                = $MatchedUploadFields.count ?? 0
+    'Upload Field Files Unresolved'              = $UnresolvedUploadFields.count ?? 0
     'Checklists / Checklist Templates Migrated'  = Get-SafeCount ($MatchedChecklists ?? @())
     'Hudu Global Process Templates Migrated'     = $GlobalProcessTemplatesMigrated
     'Hudu Company Process Templates Migrated'    = $CompanyProcessTemplatesMigrated
