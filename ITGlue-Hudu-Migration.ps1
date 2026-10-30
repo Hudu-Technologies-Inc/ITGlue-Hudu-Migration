@@ -2693,7 +2693,7 @@ Start-PreloadedRelationDataJob -RelationType Passwords -ItgObjects @($MatchedPas
 
 . "$PSScriptRoot\Public\Jobs\Invoke-LinkReplacement.ps1"
 
-write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
+write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($ImportConfigInterfaces)"
 if ($true -eq $ImportConfigInterfaces){
     write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"; $null = Start-MigrationJob -Name "Wrap-Up - IPAM/Networks/Addresses";
     $ipamCompanyIds = @($CompaniesToMigrate.HuduID | Where-Object { [int]$_ -gt 0 } | ForEach-Object { [int]$_ } | Select-Object -Unique)
