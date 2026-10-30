@@ -375,16 +375,24 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
         $ITGCompaniesHashTable[$ITGC.itgid] = $ITGC
     }
     # Check if the internal company was found and that there was only 1 of them
-    $PrimaryCompany = $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.InternalCompany -eq $true } | Select-Object CompanyName
+    $PrimaryCompany = @($MatchedCompanies | Where-Object { $null -ne $_ -and $_.InternalCompany -eq $true } | Sort-Object CompanyName)
 
-    if (($PrimaryCompany | measure-object).count -ne 1 -and -not ($PlaceInternalDocsInInternalCompany ?? $false)) {
-        Write-InternalCompanyValidationError -Matches $PrimaryCompany -InternalCompany $InternalCompany
-        exit 1
+    if ($PrimaryCompany.Count -ne 1 -and -not ($PlaceInternalDocsInInternalCompany ?? $false)) {
+        try {
+            $PrimaryCompany = @(Resolve-InternalCompany -Companies $MatchedCompanies -InternalCompany $InternalCompany -NonInteractive:($NonInteractive ?? $false))
+        } catch {
+            Write-Host $_.Exception.Message -ForegroundColor Red
+            exit 1
+        }
     }
 
     # Lets confirm it is the correct one
-    Write-Host "Your Internal Company has been matched to: $(($MatchedCompanies | Sort-Object CompanyName | Where-Object {$_.InternalCompany -eq $true} | Select-Object CompanyName).companyname) in IT Glue. $(if ($true -eq $PlaceInternalDocsInInternalCompany){'The articles under this company will stay in that company in Hudu'} else {'The articles under this company will be migrated to the Global KB in Hudu'})" -ForegroundColor Green
-    if ($true -eq $PlaceInternalDocsInInternalCompany){Write-TimedMessage -Message "Internal Company Correct? Press Return to continue or CTRL+C to quit if this is not correct" -Timeout 12 -DefaultResponse "Assuming found match on '$(($MatchedCompanies | Sort-Object CompanyName | Where-Object {$_.InternalCompany -eq $true} | Select-Object CompanyName).companyname)' is correct."}
+    if ($PrimaryCompany.Count -eq 1) {
+        Write-Host "Your Internal Company has been matched to: $($PrimaryCompany[0].CompanyName) in IT Glue. $(if ($true -eq $PlaceInternalDocsInInternalCompany){'The articles under this company will stay in that company in Hudu'} else {'The articles under this company will be migrated to the Global KB in Hudu'})" -ForegroundColor Green
+        if ($true -eq $PlaceInternalDocsInInternalCompany){Write-TimedMessage -Message "Internal Company Correct? Press Return to continue or CTRL+C to quit if this is not correct" -Timeout 12 -DefaultResponse "Assuming found match on '$($PrimaryCompany[0].CompanyName)' is correct."}
+    } else {
+        Write-Host 'Internal company matching is optional when documents stay under their companies in Hudu.' -ForegroundColor Green
+    }
 
     Write-Host "Matched Companies (Already exist so will not be migrated)"
     $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.Matched -eq $true } | Select-Object CompanyName | Format-Table
@@ -476,6 +484,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Companies.json")) {
 
 
 }
+$PrimaryCompany = @($MatchedCompanies | Where-Object { $null -ne $_ -and $_.InternalCompany -eq $true })
+if ($PrimaryCompany.Count -eq 1) { $InternalCompany = $PrimaryCompany[0].CompanyName }
 $CompaniesToMigrate = $MatchedCompanies | Sort-Object CompanyName | Where-Object { $_.Matched -eq $true }
 $HuduCompanies = Get-HuduCompanies
 
@@ -2686,7 +2696,7 @@ Start-PreloadedRelationDataJob -RelationType Passwords -ItgObjects @($MatchedPas
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($importChecklists)"
 if ($true -eq $ImportConfigInterfaces){
     write-host "Calculations for addresses can take a while. Please be patient. If it looks like it's stuck, it's just crunching numbers from your $($MatchedConfigurations.count) possible configurations"; $null = Start-MigrationJob -Name "Wrap-Up - IPAM/Networks/Addresses";
-    $MatchedInterfaces = Invoke-HuduConfigurationIPAMSync -MatchedConfigurations $MatchedConfigurations
+    $MatchedInterfaces = Invoke-OmniIPAMSyncByAssetLayout -IPAddressFieldLabels $IPaddressFieldLabels -HostnameFieldLabels $HostnameFieldLabels -DefaultGatewayFieldLabels $gatewayFieldLabels -AssetLayouts $MatchedLayouts.HuduObject -CachedAssets $MatchedAssets.HuduObject
 }
 
 write-host "wrapup 4/10... $(if ($true -eq $allowSettingFlagsAndTypes) {"Setting"} else {"Skipping"}) optional flags and flag types..."
@@ -2750,7 +2760,7 @@ $migratedItems = [ordered]@{
     'Locations Migrated'                         = Get-SafeCount $($MatchedLocations | where-object {[int]($_.HuduID) -gt 0})
     'Websites Migrated'                          = Get-SafeCount $($MatchedWebsites | where-object {[int]($_.HuduID) -gt 0})
     'Configurations Migrated'                    = Get-SafeCount $($MatchedConfigurations | where-object {[int]($_.HuduID) -gt 0})
-    'IPAM Interfaces/Networks/Addresses Migrated'= Get-SafeCount $MatchedInterfaces
+    'IPAM Interfaces/Networks/Addresses Migrated'= $($MatchedInterfaces.ProcessedAssetCount | Measure-Object -Sum).sum ?? 0
     'Contacts Migrated'                          = Get-SafeCount $($MatchedContacts | where-object {[int]($_.HuduID) -gt 0})
     'Layouts Migrated'                           = Get-SafeCount $($MatchedLayouts | where-object {[int]($_.HuduID) -gt 0})
     'Assets Migrated'                            = Get-SafeCount $($MatchedAssets | where-object {[int]($_.HuduID) -gt 0})
