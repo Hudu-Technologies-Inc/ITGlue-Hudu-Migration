@@ -49,7 +49,7 @@ if (-not $true -eq $itglueScopeOk -or -not $true -eq $huduScopeOk) {
 
 write-host "Checking your Incoming and Existing Layouts for Possible Layout-Collision" -ForegroundColor DarkCyan
 $PreflightFlexLayouts = $null; $PreflightHuduLayouts = $null; $PreflightFlexibleTargetLayouts = @(); $PreflightITGConfigurations = $null; $PreflightConfigurationTargetLayouts = @(); $PreflightOutlierTargetLayouts = @(); $PreflightCollisionFound = $false;
-. .\public\Check-LayoutCollisions.ps1
+. .\public\Jobs\Check-LayoutCollisions.ps1
 if ($PreflightCollisionFound) {
     Write-Host "Exiting before making migration changes because one or more pre-flight asset layout collision checks failed." -ForegroundColor Red
     Stop-ITGlueExportBootstrapJobIfRunning
@@ -162,7 +162,7 @@ if ((Test-HuduMigrationSettingEnabled $ImportArticles) -and (Test-HuduMigrationS
     }
 }
 
-if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
+if ($true -eq $allowSettingFlagsAndTypes){. .\Public\Jobs\Get-UserFlagPreferences.ps1} else {$allowSettingFlagsAndTypes = $false; $flagPasswordsByType = $false; $ObjectFlagMap = @{};}
 
 if ($backups -notin @("Y", "y")) {
     Write-Host "Please take a backup and run the script again"
@@ -2326,7 +2326,7 @@ write-host "wrapup 5/10... Standalone article attachment placeholders were handl
 write-host "wrapup 6/10... Placing password folders if user-configured to do so... $($importPasswordFolders)"
 if ($true -eq $importPasswordFolders){
     $null = Start-MigrationJob -Name "Wrap-Up - Password Folders";
-    . .\public\Process-PasswordFolders.ps1
+    . .\public\Jobs\Process-PasswordFolders.ps1
 }
 write-host "wrapup 7/10... Placing checklists / checklist templates if user-configured to do so... $($importChecklists)"
 if ($true -eq $importChecklists){
@@ -2339,6 +2339,7 @@ write-host "wrapup 8/10... adding missing relations (this can take a long while)
 if (get-command -name Set-HapiErrorsDirectory -ErrorAction SilentlyContinue){try {Set-HapiErrorsDirectory -skipRetry $true} catch {}}
 . .\Get-MissingRelations.ps1
 
+write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Archiving Items";
 . "$PSScriptRoot\Public\Jobs\Invoke-WrapUpArchiving.ps1"
 
 write-host "wrapup 10/10... $(if ($true -eq ($shouldRunVaultJob ?? $false)) {"Running"} else {"Skipping"}) vault job to update vaulted passwords with real values..."

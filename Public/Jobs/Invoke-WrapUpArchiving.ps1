@@ -1,4 +1,3 @@
-write-host "wrapup 9/10... archiving items..."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Archiving Items";
 $DocsCsv = import-csv "$ITGlueExportPath\documents.csv"
 $ArchivedPasswords = $MatchedPasswords | Where-Object {$_.itgobject.attributes.archived -eq $true}
 $ArchivedConfigurations = $MatchedConfigurations | Where-Object {$_.ITGObject.attributes.archived -eq $true}

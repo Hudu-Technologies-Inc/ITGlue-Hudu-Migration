@@ -570,7 +570,6 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
 
-if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 $requiredHuduVersion = ([version]"2.48.0")
 Write-Host "Migration targets: Hudu $HuduBaseDomain; IT Glue $ITGURL ($ITGAPIEndpoint)" -ForegroundColor Cyan
 $CurrentVersion = Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $HuduBaseDomain -HuduAPIKey $HuduAPIKey -RefreshHuduApiForkEachRun:($InitType -eq 'Full')
