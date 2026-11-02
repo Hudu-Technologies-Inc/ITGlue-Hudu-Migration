@@ -435,8 +435,10 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
             -or ($ITGPrimaryLocationNames -contains $itgimport.attributes.name -and $HuduPrimaryLocationNames -contains $_.name -and $_.company_id -eq $itgimport.HuduCompanyId)`
             -or ($itgimport.attributes.primary -eq $true -and $HuduPrimaryLocationNames -contains $_.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
 
-    $LocImportEnabled = $ImportLocations; $LocMigrationName = $LocMigrationName ?? "Locations";
-    
+    $LocImportEnabled = $ImportLocations
+    $LocMigrationName = "Locations"
+    $LocAssetLayoutFields = New-MigrationLayoutFields -LayoutType Locations
+
     if ($settings.IncludeITGlueID -and $true -eq $settings.IncludeITGlueID){
         $LocAssetLayoutFields+=@{
             label        = 'ITGlue ID'
@@ -671,6 +673,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         Write-Host "configurations scoped... $OriginalConfigurationCount => $($ITGConfigurations.count)"
     }
 
+    $ConfigAssetLayoutFields = New-MigrationLayoutFields -LayoutType Configurations
     $null = Add-HuduLocationAssetTagLayoutField -AssetLayoutFields ([ref]$ConfigAssetLayoutFields) -Position 21 -LayoutName $ConfigImportAssetLayoutName
     $ConfigHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
 	
@@ -870,7 +873,9 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     }
 
     $ConHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
-    $ConImportEnabled = $ImportContacts; $ConMigrationName = $ConMigrationName ?? "Contacts";
+    $ConImportEnabled = $ImportContacts
+    $ConMigrationName = "Contacts"
+    $ConAssetLayoutFields = New-MigrationLayoutFields -LayoutType Contacts
 
     $null = Add-HuduLocationAssetTagLayoutField -AssetLayoutFields ([ref]$ConAssetLayoutFields) -Position 5 -LayoutName $ConImportAssetLayoutName
     if ($settings.IncludeITGlueID -and $true -eq $settings.IncludeITGlueID){
@@ -1066,9 +1071,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             if ($ImportOption -eq 2) {
                 Confirm-Import -ImportObjectName "$($UnmatchedLayout.ITGObject.attributes.name)" -ImportObject $UnmatchedLayout -ImportSetting $ImportOption
             }
-
-
-
+            $TempLayoutFields = New-MigrationLayoutFields -LayoutType FlexibleAssets
 
             $TargetLayoutName = "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)"
             # Defense-in-depth in case Hudu layout state changed after the pre-flight check.

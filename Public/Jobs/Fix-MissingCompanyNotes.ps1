@@ -1,10 +1,10 @@
 # Check if this is a direct run, and load the logs if so the first time.
 if (-not ($FirstTimeLoad -eq 1)) {
     # General Settings Load
-    . $PSScriptRoot\..\Initialize-Module.ps1 -InitType 'Lite'
+    . $PSScriptRoot\..\..\Initialize-Module.ps1 -InitType 'Lite'
     
     # Add Replace URL functions
-    . $PSScriptRoot\..\Private\ConvertTo-HuduURL.ps1
+    . $PSScriptRoot\..\..\Private\ConvertTo-HuduURL.ps1
 
     Write-Host "Checking for Matched Variables"
     if (-not $MatchedPasswords) {$MatchedPasswords = (Get-Content -path "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }

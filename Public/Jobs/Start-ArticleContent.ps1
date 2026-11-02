@@ -1,15 +1,15 @@
 # Check if this is a direct run, and load the logs if so the first time.
 if (-not ($FirstTimeLoad -eq 1)) {
     # General Settings Load
-    . $PSScriptRoot\..\Initialize-Module.ps1 -InitType 'Lite'
+    . $PSScriptRoot\..\..\Initialize-Module.ps1 -InitType 'Lite'
     
     # Add Replace URL functions
-    . $PSScriptRoot\..\Private\ConvertTo-HuduURL.ps1
+    . $PSScriptRoot\..\..\Private\ConvertTo-HuduURL.ps1
     if (-not (Get-Command -Name Set-HuduArticleLocalContent -ErrorAction SilentlyContinue)) {
-        . $PSScriptRoot\ArticleContentLocalCache.ps1
+        . $PSScriptRoot\..\ArticleContentLocalCache.ps1
     }
     if (-not (Get-Command -Name Resolve-ITGlueArticleAttachmentImageFile -ErrorAction SilentlyContinue)) {
-        . $PSScriptRoot\Resolve-ArticleAttachmentImage.ps1
+        . $PSScriptRoot\..\Resolve-ArticleAttachmentImage.ps1
     }
 
     Write-Host "Checking for Matched Variables"
@@ -25,7 +25,7 @@ if (-not ($FirstTimeLoad -eq 1)) {
 }
 
 if (-not (Get-Command Resolve-ITGlueDocumentImage -ErrorAction SilentlyContinue)) {
-    . "$PSScriptRoot/Resolve-ITGlueDocumentImage.ps1"
+    . "$PSScriptRoot/../Resolve-ITGlueDocumentImage.ps1"
 }
 
     if ($Articles) {
