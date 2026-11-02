@@ -49,7 +49,7 @@ function Confirm-Import {
     }
 }
 function Get-ConfigurationsImportMode {
-    $ImportOption = Write-TimedMessage -Message "[1] [2] [3]" -Timeout 3 -DefaultResponse $(if ($true -eq $settings.SplitConfigurations) {2} else {1})
+    $ImportOption = Write-TimedMessage -Message "[1] [2] [3]" -Timeout 0 -DefaultResponse $(if ($true -eq $settings.SplitConfigurations) {2} else {1})
     if (!($ImportOption -in @(1, 2, 3))) {
         Write-Host "Please select 1, 2 or 3"
         $ImportOption = Get-ConfigurationsImportMode -ImportName $ImportName
@@ -63,7 +63,7 @@ function Get-ImportMode {
         [string]$ImportName
     )
     Write-Host "Importing $ImportName"
-    $ImportOption = $(Write-TimedMessage -Timeout 8 -DefaultResponse "A" -Message "[A] Import All unmapped $ImportName. [N] Import None of the unmapped $ImportName. [S] Select for each individual $ImportName (A/N/S)")
+    $ImportOption = $(Write-TimedMessage -Timeout 5 -DefaultResponse "A" -Message "[A] Import All unmapped $ImportName. [N] Import None of the unmapped $ImportName. [S] Select for each individual $ImportName (A/N/S)")
     if (!($ImportOption -in @("A", "N", "S"))) {
         Write-Host "Please select A, N or S"
         $ImportOption = Get-ImportMode -ImportName $ImportName
