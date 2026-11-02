@@ -533,11 +533,8 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Add-HuduLocationAssetTagLayoutField.ps1
 . $PSScriptRoot\Private\Initialize-ImageMagik.ps1 # Used to determine image type (fallback) and convert if necessary
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
-. $PSScriptRoot\Private\Confirm-Import.ps1 # Confirm Object Import
+. $PSScriptRoot\Private\User-Options.ps1 # Confirm Object Import
 . $PSScriptRoot\Private\Import-Items.ps1 # Matches items from IT Glue to Hudu and queues items for threaded import
-. $PSScriptRoot\Private\Get-ImportMode.ps1 # Select Item Import Mode
-. $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1 # Get Flexible Asset Layout Option
-. $PSScriptRoot\Private\Import-ITGlueItems.ps1 # Fetch Items from ITGlue
 . $PSScriptRoot\Private\Find-MigratedItem.ps1 # Find migrated items 
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1 # Add Replace URL functions
 . $PSScriptRoot\Public\Add-HuduRelation.ps1 # Add Hudu Relations Function
