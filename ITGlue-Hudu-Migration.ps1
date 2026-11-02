@@ -419,7 +419,7 @@ $HuduCompanies = Get-HuduCompanies
 
 if (-not ([string]::IsNullOrWhiteSpace($ItglueJWT)) -and ($true -eq $importPasswordFolders -or $true -eq $importChecklists)) {
     Write-Host "Since you have provided a JWT token and have checklist or password folder import enabled, we will preload these items from ITGlue before your credential becomes stale." -ForegroundColor Green
-    . $PSScriptRoot\Public\Preload-JWTOnlyItems.ps1
+    . $PSScriptRoot\Public\Jobs\Preload-JWTOnlyItems.ps1
 }
 
 ############################### Locations ###############################
