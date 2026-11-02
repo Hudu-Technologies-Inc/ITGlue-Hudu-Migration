@@ -2331,7 +2331,7 @@ if ($true -eq $importPasswordFolders){
 write-host "wrapup 7/10... Placing checklists / checklist templates if user-configured to do so... $($importChecklists)"
 if ($true -eq $importChecklists){
     $null = Start-MigrationJob -Name "Wrap-Up - Checklists";
-    . .\public\Process-Checklists.ps1
+    . .\public\Jobs\Process-Checklists.ps1
 }
 
 write-host "wrapup 8/10... adding missing relations (this can take a long while). Some errors may appear but can be safely ignored."  -ForegroundColor DarkCyan; $null = Start-MigrationJob -Name "Wrap-Up - Relations";
