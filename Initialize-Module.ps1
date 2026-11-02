@@ -526,6 +526,11 @@ function Confirm-ITGlueExportPasswordCsv {
 
 
 ############################### Functions ###############################
+# Dot-source directly in the migration's scope so helpers read current run state
+# and reference parameters continue to update the caller's variables.
+. $PSScriptRoot\Private\Stop-ITGlueExportBootstrapJobIfRunning.ps1
+. $PSScriptRoot\Public\Get-HuduLocationAssetTagValue.ps1
+. $PSScriptRoot\Public\Add-HuduLocationAssetTagLayoutField.ps1
 . $PSScriptRoot\Private\Initialize-ImageMagik.ps1 # Used to determine image type (fallback) and convert if necessary
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
 . $PSScriptRoot\Private\Confirm-Import.ps1 # Confirm Object Import
@@ -563,11 +568,11 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Invoke-FastLabelCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastAssetCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastFlexibleAssetFieldPreparation.ps1
-
-
+. $PSScriptRoot\Public\LayoutFields.ps1
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
+
 if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
 $requiredHuduVersion = ([version]"2.48.0")
 Write-Host "Migration targets: Hudu $HuduBaseDomain; IT Glue $ITGURL ($ITGAPIEndpoint)" -ForegroundColor Cyan

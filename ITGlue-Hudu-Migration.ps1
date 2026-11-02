@@ -20,19 +20,6 @@ $UseFastAssetCommit = $UseFastAssetCommit ?? $true
 $UseFastRelationCommit = $UseFastRelationCommit ?? $true
 $HuduFastCommitHeaders = $HuduFastCommitHeaders ?? @{}
 
-function Stop-ITGlueExportBootstrapJobIfRunning {
-    if (-not $ITGlueExportBootstrapJob) {
-        return
-    }
-
-    if ($ITGlueExportBootstrapJob.State -eq 'Running') {
-        Write-Host "Stopping background IT Glue export job $($ITGlueExportBootstrapJob.Id)." -ForegroundColor Yellow
-        Stop-Job -Job $ITGlueExportBootstrapJob -ErrorAction SilentlyContinue
-    }
-
-    Remove-Job -Job $ITGlueExportBootstrapJob -Force -ErrorAction SilentlyContinue
-}
-
 ###################### Initial Setup and Confirmations ###############################
 Write-Host $InvocationWelcomeText -ForegroundColor Green
 write-host $BackupSafetyText -ForegroundColor DarkCyan
@@ -220,60 +207,6 @@ $MatchedPasswordFolders = $MatchedPasswordFolders ?? @(); $preloadedPassFolders 
 $MatchedChecklists = $MatchedChecklists ?? @(); $ITGlueRawChecklists = $ITGlueRawChecklists ?? @(); $ITglueChecklists = $ITglueChecklists ?? [System.Collections.ArrayList]@(); 
 $errorsfolder = if ($errorsfolder) {$errorsfolder} else {(Get-EnsuredPath -path $(join-path $(Resolve-Path .).path "debug"))}
 try {$migrationrecord = Set-MigrationRecord} catch {}
-
-function Get-HuduLocationAssetTagValue {
-    param(
-        [AllowNull()]
-        $ITGLocationId
-    )
-
-    if ([string]::IsNullOrWhiteSpace([string]$ITGLocationId)) {
-        return $null
-    }
-
-    $matchedLocation = $ITGLocationsHashTable["$ITGLocationId"]
-    if ($null -eq $matchedLocation) {
-        return $null
-    }
-
-    $huduLocationId = $matchedLocation.HuduID ?? $matchedLocation.id
-    if ([string]::IsNullOrWhiteSpace([string]$huduLocationId)) {
-        return $null
-    }
-
-    $locationName = $matchedLocation.Name ?? $matchedLocation.name
-    return @([pscustomobject]@{
-        id   = $huduLocationId
-        name = $locationName
-    }) | ConvertTo-Json -AsArray -Compress | Out-String
-}
-
-function Add-HuduLocationAssetTagLayoutField {
-    param(
-        [Parameter(Mandatory)]
-        [ref]$AssetLayoutFields,
-
-        [Parameter(Mandatory)]
-        [int]$Position,
-
-        [Parameter(Mandatory)]
-        [string]$LayoutName
-    )
-
-    if ($null -eq $LocationLayout -or [string]::IsNullOrWhiteSpace([string]$LocationLayout.ID)) {
-        Write-Host "Skipping Location AssetTag field in $LayoutName because no Hudu location layout was found." -ForegroundColor Yellow
-        return $false
-    }
-
-    $AssetLayoutFields.Value += @{
-        label        = 'Location'
-        field_type   = 'AssetTag'
-        show_in_list = 'false'
-        linkable_id  = $LocationLayout.ID
-        position     = $Position
-    }
-    return $true
-}
 
 ############################### Companies ###############################
 
@@ -507,79 +440,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Locations.json")) {
             -or ($ITGPrimaryLocationNames -contains $itgimport.attributes.name -and $HuduPrimaryLocationNames -contains $_.name -and $_.company_id -eq $itgimport.HuduCompanyId)`
             -or ($itgimport.attributes.primary -eq $true -and $HuduPrimaryLocationNames -contains $_.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
 
-    $LocImportEnabled = $ImportLocations
-
-    $LocMigrationName = "Locations"
-
-
-    $LocAssetLayoutFields = @(
-        @{
-            label        = 'Address 1'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 1
-        },
-        @{
-            label        = 'Address 2'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 2
-        },
-        @{
-            label        = 'City'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 3
-        },
-        @{
-            label        = 'Postal Code'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 4
-        },
-        @{
-            label        = 'Region'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 5
-        },
-        @{
-            label        = 'Country'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 6
-        },
-        @{
-            label        = 'Phone'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 7
-        },
-        @{
-            label        = 'Fax'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 8
-        },
-        @{
-            label        = 'Notes'
-            field_type   = 'RichText'
-            show_in_list = 'false'
-            position     = 9
-        },
-        @{
-            label        = 'ITG Date Created'
-            field_type   = 'Date'
-            show_in_list = 'true'
-            position     = 10
-        },
-        @{
-            label        = 'ITG Date Last Updated'
-            field_type   = 'Date'
-            show_in_list = 'true'
-            position     = 11
-        }
-    )
+    $LocImportEnabled = $ImportLocations; $LocMigrationName = $LocMigrationName ?? "Locations";
+    
     if ($settings.IncludeITGlueID -and $true -eq $settings.IncludeITGlueID){
         $LocAssetLayoutFields+=@{
             label        = 'ITGlue ID'
@@ -814,153 +676,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Configurations.json")
         Write-Host "configurations scoped... $OriginalConfigurationCount => $($ITGConfigurations.count)"
     }
 
-    $ConfigAssetLayoutFields = @(
-        @{
-            label        = 'Hostname'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 1
-        },
-        @{
-            label        = 'Primary IP'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 2
-        },
-        @{
-            label        = 'MAC Address'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 3
-        },
-        @{
-            label        = 'Default Gateway'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 4
-        },
-        @{
-            label        = 'Serial Number'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 5
-        },
-        @{
-            label        = 'Asset Tag'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 6
-        },
-        @{
-            label        = 'Position'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 7
-        },
-        @{
-            label        = 'Installed By'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 8
-        },
-        @{
-            label        = 'Purchased By'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 9
-        },
-        @{
-            label        = 'Notes'
-            field_type   = 'RichText'
-            show_in_list = 'false'
-            position     = 10
-        },
-        @{
-            label        = 'Operating System Notes'
-            field_type   = 'RichText'
-            show_in_list = 'false'
-            position     = 11
-        },
-        @{
-            label        = 'Warranty Expires At'
-            field_type   = 'Date'
-            expiration   = 'true'
-            show_in_list = 'false'
-            position     = 12
-        },
-        @{
-            label        = 'Installed At'
-            field_type   = 'Date'
-            show_in_list = 'false'
-            position     = 13
-        },
-        @{
-            label        = 'Purchased At'
-            field_type   = 'Date'
-            show_in_list = 'false'
-            position     = 14
-        },
-        @{
-            label        = 'Configuration Type Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 15
-        },
-        @{
-            label        = 'Configuration Type Kind'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 16
-        },
-        # @{
-        #     label        = 'Configuration Status Name'
-        #     field_type   = 'Text'
-        #     show_in_list = 'false'
-        #     position     = 17
-        # },
-        @{
-            label        = 'Manufacturer Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 18
-        },
-        @{
-            label        = 'Model ID'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 19
-        },
-        @{
-            label        = 'Operating System Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 20
-        },
-        @{
-            label        = 'Model Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 22
-        },
-        @{
-            label        = 'Contact Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 23
-        },
-        @{
-            label        = 'ITG Date Created'
-            field_type   = 'Date'
-            show_in_list = 'true'
-            position     = 24
-        },
-        @{
-            label        = 'ITG Date Last Updated'
-            field_type   = 'Date'
-            show_in_list = 'true'
-            position     = 25
-        }
-    )
     $null = Add-HuduLocationAssetTagLayoutField -AssetLayoutFields ([ref]$ConfigAssetLayoutFields) -Position 21 -LayoutName $ConfigImportAssetLayoutName
     $ConfigHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
 	
@@ -1160,73 +875,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
     }
 
     $ConHuduItemFilter = { ($_.name -eq $itgimport.attributes.name -and $_.company_id -eq $itgimport.HuduCompanyId) }
+    $ConImportEnabled = $ImportContacts; $ConMigrationName = $ConMigrationName ?? "Contacts";
 
-    $ConImportEnabled = $ImportContacts
-
-    $ConMigrationName = "Contacts"
-
-    $ConAssetLayoutFields = @(
-        @{
-            label        = 'First Name'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 1
-        },
-        @{
-            label        = 'Last Name'
-            field_type   = 'Text'
-            show_in_list = 'false'
-            position     = 2
-        },
-        @{
-            label        = 'Title'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 3
-        },
-        @{
-            label        = 'Contact Type'
-            field_type   = 'Text'
-            show_in_list = 'true'
-            position     = 4
-        },
-        # @{
-        #     label        = 'Important'
-        #     field_type   = 'Text'
-        #     show_in_list = 'false'
-        #     position     = 6
-        # },
-        @{
-            label        = 'Notes'
-            field_type   = 'RichText'
-            show_in_list = 'false'
-            position     = 7
-        },
-        @{
-            label        = 'Emails'
-            field_type   = 'RichText'
-            show_in_list = 'false'
-            position     = 8
-        },
-        @{
-            label        = 'Phones'
-            field_type   = 'RichText'
-            show_in_list = 'false'
-            position     = 9
-        },
-        @{
-            label        = 'ITG Date Created'
-            field_type   = 'Date'
-            show_in_list = 'true'
-            position     = 10
-        }    
-        @{
-            label        = 'ITG Date Last Updated'
-            field_type   = 'Date'
-            show_in_list = 'true'
-            position     = 11
-        }
-    )
     $null = Add-HuduLocationAssetTagLayoutField -AssetLayoutFields ([ref]$ConAssetLayoutFields) -Position 5 -LayoutName $ConImportAssetLayoutName
     if ($settings.IncludeITGlueID -and $true -eq $settings.IncludeITGlueID){
         $ConAssetLayoutFields+=@{
@@ -1423,39 +1073,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\AssetLayouts.json")) 
             }
 
 
-            $TempLayoutFields = @(
-                @{
-                    label        = 'ITG Date Created'
-                    field_type   = 'Date'
-                    show_in_list = 'true'
-                    position     = 498
-                },
-                @{
-                    label        = 'ITG Date Last Updated'
-                    field_type   = 'Date'
-                    show_in_list = 'true'
-                    position     = 499
-                },                
-                @{
-                    label        = 'Imported from ITGlue'
-                    field_type   = 'Date'
-                    show_in_list = 'false'
-                    position     = 500
-                },
-                @{
-                    label        = 'ITGlue URL'
-                    field_type   = 'Text'
-                    show_in_list = 'false'
-                    position     = 501
-                },
-                @{
-                    label        = 'ITGlue ID'
-                    field_type   = 'Text'
-                    show_in_list = 'false'
-                    position     = 502
-                }
 
-            )
 
             $TargetLayoutName = "$($FlexibleLayoutPrefix)$($UnmatchedLayout.ITGObject.attributes.name)"
             # Defense-in-depth in case Hudu layout state changed after the pre-flight check.
