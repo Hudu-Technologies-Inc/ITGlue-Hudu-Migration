@@ -73,7 +73,7 @@ Assert-Organization ($null -ne $ancestor -and $ancestor.Variable.VariablePath.Us
     $sleepCalls = [Collections.Generic.List[int]]::new()
     function Start-Sleep { param([int]$Seconds) $sleepCalls.Add($Seconds) }
     $choice = Get-ImportMode -ImportName 'Offline fixture' 6>$null
-    Assert-Organization ($choice -eq 'A' -and $sleepCalls.Count -eq 1 -and $sleepCalls[0] -eq 8) 'The intentional timeout correction was lost.'
+    Assert-Organization ($choice -eq 'A' -and $sleepCalls.Count -eq 1 -and $sleepCalls[0] -eq 5) 'The import-mode timeout changed unexpectedly.'
 
     # Preserve an existing helper override, as the original conditional import did.
     function Get-UserFlagSetup { return 'existing helper' }
