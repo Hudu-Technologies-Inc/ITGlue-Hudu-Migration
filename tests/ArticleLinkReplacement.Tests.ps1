@@ -133,8 +133,7 @@ try {
     # writes, without entering any migration jobs or performing API requests.
     $jobSource = Get-Content -LiteralPath "$repoRoot/Public/Jobs/Invoke-LinkReplacement.ps1" -Raw
     $stageStart = $jobSource.IndexOf('$preparedArticleCommits =')
-    $stageEnd = $jobSource.IndexOf('$null = Start-MigrationJob -Name "Wrap-Up - Article Content Commit"')
-    $stageScript = [scriptblock]::Create($jobSource.Substring($stageStart, $stageEnd - $stageStart))
+    $stageScript = [scriptblock]::Create($jobSource.Substring($stageStart))
     $realContentWriter = (Get-Command Set-HuduArticleLocalContent).ScriptBlock
     foreach ($photosEnabled in @($false, $true)) {
         & {
@@ -195,6 +194,84 @@ try {
             foreach ($request in $preparedArticleCommits) {
                 Assert-ArticleLinks (([IO.File]::ReadAllText($request.SourceContentPath)) -ceq $request.Content) 'Saved HTML differs from the staged commit payload.'
             }
+
+            # Exercise the extracted commit/report helper in both transport modes.
+            function Set-HuduArticle {
+                param($Id, $Content, $Name, $CompanyId, $ErrorAction)
+                if ($Id -eq 1005) { throw 'simulated commit failure' }
+                @{ article = @{ id = $Id; name = $Name; company_id = $CompanyId; url = "/kba/$Id" } }
+            }
+            function Invoke-FastHuduArticleContentCommit {
+                param($CommitRequests, $ThrottleLimit, $CustomHeaders)
+                foreach ($request in $CommitRequests) {
+                    [pscustomobject]@{
+                        Index = $request.Index; Status = $(if ($request.ArticleId -eq 1005) { 'failed' } else { 'committed' })
+                        UpdatedArticle = @{ id = $request.ArticleId; name = $request.Name; company_id = $request.CompanyId; url = "/kba/$($request.ArticleId)" }
+                        Attempts = 1; ElapsedSeconds = 0; SleptSeconds = 0; StatusCode = 200; Error = 'simulated commit failure'
+                    }
+                }
+            }
+            $HuduFastCommitHeaders = @{}
+            $MatchedArticles = $ArticleContentCommitCandidates
+            $null = [IO.Directory]::CreateDirectory($MigrationLogs)
+            foreach ($UseFastArticleContentCommit in @($false, $true)) {
+                # API result normalization uses optional wrapper properties in
+                # the migration's default (non-strict) execution mode.
+                try {
+                    Set-StrictMode -Off
+                    . "$repoRoot/Public/Jobs/Invoke-ArticleContentCommit.ps1" 6>$null
+                } finally {
+                    Set-StrictMode -Version Latest
+                }
+                Assert-ArticleLinks ($articlesUpdated.Count -eq 8 -and @($articlesUpdated | Where-Object status -eq 'failed').Count -eq 3) 'The commit helper lost preparation/transport failures or successful results.'
+                Assert-ArticleLinks (($articleCommitResults.article_id -join ',') -ceq '1000,1003,1004,1005,1006,1007') 'The commit helper changed result order.'
+                foreach ($name in @('ReplacedArticlesURL.json', 'Articles.json', 'ReplacedAttachmentLinks.json', 'ReplacedImageAnchors.json')) {
+                    Assert-ArticleLinks (Test-Path -LiteralPath (Join-Path $MigrationLogs $name)) "The extracted commit helper lost $name."
+                }
+                $savedResults = @(Get-Content -LiteralPath (Join-Path $MigrationLogs 'ReplacedArticlesURL.json') -Raw | ConvertFrom-Json)
+                Assert-ArticleLinks ($savedResults.Count -eq 8 -and @($savedResults | Where-Object status -eq 'failed').Count -eq 3) 'The extracted commit helper wrote incomplete results.'
+            }
+        }
+    }
+
+    # The asset helper can reuse attachment maps or load them independently,
+    # without staging/committing articles as a side effect.
+    & {
+        $AllFields = @(@{ HuduLayoutID = 901; HuduLayoutField = @{ field_type = 'RichText'; label = 'Notes' } })
+        $MatchedAssets = @(@{ HuduObject = @{
+            id = 501; name = 'asset'; company_id = 1; asset_layout_id = 901
+            fields = @(
+                @{ label = 'Notes'; field_type = 'RichText'; value = $contents[14] },
+                @{ label = 'plain'; field_type = 'Text'; value = $contents[14] }
+            )
+        } })
+        $MigrationLogs = Join-Path $fixtureRoot 'logs'
+        $assetCommits = [Collections.Generic.List[object]]::new()
+        $mapCalls = [int[]]@(0)
+        function Get-AttachmentUrlMap { $mapCalls[0]++; return $attachmentMap }
+        function Set-HuduAsset {
+            param($Id, $CompanyId, $Fields)
+            $assetCommits.Add(@{ Id = $Id; CompanyId = $CompanyId; Fields = $Fields })
+            @{ asset = @{ id = $Id } }
+        }
+        foreach ($reuseMaps in @($true, $false)) {
+            $assetCommits.Clear(); $mapCalls[0] = 0
+            try {
+                Set-StrictMode -Off
+                if ($reuseMaps) {
+                    . "$repoRoot/Public/Jobs/Invoke-AssetRichTextLinkReplacement.ps1" -AttachmentUrlMapForReplacement $attachmentMap -AttachmentUrlLookupForReplacement $attachmentLookup 6>$null
+                } else {
+                    . "$repoRoot/Public/Jobs/Invoke-AssetRichTextLinkReplacement.ps1" 6>$null
+                }
+            } finally {
+                Set-StrictMode -Version Latest
+            }
+            Assert-ArticleLinks ($mapCalls[0] -eq [int](-not $reuseMaps)) 'Asset replacement ignored the supplied map or failed to load its own map.'
+            Assert-ArticleLinks ($assetCommits.Count -eq 1 -and $assetCommits[0].Id -eq 501 -and $assetCommits[0].CompanyId -eq 1) 'The extracted asset helper lost or duplicated a commit.'
+            Assert-ArticleLinks ($assetCommits[0].Fields.Count -eq 1 -and $assetCommits[0].Fields[0].Notes -ceq $expected[14].Content) 'Asset rich text replacement changed HTML or included a plain-text field.'
+            Assert-ArticleLinks ($MatchedAssets[0].HuduObject.fields[1].value -ceq $contents[14]) 'The asset helper changed an unrelated field.'
+            $savedAssetResults = @(Get-Content -LiteralPath (Join-Path $MigrationLogs 'ReplacedAssetRichTextLinks.json') -Raw | ConvertFrom-Json)
+            Assert-ArticleLinks ($savedAssetResults.Count -eq 1 -and $savedAssetResults[0].status -eq 'replaced') 'The extracted asset helper lost its report.'
         }
     }
 

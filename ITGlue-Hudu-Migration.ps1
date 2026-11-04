@@ -2307,7 +2307,44 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Passwords.json")) {
 Start-PreloadedRelationDataJob -RelationType Passwords -ItgObjects @($MatchedPasswords) -ITGKey $ITGKey -ITGAPIEndpoint $ITGAPIEndpoint -MigrationLogs $MigrationLogs -ScriptRoot (Join-Path $PSScriptRoot 'Public') -Force:($ResumeFound -ne $true) | Out-Null
 
 
+############################### Wrap-Up ###############################
+
+# Keep phase ordering and job tracking here; job helpers perform the phase work.
+write-host "wrapup 1/10... setting asset layouts as active, enabling advanced website monitoring features" -ForegroundColor DarkCyan
+$null = Start-MigrationJob -Name "Wrap-Up - Layouts"
+foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
+if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitored per user-config"} else {$MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}}
+
+
+$null = Start-MigrationJob -Name "LinkReplacement"
+. "$PSScriptRoot\Public\Jobs\Invoke-InitialLinkReplacements.ps1"
+Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Company Notes URLs Replaced. Continue?"  -DefaultResponse "continue to Manual Actions, please."
+$ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
+
+
+write-host "wrapup 2/10... adding attachments and replacing any found attachment links (this can take a while)"
+$null = Start-MigrationJob -Name "Wrap-Up - Attachments"
+. (Join-Path $PSScriptRoot 'Add-HuduAttachmentsViaAPI.ps1')
+
+Write-Host "Articles - replacing IT Glue links, hard-coded images, attachment links, and hosted image anchors in one pass"
+$null = Start-MigrationJob -Name "Wrap-Up - Article Link Replacement"
+if (-not (Get-Command -Name Set-HuduImageAnchorsReplaced -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'Public/Set-HuduImageAnchorsReplaced.ps1')
+}
 . "$PSScriptRoot\Public\Jobs\Invoke-LinkReplacement.ps1"
+
+$null = Start-MigrationJob -Name "Wrap-Up - Article Content Commit"
+try {
+    . "$PSScriptRoot\Public\Jobs\Invoke-ArticleContentCommit.ps1"
+} finally {
+    $null = Complete-MigrationJob -Name "Wrap-Up - Article Content Commit" -CompletedAt (Get-Date)
+}
+
+Write-Host "Assets - replacing rich text image and attachment links now that upload maps are available"
+$null = Start-MigrationJob -Name "Wrap-Up - Asset Link Replacement"
+. "$PSScriptRoot\Public\Jobs\Invoke-AssetRichTextLinkReplacement.ps1" -AttachmentUrlMapForReplacement $AttachmentUrlMapForReplacement -AttachmentUrlLookupForReplacement $AttachmentUrlLookupForReplacement
+$null = Complete-MigrationJob -Name "Wrap-Up - Asset Link Replacement" -CompletedAt (Get-Date)
+Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Articles, attachments, and asset link replacements completed. Continue?" -DefaultResponse "continue to Manual Actions, please."
 $ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
 
 
