@@ -98,16 +98,26 @@ $articleContentCommitProgressId = 42
 $articleContentStageTotal = @($ArticleContentCommitCandidates).Count
 $articleContentStageIndex = 0
 
-foreach ($articleFound in $ArticleContentCommitCandidates) {
+if (-not (Get-Command -Name Invoke-HuduArticleLinkReplacement -ErrorAction SilentlyContinue)) {
+    . (Join-Path $LinkReplacementJobPublicRoot 'Invoke-HuduArticleLinkReplacement.ps1')
+}
+$articleLinkReplacementParams = @{
+    Articles = $ArticleContentCommitCandidates
+    ImageMap = $ImageMap
+    AttachmentUrlLookup = $AttachmentUrlLookupForReplacement
+    ThrottleLimit = $ArticleLinkReplacementThrottleLimit ?? [math]::Max(1, [math]::Min(4, [math]::Min([Environment]::ProcessorCount, [int]($MigrationParallelismLimit ?? 4))))
+}
+Invoke-HuduArticleLinkReplacement @articleLinkReplacementParams | ForEach-Object {
+    $articleLinkResult = $_
+    $articleFound = $ArticleContentCommitCandidates[$articleLinkResult.Index]
     $articleContentStageIndex++
     if ($articleContentStageTotal -gt 0) {
         $articleContentStagePercent = [math]::Min(99, [math]::Floor(($articleContentStageIndex / $articleContentStageTotal) * 100))
         Write-Progress -Id $articleContentStageProgressId -Activity "Staging article content for commit" -Status "Article $articleContentStageIndex of $articleContentStageTotal`: $($articleFound.name)" -PercentComplete $articleContentStagePercent
     }
 
-    $localArticleContent = Get-HuduArticleLocalContent -Article $articleFound
-    if ($null -eq $localArticleContent) {
-        $message = "Local article HTML was not found for '$($articleFound.name)' at '$($articleFound.LocalContentPath)'. Refusing to use Hudu-returned content as a fallback."
+    if ($articleLinkResult.Error) {
+        $message = $articleLinkResult.Error
         Write-Warning $message
         $null = $articlePreCommitFailures.Add([pscustomobject]@{
             status             = 'failed'
@@ -118,19 +128,10 @@ foreach ($articleFound in $ArticleContentCommitCandidates) {
             replacement_sets   = @()
             error              = $message
         })
-        continue
+        return
     }
 
-    $UpdatedContent = Update-HuduContentLinks `
-        -Content $localArticleContent `
-        -Type 'rich' `
-        -ImageMap $ImageMap `
-        -AttachmentUrlMap $AttachmentUrlMapForReplacement `
-        -AttachmentUrlLookup $AttachmentUrlLookupForReplacement `
-        -IncludeHardcodedImages `
-        -IncludeAttachments `
-        -IncludeHostedImageAnchors `
-        -IncludeUploads
+    $UpdatedContent = $articleLinkResult.UpdatedContent
 
     $finalArticleContent = $UpdatedContent.Content
     $standaloneAttachmentNoteApplied = $false
