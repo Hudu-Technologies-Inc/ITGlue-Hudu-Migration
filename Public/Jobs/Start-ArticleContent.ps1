@@ -1,0 +1,250 @@
+# Check if this is a direct run, and load the logs if so the first time.
+if (-not ($FirstTimeLoad -eq 1)) {
+    # General Settings Load
+    . $PSScriptRoot\..\..\Initialize-Module.ps1 -InitType 'Lite'
+    
+    # Add Replace URL functions
+    . $PSScriptRoot\..\..\Private\ConvertTo-HuduURL.ps1
+    if (-not (Get-Command -Name Set-HuduArticleLocalContent -ErrorAction SilentlyContinue)) {
+        . $PSScriptRoot\..\ArticleContentLocalCache.ps1
+    }
+    if (-not (Get-Command -Name Resolve-ITGlueArticleAttachmentImageFile -ErrorAction SilentlyContinue)) {
+        . $PSScriptRoot\..\Resolve-ArticleAttachmentImage.ps1
+    }
+
+    Write-Host "Checking for Matched Variables"
+    if (-not $MatchedPasswords) {$MatchedPasswords = (Get-Content -path "$MigrationLogs\Passwords.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedAssetPasswords) {$MatchedAssetPasswords = (Get-Content -path "$MigrationLogs\AssetPasswords.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedArticleBase) {$MatchedArticleBase = Get-Content "$MigrationLogs\ArticleBase.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+    if (-not $MatchedArticles) {$MatchedArticles = (Get-Content -path "$MigrationLogs\Articles.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedCompanies) {$MatchedCompanies = (Get-Content -path "$MigrationLogs\Companies.json" | ConvertFrom-json -depth 100) }
+    if (-not $MatchedConfigurations) {$MatchedConfigurations = Get-Content "$MigrationLogs\Configurations.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+    if (-not $MatchedAssets) {$MatchedAssets = Get-Content "$MigrationLogs\Assets.json" -raw | Out-String | ConvertFrom-Json -depth 100}
+    # Set the context so logs don't run again unless the powershell window gets closed.
+    $FirstTimeLoad = 1
+}
+
+if (-not (Get-Command Resolve-ITGlueDocumentImage -ErrorAction SilentlyContinue)) {
+    . "$PSScriptRoot/../Resolve-ITGlueDocumentImage.ps1"
+}
+
+    if ($Articles) {
+        $documentImageRecoveryContext = New-ITGlueDocumentImageRecoveryContext -ApiBase $ITGAPIEndpoint -ApiKey $ITGKey -MigrationLogsPath $MigrationLogs
+        Write-host "Loading Articles Log"
+        if (-not ($ITGlueDocuments = (Get-Content "$MigrationLogs\Articles.json" | ConvertFrom-json -Depth 50))) {
+            Write-Warning "Article log is missing, using ArticleBase file"
+            $ITGlueBaseDocuments = Get-Content "$MigrationLogs\ArticleBase.json" | ConvertFrom-json -Depth 50
+        }
+
+        # This is specifically for the article content, skipping stubs for right now.
+        # Get Attachment directories so we can match on the name per article, this needs to be outside the loop so we don't constantly re-run it
+		$AttchmentsPath = Join-Path -Path $ITGlueExportPath -ChildPath "attachments\documents"
+		$AttchmentsPath = "\\?\$AttchmentsPath"
+        $Attachfiles = Get-ChildItem -LiteralPath $AttchmentsPath -Recurse -Force
+        
+                    # Now do the actual work of populating the content of articles
+            $ArticleErrors = foreach ($Article in $UnmatchedArticles) {
+
+                $page_out = ''
+                
+            
+                # Check for attachments
+                $attachdir = $Attachfiles | Where-Object { $_.PSIsContainer -eq $true -and $_.Name -match $Article.ITGID }
+                if ($Attachdir) {
+                    $InFile = ''
+                    $html = ''
+                    $rawsource = ''
+
+                    $ManualLog = [PSCustomObject]@{
+                        Document_Name = $Article.Name
+                        Asset_Type    = "Article"
+                        Company_Name  = $Article.HuduObject.company_name
+                        HuduID        = $Article.HuduID
+                        Field_Name    = "N/A"
+                        Notes         = "Attached Files not Supported"
+                        Action        = "Manually Upload files to Related Files"
+                        Data          = "$($attachdir.fullname)"
+                        Hudu_URL      = $Article.HuduObject.url
+                        ITG_URL       = "$ITGURL/$($Article.ITGLocator)"
+                    }
+                    $null = $ManualActions.add($ManualLog)
+
+                }
+
+
+                Write-Host "Starting $($Article.Name) in $($Article.Company.CompanyName)" -ForegroundColor Green
+                    
+                $InFile = $Article.FullPath
+                    
+                $html = New-Object -ComObject "HTMLFile"
+                $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
+                if ($null -eq $Article.PSObject.Properties['SourceImages']) {
+                    $Article | Add-Member -NotePropertyName SourceImages -NotePropertyValue @(Get-ITGlueArticleSourceImages -Content $rawsource)
+                }
+                if ($rawsource.Length -gt 0) {
+                    $source = [regex]::replace($rawsource , '\xa0+', ' ')
+                    $src = [System.Text.Encoding]::Unicode.GetBytes($source)
+                    $html.write($src)
+                    $images = @($html.Images)
+                    $exportImageTags = @($images | ForEach-Object { [string]$_.outerHTML })
+                    $legacyImageIndex = -1
+
+                    $images | ForEach-Object {
+                        $legacyImageIndex++
+                        $fullImgUrl = $null; $fullImgPath = $null; $tnImgUrl = $null; $tnImgPath = $null
+                        $imagePath = $null; $foundFile = $null; $imageRecovery = $null
+                        $sourceReferences = Get-ITGlueDocumentImageReferences @([string]$_.src, [string]$_.outerHTML)
+
+                        if (($_.src -notmatch '^http[s]?://') -or ($_.src -match [regex]::Escape($ITGURL)) -or $sourceReferences.Ids.Count -gt 0 -or $sourceReferences.StepIds.Count -gt 0) {
+                            $imagePathResolvedFromAttachment = $false
+                            $script:HasImages = $true
+                            $imgHTML = $_.outerHTML
+                            Write-Host "Processing HTML: $imgHTML"
+                            if ($_.src -match [regex]::Escape($ITGURL)) {
+                                $matchedImage = Update-StringWithCaptureGroups -inputString $imgHTML -type 'img' -pattern $ImgRegexPatternToMatch
+                                if ($matchedImage) {
+                                    $tnImgUrl = $matchedImage.url
+                                    $tnImgPath = $matchedImage.path
+                                } else {
+                                    $tnImgPath = $_.src
+                                }
+                            }
+                            else {
+                                $basepath = Split-Path $InFile
+                                
+                                if ($fullImgUrl = $imgHTML.split('data-src-original="')[1]) {$fullImgUrl = $fullImgUrl.split('"')[0] }
+                                $tnImgUrl = $imgHTML.split('src="')[1].split('"')[0]
+                                if ($fullImgUrl) {$fullImgPath = Join-Path -Path $basepath -ChildPath $fullImgUrl.replace('/','\')}
+                                $tnImgPath = Join-Path -Path $basepath -ChildPath $tnImgUrl.replace('/','\')
+                            }
+                            
+                            Write-Host "Processing IMG: $tnImgPath"
+                            
+                            # Some logic to test for the original data source being specified vs the thumbnail. Grab the Thumbnail or final source.
+                            if ($fullImgUrl -and ($foundFile = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($fullImgPath) + '*') -ErrorAction SilentlyContinue)) {
+                                $imagePath = $foundFile.FullName
+                            } elseif ($tnImgUrl -and ($foundFile = Get-Item -Path ([System.Management.Automation.WildcardPattern]::Escape($tnImgPath) + '*') -ErrorAction SilentlyContinue)) {
+                                $imagePath = $foundFile.FullName
+                            } elseif ($foundFile = Resolve-ITGlueArticleAttachmentImageFile -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, $_.src, $imgHTML) -AttachmentFiles $Attachfiles -ExportPath $ITGlueExportPath) {
+                                $imagePath = $foundFile.FullName
+                                $imagePathResolvedFromAttachment = $true
+                                Write-Host "Resolved inline attachment image from article attachments: $imagePath" -ForegroundColor Cyan
+                            } elseif (($imageRecovery = Resolve-ITGlueDocumentImage -Article $Article -SourceValues @($fullImgUrl, $tnImgUrl, [string]$_.src, $imgHTML) -ImageIndex $legacyImageIndex -ExportImageTags $exportImageTags -Context $documentImageRecoveryContext).File) {
+                                $imagePath = $imageRecovery.File.FullName
+                                Write-Host "Recovered missing document image through the IT Glue API: $imagePath" -ForegroundColor Cyan
+                            } else {
+                                Remove-Variable -Name imagePath -ErrorAction SilentlyContinue
+                                Remove-Variable -Name foundFile -ErrorAction SilentlyContinue
+                                Write-Warning "Unable to validate image file."
+                                [PSCustomObject]@{
+                                ErrorType = 'Image missing found'
+                                Details = "Neither $fullImgPath or $tnImgPath were found"
+                                InFile = "$InFile"
+                                MigrationObject = $Article
+                                ImageRecoveryReason = $imageRecovery.Reason
+                            }
+                            return
+                        }
+
+                            # Test the path to ensure that a file extension exists, if no file extension we get problems later on. We rename it if there's no ext.
+                            if ($imagePath -and (Test-Path $imagePath -ErrorAction SilentlyContinue)) {
+                                if ((Get-Item -LiteralPath $imagePath).extension -eq '') {
+                                    Write-Warning "$imagePath is undetermined image. Testing..."
+                                    if ($Magick = New-Object ImageMagick.MagickImage($imagePath)) {
+                                        $OriginalFullImagePath = $imagePath
+                                        $imagePath = "$($imagePath).$($Magick.format)"
+                                        $MovedItem = Move-Item -Path "$OriginalFullImagePath" -Destination "$imagePath"
+                                    }
+                                }                        
+                                $imageType = Invoke-ImageTest($imagePath)
+                                if ($imageType) {
+                                    Write-Host "Uploading new image"
+                                    try {
+                                        if ($imagePathResolvedFromAttachment) {
+                                            $NewImageURL = Convert-ITGlueArticleAttachmentImageToPublicPhoto -ImageFile (Get-Item -LiteralPath $imagePath) -Article $Article
+                                        } else {
+                                            $UploadImage = New-HuduPublicPhoto -FilePath "$imagePath" -record_id $Article.HuduID -record_type 'Article' -ErrorAction Stop
+                                            $NewImageURL = $UploadImage.public_photo.url.replace($HuduBaseDomain, '')
+                                        }
+                                        if ([string]::IsNullOrWhiteSpace([string]$NewImageURL)) { throw 'Hudu returned no image URL' }
+                                        $ImgLink = $html.Links | Where-Object {$_.innerHTML -eq $imgHTML} | Select-Object -First 1
+                                        Write-Host "Setting image to: '$NewImageURL'"
+                                        $_.src = [string]"$NewImageURL"
+                                        if ($imageRecovery -and $imageRecovery.Record) {
+                                            $imageRecovery.Record.Status = 'Placed'
+                                            $imageRecovery.Record.HuduImageUrl = [string]$NewImageURL
+                                            Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                        }
+                                        
+                                        # Update Links for this image
+                                        if ($ImgLink) { $ImgLink.href = [string]"$NewImageUrl" }
+
+                                    }
+                                    catch {
+                                        if ($imageRecovery -and $imageRecovery.Record) {
+                                            $imageRecovery.Record.Status = 'UploadFailed'
+                                            $imageRecovery.Record.Problem = 'Recovered image could not be placed in Hudu'
+                                            Save-ITGlueDocumentImageRecovery $Article $imageRecovery.Record $documentImageRecoveryContext
+                                        }
+                                        [PSCustomObject]@{
+                                            ErrorType = 'Failed to Upload to Backend Storage'
+                                            Details = "$imagePath failed to upload to Hudu backend. $_"
+                                            InFile = "$InFile"
+                                            MigrationObject = $Article
+                                        }
+                                    }
+                                    if ($Magick -and $MovedItem) {
+                                        Move-Item -Path "$imagePath" -Destination "$OriginalFullImagePath"
+                                    }
+            
+                                }
+                                else {
+                                    [PSCustomObject]@{
+                                        ErrorType       = 'Image Not Detected'
+                                        Details         = "$imagePath not detected as image"
+                                        InFile          = "$InFile"
+                                        MigrationObject = $Article
+                                    }
+                                }
+                            }
+                            else {
+                                Write-Warning "Image $tnImgUrl file is missing"
+                                [PSCustomObject]@{
+                                    ErrorType       = 'Image File Missing'
+                                    Details         = "$tnImgUrl is not present in export"
+                                    InFile          = "$InFile"
+                                    MigrationObject = $Article
+                                }
+                            }
+                        }
+                    }
+                    
+                
+                    $page_Source = $html.documentelement.outerhtml
+                    $page_out = [regex]::replace($page_Source , '\xa0+', ' ')
+                            
+                }
+            
+                if ($page_out.Length -lt 1) { 
+
+                }else {
+                    $page_out = 'Empty Document in IT Glue Export - Please Check IT Glue'
+                    [PSCustomObject]@{
+                        ErrorType       = 'Empty Document'
+                        Details         = 'An Empty Document Was Detected'
+                        InFile          = "$InFile"
+                        MigrationObject = $Article
+                    }
+                }
+                
+                    
+                $localContentPath = Set-HuduArticleLocalContent -Article $Article -Content $page_out -MigrationLogsPath $MigrationLogs -DebugFolderPath $debugFolder
+                Write-Host "$($Article.name) local article HTML prepared at $localContentPath" -ForegroundColor Green
+
+                $Article.Imported = "Content-Prepared-Locally"
+                
+            } 
+
+
+    }
+

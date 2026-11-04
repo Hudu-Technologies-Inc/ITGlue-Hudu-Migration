@@ -1,8 +1,8 @@
 if (-not (Get-Command -Name Convert-HardcodedITGlueImagesToHudu -ErrorAction SilentlyContinue)) {
-    . $PSScriptRoot\..\Private\ConvertTo-HuduURL.ps1
+    . $PSScriptRoot\..\..\Private\ConvertTo-HuduURL.ps1
 }
 if (-not (Get-Command -Name Get-HuduArticleLocalContent -ErrorAction SilentlyContinue)) {
-    . $PSScriptRoot\ArticleContentLocalCache.ps1
+    . $PSScriptRoot\..\ArticleContentLocalCache.ps1
 }
 
 $ArticleContentCandidates = if ($MatchedArticles) {

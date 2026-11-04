@@ -526,17 +526,18 @@ function Confirm-ITGlueExportPasswordCsv {
 
 
 ############################### Functions ###############################
+# Dot-source directly in the migration's scope so helpers read current run state
+# and reference parameters continue to update the caller's variables.
+. $PSScriptRoot\Private\Stop-ITGlueExportBootstrapJobIfRunning.ps1
+. $PSScriptRoot\Public\Get-HuduLocationAssetTagValue.ps1
+. $PSScriptRoot\Public\Add-HuduLocationAssetTagLayoutField.ps1
 . $PSScriptRoot\Private\Initialize-ImageMagik.ps1 # Used to determine image type (fallback) and convert if necessary
 . $PSScriptRoot\Private\Invoke-ImageTest.ps1
-. $PSScriptRoot\Private\Confirm-Import.ps1 # Confirm Object Import
+. $PSScriptRoot\Private\User-Options.ps1 # Confirm Object Import
 . $PSScriptRoot\Private\Import-Items.ps1 # Matches items from IT Glue to Hudu and queues items for threaded import
-. $PSScriptRoot\Private\Get-ImportMode.ps1 # Select Item Import Mode
-. $PSScriptRoot\Private\Get-FlexLayoutImportMode.ps1 # Get Flexible Asset Layout Option
-. $PSScriptRoot\Private\Import-ITGlueItems.ps1 # Fetch Items from ITGlue
 . $PSScriptRoot\Private\Find-MigratedItem.ps1 # Find migrated items 
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1 # Add Replace URL functions
 . $PSScriptRoot\Public\Add-HuduRelation.ps1 # Add Hudu Relations Function
-. $PSScriptRoot\Public\Write-TimedMessage.ps1 # Add Timed (Noninteractive) Messages Helper
 . $PSScriptRoot\Public\Get-CastIfNumeric.ps1 # Add numeral casting, password folder fetching, and article stub starting helpers
 . $PSScriptRoot\Public\ConvertTo-HuduNumber.ps1 # Decimal strings, number subtype mapping, and numeric validation
 . $PSScriptRoot\Public\Start-ArticleStubs.ps1 # article starting helper
@@ -563,12 +564,11 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Invoke-FastLabelCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastAssetCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastFlexibleAssetFieldPreparation.ps1
-
-
+. $PSScriptRoot\Public\LayoutFields.ps1
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
-if (-not (Get-Command -Name Get-UserFlagSetup -ErrorAction SilentlyContinue)) { . $PSScriptRoot\Public\Add-OptionalFlags.ps1 }
+
 $requiredHuduVersion = ([version]"2.48.0")
 Write-Host "Migration targets: Hudu $HuduBaseDomain; IT Glue $ITGURL ($ITGAPIEndpoint)" -ForegroundColor Cyan
 $CurrentVersion = Set-ExternalModulesInitialized -RequiredHuduVersion $requiredHuduVersion -DisallowedVersions @([version]"2.37.0") -HuduBaseURL $HuduBaseDomain -HuduAPIKey $HuduAPIKey -RefreshHuduApiForkEachRun:($InitType -eq 'Full')

@@ -325,7 +325,7 @@ try {
     Assert-Recovery ($ManualActions.Count -eq 2 -and $publicPhotoCalls.Count -eq 0 -and @($ManualActions | Where-Object { $_.ImageRecoveryReason -notlike '*not configured*' -or $_.ImageSources.Count -lt 1 }).Count -eq 0) 'Unrecoverable images lost their manual actions, source references, or API recovery reason.'
 
     # The standalone/legacy body-preparation path uses the same recovery helper.
-    $legacyAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'Public/Start-ArticleContent.ps1'), [ref]$tokens, [ref]$parseErrors)
+    $legacyAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'Public/Jobs/Start-ArticleContent.ps1'), [ref]$tokens, [ref]$parseErrors)
     $legacyCommand = $legacyAst.Find({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'ForEach-Object' -and $node.Extent.Text.Contains('$legacyImageIndex++')}, $true)
     $legacyBlock = $legacyCommand.CommandElements[1].ScriptBlock.GetScriptBlock()
     $Article = New-TestArticle; $documentImageRecoveryContext = New-TestContext

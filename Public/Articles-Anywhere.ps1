@@ -1012,28 +1012,3 @@ function Set-HuduArticleFromResourceFolder {
 
   return $newDoc
 }
-
-
-Get-PSVersionCompatible; Get-HuduModule; Set-HuduInstance; Get-HuduVersionCompatible;
-
-Write-Host @"
-You're all ready to go and create any articles you'd like, from
-- webpages
-- pdfs
-- local directory resources
-
-Examples:
-# from a web page
-Set-HuduArticleFromWebPage -uri "https://en.wikipedia.org/wiki/Special:Random" -companyname "$($env:USERNAME)'s company" -title "website synced from $($env:COMPUTERNAME)"
-
-# from a PDF file
-Set-HuduArticleFromPDF -pdfPath "$($(Get-ChildItem $(join-path -Path $HOME -ChildPath "Downloads") -File -Filter "*.pdf" | select-object -First 1) ?? "c:\tmp\somepdf.pdf")" -companyname "$($env:USERNAME)'s company" -title "new article from pdf"
-
-# From a folder containing any type of files
-Set-HuduArticleFromResourceFolder -resourcesFolder "$(join-path -Path $HOME -ChildPath "Desktop") " -companyname "$($env:USERNAME)'s company" -title "$($env:USERNAME)'s Desktop Contents"
-
-# From a local folder containing a webpage and images
-Set-HuduArticleFromResourceFolder -resourcesFolder "$(join-path -Path $HOME -ChildPath "Pictures")" -companyname "$($env:USERNAME)'s company" -title "local pictures in $(join-path -Path $HOME -ChildPath "Pictures")"
-
-"@
-
