@@ -2308,6 +2308,8 @@ Start-PreloadedRelationDataJob -RelationType Passwords -ItgObjects @($MatchedPas
 
 
 . "$PSScriptRoot\Public\Jobs\Invoke-LinkReplacement.ps1"
+$ManualActions | ConvertTo-Json -depth 100 | Out-File "$MigrationLogs\ManualActions.json"
+
 
 write-host "wrapup 3/10... Creating IPAM/Networks and Addresses if user-configured to do so... $($ImportConfigInterfaces)"
 if ($true -eq $ImportConfigInterfaces){
