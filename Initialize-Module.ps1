@@ -536,6 +536,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Private\User-Options.ps1 # Confirm Object Import
 . $PSScriptRoot\Private\Import-Items.ps1 # Matches items from IT Glue to Hudu and queues items for threaded import
 . $PSScriptRoot\Private\Find-MigratedItem.ps1 # Find migrated items 
+. $PSScriptRoot\Public\CompanyMatching.ps1 # Conservative company name matching and validated creation
 . $PSScriptRoot\Private\ConvertTo-HuduURL.ps1 # Add Replace URL functions
 . $PSScriptRoot\Public\Add-HuduRelation.ps1 # Add Hudu Relations Function
 . $PSScriptRoot\Public\Get-CastIfNumeric.ps1 # Add numeral casting, password folder fetching, and article stub starting helpers

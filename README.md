@@ -117,6 +117,14 @@ Check that your Flexible Layouts don’t have any fields named the same thing on
 
 ITGlue allows for more than one client to exist with the same Name but Hudu does not. Same-names will be suffixed with a -number to keep things unique. 
 
+Company matching ignores case and trims/collapses whitespace (including nonbreaking
+spaces), while preserving punctuation and accents. Hudu names are indexed once so
+each IT Glue company uses a direct lookup. Duplicate source names receive distinct suffixes and match those
+suffixed names on later runs. Ambiguous destination matches stop for resolution.
+If company creation fails or returns no valid ID, the migration refreshes Hudu
+companies once to recover an existing match; an unresolved failure stops before
+recording that company as migrated.
+
 Blank passwords in ITGlue will cause issues on import and cause the entire password to fail. 
 
 Make sure the API Key you're using has password access, and that all passwords have values, if they're important.
