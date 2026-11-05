@@ -117,6 +117,14 @@ Check that your Flexible Layouts don’t have any fields named the same thing on
 
 ITGlue allows for more than one client to exist with the same Name but Hudu does not. Same-names will be suffixed with a -number to keep things unique. 
 
+Company matching ignores case and trims/collapses whitespace (including nonbreaking
+spaces), while preserving punctuation and accents. Hudu names are indexed once so
+each IT Glue company uses a direct lookup. Duplicate source names receive distinct suffixes and match those
+suffixed names on later runs. Ambiguous destination matches stop for resolution.
+If company creation fails or returns no valid ID, the migration refreshes Hudu
+companies once to recover an existing match; an unresolved failure stops before
+recording that company as migrated.
+
 Blank passwords in ITGlue will cause issues on import and cause the entire password to fail. 
 
 Make sure the API Key you're using has password access, and that all passwords have values, if they're important.
@@ -172,7 +180,6 @@ You can [download newest powershell release here](https://github.com/powershell/
 
 Settings are saved to `settings\settings.json` inside the current run's debug folder. Saved settings include encrypted API keys, URLs, prefixes, and export paths. No settings file is automatically discovered in `%APPDATA%` or through old folder/path variables. To deliberately use a saved configuration as input for a new Full run, pass `-SettingsFile 'C:\path\settings.json'` to the main script; that input file is left unchanged.
 
-
 1. Download/Clone the _entire_ repo into a folder on your computer.
 2. Use Dot Sourcing to run the main file ". .\ITGlue-Hudu-Migration.ps1" from the path of where you extracted the ZIP file of the repo.
 3. You'll be prompted for the initial setup and it will save the settings to a file.
@@ -203,6 +210,24 @@ It's best to run the script via dot-sourcing a copy of **environ.example** that 
 or
 
 ```. .\ITGlue-Hudu-Migration.ps1```
+
+### Article link replacement performance
+
+Article link replacement builds the image lookup once and uses up to eight local
+workers, limited by processor count and `MigrationParallelismLimit`. Workers share
+compact URL/image lookup tables and read local HTML only when scheduled. At most
+one article per worker is running or buffered, in addition to the existing prepared
+commit list. Replacement phases and article results retain their original order;
+standalone media/photo creation and commit preparation still run on the parent thread.
+
+To tune this independently of API commit workers, set
+`$ArticleLinkReplacementThrottleLimit = 8` in your PowerShell session or environment
+script before starting the migration. Accepted values are 1–32; use `1` for serial
+processing with the same prebuilt lookups, or `2` for lower additional memory usage.
+This override is a PowerShell variable, not a launcher or saved JSON setting.
+
+Offline equivalence and failure checks: `pwsh -NoProfile -File tests/ArticleLinkReplacement.Tests.ps1`.
+Add `-Benchmark` to time a synthetic workload against the serial repeated-lookup path.
 
 
 # Advanced / Other Use Cases

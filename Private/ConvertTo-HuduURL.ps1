@@ -526,10 +526,17 @@ function Convert-HardcodedITGlueImagesToHudu {
         [string]$Content,
 
         [AllowNull()]
-        $ImageMap
+        $ImageMap,
+
+        [AllowNull()]
+        [hashtable]$ImageMapByLeaf
     )
 
-    $imageMapByLeaf = Get-HardcodedImageMapByLeaf -ImageMap $ImageMap
+    # A supplied (even empty) lookup is already prepared for this migration.
+    # Keep the original enumeration/collision order when building it once.
+    if ($null -eq $ImageMapByLeaf) {
+        $ImageMapByLeaf = Get-HardcodedImageMapByLeaf -ImageMap $ImageMap
+    }
     if ($imageMapByLeaf.Count -lt 1 -or [string]::IsNullOrWhiteSpace($Content)) {
         return [pscustomobject]@{
             Content      = $Content
@@ -674,7 +681,10 @@ function Update-HuduContentLinks {
         [switch]$IncludeHardcodedImages,
         [switch]$IncludeAttachments,
         [switch]$IncludeHostedImageAnchors,
-        [switch]$IncludeUploads
+        [switch]$IncludeUploads,
+
+        [AllowNull()]
+        [hashtable]$ImageMapByLeaf
     )
 
     $newContent = $Content
@@ -690,7 +700,7 @@ function Update-HuduContentLinks {
     }
 
     if ($Type -eq 'rich' -and $IncludeHardcodedImages) {
-        $hardcodedImages = Convert-HardcodedITGlueImagesToHudu -Content $newContent -ImageMap $ImageMap
+        $hardcodedImages = Convert-HardcodedITGlueImagesToHudu -Content $newContent -ImageMap $ImageMap -ImageMapByLeaf $ImageMapByLeaf
         if ($hardcodedImages.Changed) {
             $null = $replacementSets.Add([pscustomobject]@{
                 Type         = 'HardcodedImages'
