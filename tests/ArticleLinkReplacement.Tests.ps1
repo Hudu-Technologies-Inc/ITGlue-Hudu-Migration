@@ -76,7 +76,7 @@ try {
     Assert-ArticleLinks ($expected[8].Content.Contains('/public_photo/first') -and -not $expected[8].Content.Contains('/public_photo/second')) 'Image collisions no longer retain the first mapping.'
     Assert-ArticleLinks (($expected[14].ReplacementSets.Type -join ',') -ceq 'ITGlueLinks,HardcodedImages,AttachmentLinks,HostedImageAnchors') 'The combined fixture did not exercise every replacement phase in order.'
     $mapBefore = $ImageMap | ConvertTo-Json -Compress
-    foreach ($workers in @(1, 4)) {
+    foreach ($workers in @(1, 8)) {
         $actual = @(Invoke-HuduArticleLinkReplacement -Articles $articles -ImageMap $ImageMap -AttachmentUrlLookup $attachmentLookup -ThrottleLimit $workers 6>$null)
         Assert-ArticleLinks ($actual.Count -eq $articles.Count) "Missing results with $workers worker(s)."
         for ($i = 0; $i -lt $articles.Count; $i++) {

@@ -35,7 +35,7 @@ $articleLinkReplacementParams = @{
     Articles = $ArticleContentCommitCandidates
     ImageMap = $ImageMap
     AttachmentUrlLookup = $AttachmentUrlLookupForReplacement
-    ThrottleLimit = $ArticleLinkReplacementThrottleLimit ?? [math]::Max(1, [math]::Min(4, [math]::Min([Environment]::ProcessorCount, [int]($MigrationParallelismLimit ?? 4))))
+    ThrottleLimit = $ArticleLinkReplacementThrottleLimit ?? [math]::Max(1, [math]::Min(8, [math]::Min([Environment]::ProcessorCount, [int]($MigrationParallelismLimit ?? 8))))
 }
 Invoke-HuduArticleLinkReplacement @articleLinkReplacementParams | ForEach-Object {
     $articleLinkResult = $_

@@ -12,7 +12,7 @@ function Invoke-HuduArticleLinkReplacement {
         [hashtable]$AttachmentUrlLookup,
 
         [ValidateRange(1, 32)]
-        [int]$ThrottleLimit = [math]::Max(1, [math]::Min(4, [Environment]::ProcessorCount))
+        [int]$ThrottleLimit = [math]::Max(1, [math]::Min(8, [Environment]::ProcessorCount))
     )
 
     if ($Articles.Count -eq 0) { return }

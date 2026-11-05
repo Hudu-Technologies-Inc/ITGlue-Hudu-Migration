@@ -213,7 +213,7 @@ or
 
 ### Article link replacement performance
 
-Article link replacement builds the image lookup once and uses up to four local
+Article link replacement builds the image lookup once and uses up to eight local
 workers, limited by processor count and `MigrationParallelismLimit`. Workers share
 compact URL/image lookup tables and read local HTML only when scheduled. At most
 one article per worker is running or buffered, in addition to the existing prepared
@@ -221,7 +221,7 @@ commit list. Replacement phases and article results retain their original order;
 standalone media/photo creation and commit preparation still run on the parent thread.
 
 To tune this independently of API commit workers, set
-`$ArticleLinkReplacementThrottleLimit = 4` in your PowerShell session or environment
+`$ArticleLinkReplacementThrottleLimit = 8` in your PowerShell session or environment
 script before starting the migration. Accepted values are 1–32; use `1` for serial
 processing with the same prebuilt lookups, or `2` for lower additional memory usage.
 This override is a PowerShell variable, not a launcher or saved JSON setting.
