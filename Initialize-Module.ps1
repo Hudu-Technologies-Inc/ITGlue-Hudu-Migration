@@ -566,6 +566,7 @@ function Confirm-ITGlueExportPasswordCsv {
 . $PSScriptRoot\Public\Invoke-FastAssetCommit.ps1
 . $PSScriptRoot\Public\Invoke-FastFlexibleAssetFieldPreparation.ps1
 . $PSScriptRoot\Public\LayoutFields.ps1
+. $PSScriptRoot\Public\Test-ITGlueIntegratorLayout.ps1
 . $PSScriptRoot\Public\Timed-Job.ps1
 . $PSScriptRoot\Public\Set-LabelTypeHelpers.ps1
 . $PSScriptRoot\Public\Get-ITGTimeEstimate.ps1
