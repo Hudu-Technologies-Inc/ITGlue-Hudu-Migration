@@ -286,44 +286,336 @@ $propertyDump
 
 
 
-function Get-HuduModule {
+function Set-HuduModuleInitialized {
+    [CmdletBinding()]
     param (
-        [string]$HAPImodulePath = "C:\Users\$env:USERNAME\Documents\GitHub\HuduAPI\HuduAPI\HuduAPI.psm1",
-        [bool]$use_hudu_fork = $true
+            [string]$HAPImodulePath = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'GitHub\HuduAPI\HuduAPI\HuduAPI.psm1'),
+            [bool]$use_hudu_fork = $true,
+            [bool]$RefreshHuduApiForkEachRun = $true,
+            [string]$HuduApiRepositoryUrl = $($env:HUDUAPI_REPOSITORY_URL ?? "https://github.com/Hudu-Technologies-Inc/HuduAPI.git"),
+            [string]$HuduApiBranch = $($env:HUDUAPI_REPOSITORY_BRANCH ?? "master"),
+            [string]$HuduApiZipUrl = $env:HUDUAPI_ZIP_URL,
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string]$HuduBaseURL,
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string]$HuduAPIKey
         )
 
-    if ($true -eq $use_hudu_fork) {
-        if (-not $(Test-Path $HAPImodulePath)) {
-            $dst = Split-Path -Path (Split-Path -Path $HAPImodulePath -Parent) -Parent
-            $zip = "$env:TEMP\huduapi.zip"
-            Invoke-WebRequest -Uri "https://github.com/Hudu-Technologies-Inc/HuduAPI/archive/refs/heads/master.zip" -OutFile $zip
-            Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force 
-            $extracted = Join-Path $env:TEMP "HuduAPI-master" 
-            if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
-            Move-Item -Path $extracted -Destination $dst 
-            Remove-Item $zip -Force
+    $HuduBaseURL = $HuduBaseURL.Trim().TrimEnd('/')
+    if ($HuduBaseURL -notmatch '^[a-z][a-z0-9+.-]*://') { $HuduBaseURL = "https://$HuduBaseURL" }
+    $connectionUri = $null
+    if (-not [Uri]::TryCreate($HuduBaseURL, [UriKind]::Absolute, [ref]$connectionUri) -or $connectionUri.Scheme -notin @('https','http') -or -not $connectionUri.Host) {
+        throw 'A valid Hudu base URL is required.'
+    }
+    $HuduBaseURL = $connectionUri.GetLeftPart([UriPartial]::Authority)
+    $HuduAPIKey = $HuduAPIKey.Trim()
+    if ($HuduAPIKey.Length -ne 24) { throw 'Hudu API keys must be 24 characters long.' }
+
+    function Assert-HuduApiChildPath {
+        param([string]$Path, [string]$Parent)
+        $absolutePath = [IO.Path]::GetFullPath($Path)
+        $absoluteParent = [IO.Path]::GetFullPath($Parent).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $absolutePath.StartsWith($absoluteParent, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "HuduAPI path is outside its intended directory: $absolutePath"
         }
-    } 
+        return $absolutePath
+    }
 
-    if (Test-Path $HAPImodulePath) {
-        Import-Module $HAPImodulePath -Force
-    } elseif ((Get-Module -ListAvailable -Name HuduAPI).Version -ge [version]'3.1.1') {
-        Import-Module HuduAPI
+    function Remove-HuduApiStaging {
+        param([string]$StagingRepoRoot)
+        $container = Split-Path -Path $StagingRepoRoot -Parent
+        $container = Assert-HuduApiChildPath -Path $container -Parent ([IO.Path]::GetTempPath())
+        if ((Split-Path -Path $container -Leaf) -notmatch '^HuduAPI-Fork-[0-9a-f-]{36}$') { throw 'Invalid HuduAPI staging directory.' }
+        if (Test-Path -LiteralPath $container) { Remove-Item -LiteralPath $container -Recurse -Force -ErrorAction Stop }
+    }
+
+    function Test-HuduApiModuleLayout {
+        param([Parameter(Mandatory)][string]$ModulePath)
+
+        if (-not (Test-Path -LiteralPath $ModulePath -PathType Leaf)) {
+            return $false
+        }
+
+        $moduleDirectory = Split-Path -Path $ModulePath -Parent
+        return (
+            (Test-Path -LiteralPath (Join-Path $moduleDirectory "Public") -PathType Container) -and
+            (Test-Path -LiteralPath (Join-Path $moduleDirectory "Private") -PathType Container)
+        )
+    }
+
+    function Get-GitHubRepositoryParts {
+        param([Parameter(Mandatory)][string]$RepositoryUrl)
+
+        if ($RepositoryUrl -notmatch 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$') {
+            return $null
+        }
+
+        [PSCustomObject]@{
+            Owner = $matches.owner
+            Repo  = ($matches.repo -replace '\.git$', '')
+        }
+    }
+
+    function New-HuduApiStagingRoot {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "HuduAPI-Fork-$([guid]::NewGuid().Guid)"
+        $tempRoot = Assert-HuduApiChildPath -Path $tempRoot -Parent ([IO.Path]::GetTempPath())
+        New-Item -ItemType Directory -Path $tempRoot -Force -ErrorAction Stop | Out-Null
+        return (Join-Path $tempRoot "HuduAPI")
+    }
+
+    function Unblock-HuduApiPath {
+        param([Parameter(Mandatory)][string]$Path)
+
+        try {
+            if (Test-Path -LiteralPath $Path) {
+                Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue |
+                    Unblock-File -ErrorAction SilentlyContinue
+                Unblock-File -LiteralPath $Path -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+
+    function Expand-HuduApiZipToStaging {
+        param(
+            [Parameter(Mandatory)][string]$ZipPath,
+            [Parameter(Mandatory)][string]$StagingRepoRoot
+        )
+
+        $stagingParent = Split-Path -Path $StagingRepoRoot -Parent
+        $extractRoot = Join-Path $stagingParent "zip-extract"
+
+        Unblock-HuduApiPath -Path $ZipPath
+        Expand-Archive -Path $ZipPath -DestinationPath $extractRoot -Force -ErrorAction Stop
+        Unblock-HuduApiPath -Path $extractRoot
+
+        $candidateRoots = @((Get-Item -LiteralPath $extractRoot -ErrorAction Stop))
+        $candidateRoots += @(Get-ChildItem -LiteralPath $extractRoot -Directory -Recurse -ErrorAction Stop)
+        $extracted = $candidateRoots |
+            Where-Object { Test-HuduApiModuleLayout -ModulePath (Join-Path $_.FullName "HuduAPI\HuduAPI.psm1") } |
+            Select-Object -First 1
+
+        if (-not $extracted) {
+            throw "Archive did not contain a complete HuduAPI module layout."
+        }
+
+        $extractedPath = [IO.Path]::GetFullPath($extracted.FullName)
+        if ($extractedPath -ne [IO.Path]::GetFullPath($extractRoot)) {
+            $extractedPath = Assert-HuduApiChildPath -Path $extractedPath -Parent $extractRoot
+        }
+        $StagingRepoRoot = Assert-HuduApiChildPath -Path $StagingRepoRoot -Parent $stagingParent
+        Move-Item -LiteralPath $extractedPath -Destination $StagingRepoRoot -Force -ErrorAction Stop
+    }
+
+    function Install-HuduApiForkFromGit {
+        param(
+            [Parameter(Mandatory)][string]$RepositoryUrl,
+            [Parameter(Mandatory)][string]$Branch,
+            [Parameter(Mandatory)][string]$StagingRepoRoot
+        )
+
+        $git = Get-Command git -ErrorAction SilentlyContinue
+        if (-not $git) {
+            throw "git was not found on this machine."
+        }
+
+        $oldGitPrompt = $env:GIT_TERMINAL_PROMPT
+        $oldGitSshCommand = $env:GIT_SSH_COMMAND
+        try {
+            $env:GIT_TERMINAL_PROMPT = "0"
+            $env:GIT_SSH_COMMAND = "ssh -o BatchMode=yes"
+            & $git.Source clone --depth 1 --branch $Branch $RepositoryUrl $StagingRepoRoot 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "git clone exited with code $LASTEXITCODE."
+            }
+        } finally {
+            $env:GIT_TERMINAL_PROMPT = $oldGitPrompt
+            $env:GIT_SSH_COMMAND = $oldGitSshCommand
+        }
+    }
+
+    function Install-HuduApiForkFromArchive {
+        param(
+            [Parameter(Mandatory)][string]$RepositoryUrl,
+            [Parameter(Mandatory)][string]$Branch,
+            [Parameter(Mandatory)][string]$StagingRepoRoot,
+            [string]$ZipUrl
+        )
+
+        if ([string]::IsNullOrWhiteSpace($ZipUrl)) {
+            $repoParts = Get-GitHubRepositoryParts -RepositoryUrl $RepositoryUrl
+            if (-not $repoParts) {
+                throw 'Archive download requires a GitHub repository URL or an explicit HuduApiZipUrl.'
+            }
+            $ZipUrl = "https://codeload.github.com/$($repoParts.Owner)/$($repoParts.Repo)/zip/refs/heads/$Branch"
+        }
+
+        $stagingParent = Split-Path -Path $StagingRepoRoot -Parent
+        $zip = Join-Path $stagingParent "HuduAPI.zip"
+        $headers = @{ "User-Agent" = "Hudu-Asset-Layout-Transfer" }
+
+        Invoke-WebRequest -Uri $ZipUrl -Headers $headers -OutFile $zip -ErrorAction Stop | Out-Null
+        Expand-HuduApiZipToStaging -ZipPath $zip -StagingRepoRoot $StagingRepoRoot
+    }
+
+    function Install-HuduApiFork {
+        param(
+            [Parameter(Mandatory)][string]$ModulePath,
+            [Parameter(Mandatory)][string]$RepositoryUrl,
+            [Parameter(Mandatory)][string]$Branch,
+            [string]$ZipUrl
+        )
+
+        $ModulePath = [IO.Path]::GetFullPath($ModulePath)
+        $targetRepoRoot = Split-Path -Path (Split-Path -Path $ModulePath -Parent) -Parent
+        $targetParent = Split-Path -Path $targetRepoRoot -Parent
+        if (-not $targetParent -or (Split-Path -Path $ModulePath -Leaf) -ine 'HuduAPI.psm1' -or
+            (Split-Path -Path (Split-Path -Path $ModulePath -Parent) -Leaf) -ine 'HuduAPI') {
+            throw 'The module path must point to HuduAPI\HuduAPI.psm1 inside a repository directory.'
+        }
+        foreach ($protectedPath in @($env:USERPROFILE, $env:SystemRoot, $env:ProgramFiles, ([Environment]::GetFolderPath('MyDocuments')), ([IO.Path]::GetTempPath()))) {
+            if ($protectedPath -and $targetRepoRoot.TrimEnd('\','/') -eq [IO.Path]::GetFullPath($protectedPath).TrimEnd('\','/')) {
+                throw "The HuduAPI repository cannot replace $targetRepoRoot."
+            }
+        }
+        $targetRepoRoot = Assert-HuduApiChildPath -Path $targetRepoRoot -Parent $targetParent
+        $stagingRepoRoot = $null
+        $successfulMethod = $null
+
+        $installMethods = @(
+            @{
+                Name = "Repository archive"
+                Script = {
+                    param($repoUrl, $branchName, $stagingRoot, $directZipUrl)
+                    Install-HuduApiForkFromArchive -RepositoryUrl $repoUrl -Branch $branchName -StagingRepoRoot $stagingRoot -ZipUrl $directZipUrl
+                }
+            },
+            @{
+                Name = "Git clone"
+                Script = {
+                    param($repoUrl, $branchName, $stagingRoot, $directZipUrl)
+                    Install-HuduApiForkFromGit -RepositoryUrl $repoUrl -Branch $branchName -StagingRepoRoot $stagingRoot
+                }
+            }
+        )
+
+        foreach ($method in $installMethods) {
+            $stagingRepoRoot = New-HuduApiStagingRoot
+            try {
+                Write-Host "Trying HuduAPI fork install via $($method.Name) from $RepositoryUrl ($Branch)." -ForegroundColor Cyan
+                & $method.Script $RepositoryUrl $Branch $stagingRepoRoot $ZipUrl
+
+                $stagedModulePath = Join-Path $stagingRepoRoot "HuduAPI\HuduAPI.psm1"
+                if (-not (Test-HuduApiModuleLayout -ModulePath $stagedModulePath)) {
+                    throw "Downloaded fork did not include a complete HuduAPI module layout."
+                }
+
+                $successfulMethod = $method.Name
+                break
+            } catch {
+                Write-Warning "$($method.Name) HuduAPI fork install failed: $($_.Exception.Message)"
+                Remove-HuduApiStaging -StagingRepoRoot $stagingRepoRoot
+                $stagingRepoRoot = $null
+            }
+        }
+
+        if (-not $successfulMethod) {
+            throw "Unable to install HuduAPI fork from $RepositoryUrl ($Branch)."
+        }
+
+        New-Item -ItemType Directory -Path $targetParent -Force -ErrorAction Stop | Out-Null
+        $backupPath = $null
+        if (Test-Path -LiteralPath $targetRepoRoot) {
+            $backupPath = if (Test-HuduApiModuleLayout -ModulePath $ModulePath) {
+                "$targetRepoRoot.previous"
+            } else {
+                "$targetRepoRoot.backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
+            }
+            $backupPath = Assert-HuduApiChildPath -Path $backupPath -Parent $targetParent
+
+            if (Test-Path -LiteralPath $backupPath) {
+                Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop
+            }
+
+            Move-Item -LiteralPath $targetRepoRoot -Destination $backupPath -Force -ErrorAction Stop
+            Write-Host "Existing HuduAPI path was moved to $backupPath before refresh." -ForegroundColor DarkGray
+        }
+
+        $stagingGitPath = Assert-HuduApiChildPath -Path (Join-Path $stagingRepoRoot '.git') -Parent $stagingRepoRoot
+        if (Test-Path -LiteralPath $stagingGitPath) {
+            Remove-Item -LiteralPath $stagingGitPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Unblock-HuduApiPath -Path $stagingRepoRoot
+
+        try {
+            New-Item -ItemType Directory -Path $targetRepoRoot -Force -ErrorAction Stop | Out-Null
+            Get-ChildItem -LiteralPath $stagingRepoRoot -Force -ErrorAction Stop |
+                Copy-Item -Destination $targetRepoRoot -Recurse -Force -ErrorAction Stop
+        } catch {
+            if (Test-Path -LiteralPath $targetRepoRoot) { Remove-Item -LiteralPath $targetRepoRoot -Recurse -Force -ErrorAction Stop }
+            if ($backupPath) { Move-Item -LiteralPath $backupPath -Destination $targetRepoRoot -Force -ErrorAction Stop }
+            throw
+        } finally {
+            Remove-HuduApiStaging -StagingRepoRoot $stagingRepoRoot
+        }
+        Write-Host "Installed HuduAPI fork via $successfulMethod to $targetRepoRoot." -ForegroundColor Green
+    }
+
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction Stop
+        Write-Host "Process execution policy set to Bypass for this PowerShell session." -ForegroundColor DarkGray
+    } catch {
+        Write-Warning "Could not set process execution policy to Bypass: $($_.Exception.Message)"
+    }
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {
+        Write-Warning "Could not force TLS 1.2 for this PowerShell session: $($_.Exception.Message)"
+    }
+    $ProgressPreference = 'SilentlyContinue'
+
+    if ($true -eq $use_hudu_fork) {
+        $hasCompleteLocalFork = Test-HuduApiModuleLayout -ModulePath $HAPImodulePath
+        if ($RefreshHuduApiForkEachRun -or -not $hasCompleteLocalFork) {
+            $refreshReason = if ($RefreshHuduApiForkEachRun) {
+                "Refreshing local HuduAPI fork from the latest $HuduApiBranch branch."
+            } else {
+                "No complete local HuduAPI fork found. Downloading the latest $HuduApiBranch branch."
+            }
+
+            Write-Host $refreshReason -ForegroundColor Cyan
+            Install-HuduApiFork -ModulePath $HAPImodulePath -RepositoryUrl $HuduApiRepositoryUrl -Branch $HuduApiBranch -ZipUrl $HuduApiZipUrl
+        } else {
+            Write-Host "Using existing HuduAPI fork at $HAPImodulePath." -ForegroundColor DarkGray
+        }
     } else {
-        Install-Module HuduAPI -MinimumVersion 3.1.1 -Scope CurrentUser -Force
-        Import-Module HuduAPI
+        Write-Host 'HuduAPI fork refresh is disabled; a complete existing fork is required.'
     }
-}
 
-function Set-HuduInstance {
-    param ([string]$HuduBaseURL, [string]$HuduAPIKey)
-    $HuduBaseURL = $HuduBaseURL ?? $((Read-Host -Prompt 'Set the base domain of your Hudu instance (e.g https://myinstance.huducloud.com)') -replace '[\\/]+$', '') -replace '^(?!https://)', 'https://'
-    $HuduAPIKey = $HuduAPIKey ?? "$(read-host "Please Enter Hudu API Key")"
-    while ($HuduAPIKey.Length -ne 24) {
-        $HuduAPIKey = (Read-Host -Prompt "Get a Hudu API Key from $($settings.HuduBaseDomain)/admin/api_keys").Trim()
+    Remove-Module HuduAPI -Force -ErrorAction SilentlyContinue
+    if (Test-HuduApiModuleLayout -ModulePath $HAPImodulePath) {
+        $huduApiManifestPath = [System.IO.Path]::ChangeExtension($HAPImodulePath, ".psd1")
+        $huduApiImportPath = if (Test-Path -LiteralPath $huduApiManifestPath -PathType Leaf) { $huduApiManifestPath } else { $HAPImodulePath }
+        Import-Module $huduApiImportPath -Global -Force -ErrorAction Stop
+        Write-Host "Module imported from $huduApiImportPath"
+    } else {
+        throw "No complete HuduAPI fork was available at $HAPImodulePath."
     }
-    New-HuduAPIKey $HuduAPIKey
-    New-HuduBaseURL $HuduBaseURL
+
+    #Login to Hudu
+    New-HuduAPIKey $HuduAPIKey | Out-Null
+    New-HuduBaseURL $HuduBaseURL | Out-Null
+
+    # Check we have the correct version
+    $appInfo = Get-HuduAppInfo
+    $CurrentVersion = $null
+    if (-not [version]::TryParse([string]$appInfo.version, [ref]$CurrentVersion) -or $CurrentVersion -le [version]'0.0.0.0') {
+        throw 'Could not confirm the Hudu server version. Check the base URL, API key, and API access.'
+    }
+
+    return $CurrentVersion
 }
 
 function Move-HuduAssetToNewLayout {
@@ -359,10 +651,15 @@ function Get-GuiFieldMappings {
     )
 
     $mapping = @()
+    $SourceFieldOptions = @($SourceFieldOptions | Where-Object { ($_.field_type ?? $_.type) -ne 'InstructionBlock' })
 
     foreach ($field in $DestFields) {
         if (($field.field_type ?? $field.type) -eq 'AssetTag') {
             Write-Verbose "Skipping asset tag field '$($field.label)' because it will be relinked as a relation."
+            continue
+        }
+        if (($field.field_type ?? $field.type) -eq 'InstructionBlock') {
+            Write-Verbose "Skipping instruction block '$($field.label)' because it contains static layout content."
             continue
         }
 
@@ -476,11 +773,48 @@ function Get-MergeOptionSummaryLabel {
     }
 }
 
+function Get-LayoutFieldTypeDisplay {
+    param($Field, [string]$FallbackType = 'Text')
+
+    $fieldType = $FallbackType
+    try {
+        $fieldType = [string]((Get-HuduNumberProperty $Field 'field_type') ?? (Get-HuduNumberProperty $Field 'type') ?? (Get-HuduNumberProperty $Field 'FieldType') ?? $FallbackType)
+        if ($fieldType -ne 'Number') { return $fieldType }
+
+        $numberType = [string](Get-HuduNumberProperty $Field 'number_type')
+        $currencyCode = ([string](Get-HuduNumberProperty $Field 'currency_code')).ToUpperInvariant()
+        if (-not $numberType) { $numberType = if ($currencyCode) { 'currency' } else { 'number' } }
+        $subtype = switch ($numberType) {
+            'number' { 'Plain' }
+            'currency' { if ($currencyCode) { "Currency $currencyCode" } else { 'Currency' } }
+            { $_ -in @('percentage','percent') } { 'Percentage' }
+            default { "Unknown ($numberType)" }
+        }
+        $details = @("Number: $subtype")
+        foreach ($boundName in @('min','max')) {
+            $bound = Get-HuduNumberProperty $Field $boundName
+            if ($null -eq $bound -or [string]::IsNullOrWhiteSpace([string]$bound)) { continue }
+            $boundText = if ($bound -is [IFormattable]) { $bound.ToString($null, [cultureinfo]::InvariantCulture) } else { [string]$bound }
+            $details += "$boundName $boundText"
+        }
+        return $details -join '; '
+    } catch {
+        return "$fieldType (details unavailable)"
+    }
+}
+
 function Convert-MappingEntryToSummaryLine {
     param(
         [Parameter(Mandatory)]
-        [psobject]$Entry
+        [psobject]$Entry,
+        $DestField = $null,
+        $SourceField = $null
     )
+
+    $destTypeDisplay = Get-LayoutFieldTypeDisplay -Field $DestField -FallbackType ([string]$Entry.dest_type)
+    $sourceDisplay = [string]$Entry.from
+    $sourceTypeDisplay = Get-LayoutFieldTypeDisplay -Field $SourceField -FallbackType ''
+    if ($sourceTypeDisplay -like 'Number:*') { $sourceDisplay += " [$sourceTypeDisplay]" }
 
     switch ([string]$Entry.dest_type) {
         'AddressData' {
@@ -500,12 +834,12 @@ function Convert-MappingEntryToSummaryLine {
 
         'ListSelect' {
             $ruleCount = @($Entry.Mapping.Keys).Count
-            return '{0} [ListSelect] <= {1}; add missing list items: {2}; value rules: {3}' -f $Entry.to, $Entry.from, (Convert-BoolToYesNo $Entry.add_listitems), $ruleCount
+            return '{0} [ListSelect] <= {1}; add missing list items: {2}; value rules: {3}' -f $Entry.to, $sourceDisplay, (Convert-BoolToYesNo $Entry.add_listitems), $ruleCount
         }
 
         default {
             $details = @()
-            $details += '{0} [{1}] <= {2}' -f $Entry.to, $Entry.dest_type, $Entry.from
+            $details += '{0} [{1}] <= {2}' -f $Entry.to, $destTypeDisplay, $sourceDisplay
             if ($null -ne $Entry.striphtml -and [bool]$Entry.striphtml) {
                 $details += 'strip HTML'
             }
@@ -516,6 +850,266 @@ function Convert-MappingEntryToSummaryLine {
             return ($details -join '; ')
         }
     }
+}
+
+# Numeric conversion adapted from the ITGlue-Hudu-Migration helper:
+# https://github.com/Hudu-Technologies-Inc/ITGlue-Hudu-Migration/blob/main/Public/ConvertTo-HuduNumber.ps1
+# Keep these helpers embedded so the standalone script and EXE share the same policy.
+function Get-HuduNumberProperty {
+    param([AllowNull()]$Object, [string]$Name)
+    if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) { return $Object[$Name] }
+    $properties = $Object.PSObject.Properties
+    if ($null -eq $properties) { throw "Cannot read numeric metadata property '$Name'." }
+    $property = $properties[$Name]
+    # Calling the getter explicitly lets read errors reach the validator;
+    # PowerShell's ordinary property access can turn a failed getter into null.
+    if ($null -ne $property) { return $property.get_Value() }
+    return $null
+}
+
+function ConvertTo-HuduDecimalText {
+    param([AllowNull()]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [string]) { $text = $Value.Trim() }
+    elseif ($Value.GetType().Name -in @('Byte','SByte','Int16','UInt16','Int32','UInt32','Int64','UInt64','BigInteger','Decimal')) {
+        $text = $Value.ToString([cultureinfo]::InvariantCulture)
+    } elseif ($Value -is [double] -or $Value -is [single]) {
+        $text = $Value.ToString('R', [cultureinfo]::InvariantCulture)
+    } else { return $null }
+    $match = [regex]::Match($text, '^(?<sign>[+-]?)(?:(?<whole>[0-9]+)(?:\.(?<fraction>[0-9]*))?|\.(?<fraction>[0-9]+))(?:[eE](?<exponent>[+-]?[0-9]+))?$')
+    if (-not $match.Success) { return $null }
+    $whole = $match.Groups['whole'].Value
+    $fraction = $match.Groups['fraction'].Value
+    $digits = $whole + $fraction
+    if (-not $digits.Trim('0')) { return '0' }
+    $exponent = 0
+    if ($match.Groups['exponent'].Success -and -not [int]::TryParse($match.Groups['exponent'].Value, [ref]$exponent)) { return $null }
+    $point = [long]$whole.Length + $exponent
+    # Bound exponent expansion so malformed input cannot allocate enormous strings.
+    $expandedLength = if ($point -le 0) { 2 - $point + $digits.Length } else { [math]::Max($point, $digits.Length) + 1 }
+    if ($expandedLength -gt 10000) { return $null }
+    if ($point -le 0) {
+        $whole = '0'; $fraction = ('0' * [int](-$point)) + $digits
+    } elseif ($point -ge $digits.Length) {
+        $whole = $digits + ('0' * [int]($point - $digits.Length)); $fraction = ''
+    } else {
+        $whole = $digits.Substring(0, [int]$point); $fraction = $digits.Substring([int]$point)
+    }
+    $whole = $whole.TrimStart('0')
+    if (-not $whole) { $whole = '0' }
+    $fraction = $fraction.TrimEnd('0')
+    $negative = $match.Groups['sign'].Value -eq '-' -and ($whole -ne '0' -or $fraction)
+    $sign = if ($negative) { '-' } else { '' }
+    $suffix = if ($fraction) { ".$fraction" } else { '' }
+    return "$sign$whole$suffix"
+}
+
+function ConvertTo-HuduFormattedNumberText {
+    param([AllowNull()]$Value, [string]$NumberType, [string]$CurrencyCode)
+    if ($Value -isnot [string]) { return ConvertTo-HuduDecimalText $Value }
+    $text = $Value.Trim()
+    $accountingNegative = $text.StartsWith('(') -and $text.EndsWith(')')
+    if ($accountingNegative) { $text = $text.Substring(1, $text.Length - 2).Trim() }
+    $sign = ''
+    if ($text -match '^[+-]') { $sign = $text.Substring(0, 1); $text = $text.Substring(1).TrimStart() }
+    if ($NumberType -eq 'currency') {
+        $markers = @()
+        if ($text -match '^(?<marker>[a-zA-Z]{3}|[$€£¥₹₩₽])\s*') {
+            $markers += $Matches.marker; $text = $text.Substring($Matches[0].Length)
+        }
+        if ($text -match '\s*(?<marker>[a-zA-Z]{3}|[$€£¥₹₩₽])$') {
+            $markers += $Matches.marker; $text = $text.Substring(0, $text.Length - $Matches[0].Length)
+        }
+        $symbolCurrencies = @{
+            '$' = @('USD', 'AUD', 'CAD', 'NZD', 'HKD', 'SGD', 'MXN')
+            '€' = @('EUR'); '£' = @('GBP'); '¥' = @('JPY', 'CNY')
+            '₹' = @('INR'); '₩' = @('KRW'); '₽' = @('RUB')
+        }
+        foreach ($marker in $markers) {
+            if ($marker -ine $CurrencyCode -and $CurrencyCode -notin $symbolCurrencies[$marker]) { return $null }
+        }
+        # Both -$12 and $-12 occur in exports; two signs remain invalid.
+        if ($text -match '^[+-]') {
+            if ($sign) { return $null }
+            $sign = $text.Substring(0, 1); $text = $text.Substring(1).TrimStart()
+        }
+    } elseif ($NumberType -eq 'percentage' -and $text.EndsWith('%')) {
+        $text = $text.Substring(0, $text.Length - 1).TrimEnd()
+    }
+    if ($accountingNegative) {
+        if ($sign) { return $null }
+        $sign = '-'
+    }
+    $exponent = ''
+    if ($text -match '^(?<mantissa>.*?)(?<exponent>[eE][+-]?[0-9]+)$') {
+        $exponent = $Matches.exponent; $text = $Matches.mantissa
+    }
+    if ($text -match '^[0-9]{1,3}(?<separator>[ \u00a0\u202f''\u2019])[0-9]{3}(?:\k<separator>[0-9]{3})*(?:[.,][0-9]+)?$') {
+        $text = ($text -replace '[ \u00a0\u202f''\u2019]', '') -replace ',', '.'
+    } elseif ($text.Contains(',') -and $text.Contains('.')) {
+        if ($text -match '^[0-9]{1,3}(?:,[0-9]{3})+\.[0-9]+$') { $text = $text.Replace(',', '') }
+        elseif ($text -match '^[0-9]{1,3}(?:\.[0-9]{3})+,[0-9]+$') { $text = $text.Replace('.', '').Replace(',', '.') }
+        else { return $null }
+    } elseif ($text.Contains(',')) {
+        if ($text -match '^[0-9]{1,3}(?:,[0-9]{3}){2,}$') { $text = $text.Replace(',', '') }
+        elseif ($text -match '^[0-9]*,(?<fraction>[0-9]+)$' -and $Matches.fraction.Length -ne 3) { $text = $text.Replace(',', '.') }
+        else { return $null } # 1,234 can mean either 1234 or 1.234.
+    } elseif ($text -match '^[0-9]{1,3}(?:\.[0-9]{3}){2,}$') {
+        $text = $text.Replace('.', '')
+    }
+    return ConvertTo-HuduDecimalText "$sign$text$exponent"
+}
+
+function Round-HuduNumberText {
+    param([string]$Text, [ValidateRange(0, 99)][int]$DecimalPlaces)
+    $negative = $Text.StartsWith('-')
+    $parts = $Text.TrimStart('-').Split('.')
+    if ($parts.Length -eq 1 -or $parts[1].Length -le $DecimalPlaces) { return $Text }
+    $digits = $parts[0] + $parts[1].Substring(0, $DecimalPlaces)
+    if ($parts[1][$DecimalPlaces] -ge [char]'5') {
+        $digits = ([System.Numerics.BigInteger]::Parse($digits, [cultureinfo]::InvariantCulture) + [System.Numerics.BigInteger]::One).ToString([cultureinfo]::InvariantCulture)
+    }
+    if ($DecimalPlaces -gt 0) {
+        $digits = $digits.PadLeft($DecimalPlaces + 1, '0')
+        $digits = $digits.Insert($digits.Length - $DecimalPlaces, '.')
+    }
+    if ($negative) { $digits = "-$digits" }
+    return ConvertTo-HuduDecimalText $digits
+}
+
+function Compare-HuduNumberText {
+    param([string]$Left, [string]$Right)
+    $leftNegative = $Left.StartsWith('-'); $rightNegative = $Right.StartsWith('-')
+    if ($leftNegative -ne $rightNegative) { if ($leftNegative) { return -1 } else { return 1 } }
+    $leftParts = $Left.TrimStart('-').Split('.'); $rightParts = $Right.TrimStart('-').Split('.')
+    $comparison = $leftParts[0].Length.CompareTo($rightParts[0].Length)
+    if ($comparison -eq 0) { $comparison = [string]::CompareOrdinal($leftParts[0], $rightParts[0]) }
+    if ($comparison -eq 0) {
+        $leftFraction = if ($leftParts.Length -gt 1) { $leftParts[1] } else { '' }
+        $rightFraction = if ($rightParts.Length -gt 1) { $rightParts[1] } else { '' }
+        $width = [math]::Max($leftFraction.Length, $rightFraction.Length)
+        $comparison = [string]::CompareOrdinal($leftFraction.PadRight($width, '0'), $rightFraction.PadRight($width, '0'))
+    }
+    if ($leftNegative) { return -$comparison }
+    return $comparison
+}
+
+function Get-HuduCurrencyDecimalPlaces {
+    param([string]$CurrencyCode)
+    # The three ITGlue datacenter defaults use two fractional places. Other
+    # currencies retain plain numeric storage unless their precision is known.
+    if ($CurrencyCode -in @('USD', 'EUR', 'AUD')) { return 2 }
+    return $null
+}
+
+function ConvertTo-HuduNumber {
+    param(
+        [AllowNull()]$Value,
+        [AllowNull()]$FieldDefinition,
+        [version]$CurrentVersion = '2.48.0',
+        [AllowNull()]$CurrencyDecimalPlaces
+    )
+    $result = [pscustomobject]@{ IsValid = $false; IsEmpty = $false; Value = $null; Reason = $null; Warning = $null }
+    if ($null -eq $Value -or ($Value -is [string] -and [string]::IsNullOrWhiteSpace($Value))) {
+        $result.IsValid = $true; $result.IsEmpty = $true; return $result
+    }
+    if ($Value -is [double] -or $Value -is [single]) {
+        $result.Warning = 'Source was already a floating-point value; any precision lost while reading the source cannot be recovered.'
+    }
+    # Missing/unreadable settings must not silently bypass currency, percentage or bounds checks.
+    if ($null -eq $FieldDefinition) {
+        $result.Reason = 'Destination numeric field definition is missing.'; return $result
+    }
+    if ($FieldDefinition -isnot [System.Collections.IDictionary] -and $FieldDefinition -isnot [pscustomobject]) {
+        $result.Reason = 'Destination numeric field definition must be a property map.'; return $result
+    }
+    try {
+        $numberType = [string](Get-HuduNumberProperty $FieldDefinition 'number_type')
+        $code = ([string](Get-HuduNumberProperty $FieldDefinition 'currency_code')).ToUpperInvariant()
+        $bounds = @{
+            min = Get-HuduNumberProperty $FieldDefinition 'min'
+            max = Get-HuduNumberProperty $FieldDefinition 'max'
+        }
+    } catch {
+        $result.Reason = "Cannot read destination numeric field settings: $($_.Exception.Message)"; return $result
+    }
+    if (-not $numberType) { $numberType = if ($code) { 'currency' } else { 'number' } }
+    if ($numberType -eq 'percent') { $numberType = 'percentage' }
+    if ($numberType -notin @('number', 'currency', 'percentage')) {
+        $result.Reason = "Unknown destination number_type '$numberType'."; return $result
+    }
+    $text = ConvertTo-HuduFormattedNumberText -Value $Value -NumberType $numberType -CurrencyCode $code
+    if ($null -eq $text) {
+        $result.Reason = 'Cannot unambiguously convert this value for the destination numeric field. Check separators, currency/percentage markers, and finite numeric syntax.'
+        return $result
+    }
+    if ($numberType -eq 'currency' -and $CurrentVersion -ge [version]'2.48.0') {
+        if ($null -eq $CurrencyDecimalPlaces) { $CurrencyDecimalPlaces = Get-HuduCurrencyDecimalPlaces $code }
+        if (-not $code -or $null -eq $CurrencyDecimalPlaces -or [string]$CurrencyDecimalPlaces -notmatch '^(0|[1-9][0-9]?)$') {
+            $result.Reason = "Currency '$code' needs a known decimal-place policy; automatic precision is available for USD, EUR and AUD (2)."; return $result
+        }
+        $rounded = Round-HuduNumberText $text -DecimalPlaces ([int]$CurrencyDecimalPlaces)
+        if ($rounded -cne $text) {
+            $roundingWarning = "Rounded $code amount from $text to $rounded ($CurrencyDecimalPlaces decimal places; midpoints away from zero)."
+            $result.Warning = (@($result.Warning, $roundingWarning) | Where-Object { $_ }) -join ' '
+            $text = $rounded
+        }
+    }
+    if ($CurrentVersion -lt [version]'2.48.0') {
+        # Keep the historical integer envelope, without rounding or overflowing.
+        if ($text.Contains('.') -or (Compare-HuduNumberText $text '-2147483648') -lt 0 -or (Compare-HuduNumberText $text '2147483647') -gt 0) {
+            $result.Reason = 'Before Hudu 2.48.0 this migration only sends integers in its historical Int32 range; value requires review.'; return $result
+        }
+    } else {
+        if ((Compare-HuduNumberText $text '-9223372036854775807') -lt 0 -or (Compare-HuduNumberText $text '9223372036854775807') -gt 0) {
+            $result.Reason = 'Outside the range reported by Hudu 2.48.0: -9223372036854775807 through 9223372036854775807.'; return $result
+        }
+    }
+    if ($numberType -eq 'percentage' -and (Compare-HuduNumberText $text '100') -gt 0) {
+        $result.Reason = 'Percentage exceeds maximum 100. Values are not rescaled.'; return $result
+    }
+    foreach ($boundName in @('min', 'max')) {
+        $bound = $bounds[$boundName]
+        if ($null -eq $bound -or [string]::IsNullOrWhiteSpace([string]$bound)) { continue }
+        $boundText = ConvertTo-HuduDecimalText $bound
+        if ($null -eq $boundText) { $result.Reason = "Cannot validate destination $boundName setting."; return $result }
+        $comparison = Compare-HuduNumberText $text $boundText
+        if (($boundName -eq 'min' -and $comparison -lt 0) -or ($boundName -eq 'max' -and $comparison -gt 0)) {
+            $result.Reason = "Outside destination $boundName setting $boundText."; return $result
+        }
+    }
+    $result.IsValid = $true; $result.Value = $text
+    return $result
+}
+
+
+function ConvertTo-ValidatedTransferNumber {
+    param($Value, $FieldDefinition, [string]$FieldLabel, [version]$CurrentVersion)
+
+    $result = ConvertTo-HuduNumber -Value $Value -FieldDefinition $FieldDefinition -CurrentVersion $CurrentVersion
+    if ($result.Warning) { Write-Warning "Number field '$FieldLabel': $($result.Warning)" }
+    if (-not $result.IsValid) { Write-Warning "Omitting Number field '$FieldLabel': $($result.Reason)" }
+    return $result
+}
+
+function Remove-InvalidTransferNumberValues {
+    param([hashtable]$Map, [hashtable]$NumberFields, [version]$CurrentVersion)
+
+    foreach ($label in $NumberFields.Keys) {
+        if (-not $Map.ContainsKey($label)) { continue }
+        $result = ConvertTo-ValidatedTransferNumber -Value $Map[$label] -FieldDefinition $NumberFields[$label] -FieldLabel $label -CurrentVersion $CurrentVersion
+        if ($result.IsValid -and -not $result.IsEmpty) {
+            $Map[$label] = $result.Value
+        } else {
+            $Map.Remove($label)
+        }
+    }
+}
+
+function Test-LayoutHasNumberFields {
+    param($Layout)
+    return @($Layout.fields | Where-Object { ($_.field_type ?? $_.type) -eq 'Number' }).Count -gt 0
 }
 
 function New-NonInteractiveLayoutTransfer {
@@ -555,7 +1149,8 @@ param(
     [bool]$ExcludeHTMLinSmoosh,
     [bool]$DescribeRelatedInSmoosh,
     [bool]$IncludeRelationsForArchived,
-    [bool]$OnlyModifyExistingAssets = $false
+    [bool]$OnlyModifyExistingAssets = $false,
+    [version]$CurrentVersion = $null
 )
 
 
@@ -579,6 +1174,49 @@ $SkipOnMatch = $SkipOnMatch ?? $($mergemode -eq 'Skip')
 $MergeMode = $MergeMode ?? "Merge-Concat"
 $OnlyModifyExistingAssets = [bool]$OnlyModifyExistingAssets
 
+# Instruction blocks belong to the layout and cannot store asset values.
+# Apply this to supplied plans as well as mappings built by the GUI.
+$sourceInstructionBlockLabels = @(
+    $sourceassetlayout.fields | Where-Object { ($_.field_type ?? $_.type) -eq 'InstructionBlock' } | ForEach-Object { $_.label }
+)
+$destInstructionBlockLabels = @(
+    $destassetlayout.fields | Where-Object { ($_.field_type ?? $_.type) -eq 'InstructionBlock' } | ForEach-Object { $_.label }
+)
+if ($mapping | Where-Object { $_.from -eq 'SMOOSH' -and ($_.to -in $destInstructionBlockLabels -or $_.dest_type -eq 'InstructionBlock') }) {
+    $SMOOSHLABELS = @()
+}
+$mapping = @($mapping | Where-Object {
+    $_.from -notin $sourceInstructionBlockLabels -and
+    $_.to -notin $destInstructionBlockLabels -and
+    $_.dest_type -ne 'InstructionBlock'
+})
+$CONSTANTS = @($CONSTANTS | Where-Object { $_.to_label -notin $destInstructionBlockLabels })
+$SMOOSHLABELS = @($SMOOSHLABELS | Where-Object { $_ -notin $sourceInstructionBlockLabels })
+
+# The saved destination layout is authoritative, including Number subtypes and bounds.
+$destinationFieldsByLabel = @{}
+$numberFieldsByLabel = @{}
+foreach ($destinationField in $destassetlayout.fields) {
+    if (-not $destinationField.label) { continue }
+    $destinationFieldsByLabel[$destinationField.label] = $destinationField
+    if (($destinationField.field_type ?? $destinationField.type) -eq 'Number') {
+        $numberFieldsByLabel[$destinationField.label] = $destinationField
+    }
+}
+foreach ($entry in $mapping) {
+    if ($entry.dest_type -eq 'Number' -and -not $destinationFieldsByLabel.ContainsKey($entry.to)) {
+        # Missing metadata must cause omission rather than bypassing subtype validation.
+        $numberFieldsByLabel[$entry.to] = $null
+    }
+}
+if ($numberFieldsByLabel.Count -gt 0 -and $null -eq $CurrentVersion) {
+    try { $CurrentVersion = [version](Get-HuduAppInfo).version } catch { $CurrentVersion = $null }
+    if ($null -eq $CurrentVersion -or $CurrentVersion -le [version]'0.0.0.0') {
+        $CurrentVersion = [version]'0.0'
+        Write-Warning 'Could not determine the Hudu version. Numeric values will use the conservative legacy integer policy.'
+    }
+}
+
 # fresh vars for this run
 $allassets = $null; $allLayouts = $null; $allrelations = $null; $allPasswords = $null; $allUploads = $null; $allPhotos = $null; $allPublicPhotos = $null;
 $totalcounts = @{fromablescreated=0; toablescreated=0; assetsarchived=0; assetsmoved=0;
@@ -594,17 +1232,6 @@ $sourcedestlabels       = @{};        $sourcedestrequired      = @{};
 $sourcedestStripHTML    = @{};     $sourceDestDataType         = @{};
 $addressMapsByDest      = @{};    $ListSelectEquivilencyMaps   = @{};
 $assetComparableListItemsByListId = @{}
-
-function Get-CastIfNumeric {
-    param([AllowNull()][object]$Value, $FieldDefinition, [version]$CurrentVersion)
-    if (-not (Get-Command ConvertTo-HuduNumber -ErrorAction SilentlyContinue)) {
-        . (Join-Path $script:Root 'Public/ConvertTo-HuduNumber.ps1')
-    }
-    $numeric = ConvertTo-HuduNumber -Value $Value -FieldDefinition $FieldDefinition -CurrentVersion $CurrentVersion
-    if (-not $numeric.IsValid) { Write-Warning "Skipping numeric value: $($numeric.Reason)"; return $null }
-    if ($numeric.Warning) { Write-Warning $numeric.Warning }
-    return $numeric.Value
-}
 
 function Limit-FilenameLength {
     param (
@@ -1302,7 +1929,7 @@ function Get-NormalizedDropdownOptions {
 }
 function Get-FieldValueByLabel {
     param([array]$Fields, [string]$Label)
-    if (-not $Label) { return $null }
+    if (-not $Label -or $Label -in $sourceInstructionBlockLabels) { return $null }
     ($Fields | Where-Object { $_.label -eq $Label } | Select-Object -First 1).value
 }
 function Normalize-Region {
@@ -1785,7 +2412,7 @@ function Normalize-WebURL {
 }
 
 function Convert-FieldArrayToMap {
-    param([Parameter(Mandatory)][object[]]$FieldArray)
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$FieldArray)
 
     $map = @{}
     foreach ($ht in $FieldArray) {
@@ -1825,6 +2452,7 @@ function Merge-HuduFieldMaps {
 
     $labels = @($SourceMap.Keys + $DestMap.Keys) | Select-Object -Unique
     foreach ($label in $labels) {
+        if ($typeByLabel[$label] -eq 'InstructionBlock') { continue }
         $listItemId = $null; $humanReadable = $null;
         $src = $SourceMap[$label]
         $dst = $DestMap[$label]
@@ -2049,14 +2677,6 @@ foreach ($entry in $mapping) {
 }
 
 $mappingtosmooshed = [bool]$($SMOOSHLABELS.count -gt 0)
-$numberTargetVersion = $null
-if ($sourceDestDataType.Values -contains 'Number') {
-    $numberAppInfo = Get-HuduAppInfo
-    if (-not [version]::TryParse([string]$numberAppInfo.version, [ref]$numberTargetVersion)) {
-        throw 'Cannot determine Hudu version for numeric destination validation.'
-    }
-    if ($numberTargetVersion -lt [version]'2.21') { throw 'Hudu version lookup failed; numeric transfer has not started.' }
-}
 $sourceAssets = get-huduassets -assetlayoutid $sourceassetlayout.id
 if (-not [string]::IsNullOrWhiteSpace($SourceAssetFilterField) -and ($SourceAssetFilterValueIsBlank -or -not [string]::IsNullOrWhiteSpace($SourceAssetFilterValue))) {
     $unfilteredSourceAssetCount = @($sourceAssets).Count
@@ -2157,12 +2777,14 @@ foreach ($originalasset in $sourceassets) {
         $transformedlabel = $sourcedestlabels[$field.label] ?? $null
         $destTranslationFieldRequired = $(Get-CastIfBoolean $($sourcedestrequired[$field.label] ?? $false)) ?? $false
         $stripHTML = $($sourcedestStripHTML["$($field.label)"] ?? $false)
-        $destFieldType = $sourceDestDataType["$($field.label)"] ?? 'Text'
+        $destinationField = if ($transformedlabel) { $destinationFieldsByLabel[$transformedlabel] } else { $null }
+        $destFieldType = $destinationField.field_type ?? $destinationField.type ?? $sourceDestDataType["$($field.label)"] ?? 'Text'
 
         # checking presence + validity
         if (-not $transformedlabel -or $null -eq $transformedlabel) {write-host "no destination mapping for source field $($field.label)"; continue;}
-        if (-not $field.value -or $null -eq $field.value -or ([string]::IsNullOrWhiteSpace($field.value))) {
+        if ($null -eq $field.value -or ($field.value -is [string] -and [string]::IsNullOrWhiteSpace($field.value))) {
             write-host "no source value for $($field.label)";
+            if ($destFieldType -eq 'Number') { continue }
             # if empty + required, make sure we either have a constant mapped or prompt user for input.
             if ($true -eq $destTranslationFieldRequired) {
                 if ($CONSTANTS | where-object {$_.to_label -eq $transformedlabel}){
@@ -2176,7 +2798,7 @@ foreach ($originalasset in $sourceassets) {
                 continue
             }
         # pre-process listselect source values as human-readable from sources
-        } elseif ($field.value -ilike '*list_id*'){
+        } elseif ($field.value -is [string] -and $field.value -ilike '*list_id*'){
             $precastValue=$field.value;
             $decodedListValue = SafeDecode $field.value
             $listItemIds = @($decodedListValue.list_ids)
@@ -2187,6 +2809,15 @@ foreach ($originalasset in $sourceassets) {
             }
             $field.value = $humanValue
             Write-Host "non-empty source val appears to contain listIDs; Raw val '$($precastValue)' as $destFieldType... $($field.value)" -foregroundColor DarkCyan
+        }
+        if ($destFieldType -eq 'Number') {
+            $numericInput = $field.value
+            if ($stripHTML -and $numericInput -is [string]) { $numericInput = Remove-HtmlTags -InputString $numericInput }
+            $numericResult = ConvertTo-ValidatedTransferNumber -Value $numericInput -FieldDefinition $numberFieldsByLabel[$transformedlabel] -FieldLabel $transformedlabel -CurrentVersion $CurrentVersion
+            if ($numericResult.IsValid -and -not $numericResult.IsEmpty) {
+                $transformedFields += @{ $transformedlabel = $numericResult.Value }
+            }
+            continue
         }
         if (Is-BlankValue $field.value) {
             if ($true -eq $destTranslationFieldRequired) {
@@ -2215,14 +2846,7 @@ foreach ($originalasset in $sourceassets) {
             if ($true -eq $stripHTML) {
                 $field.value="$(Remove-HtmlTags -InputString "$($field.value)")"
             }
-            if ($destFieldType -eq "Number"){
-                $precastValue=$field.value
-                $numericDestination = @($destassetlayout.fields | Where-Object { $_.label -ieq $transformedlabel })
-                if ($numericDestination.Count -ne 1) { throw "Cannot identify numeric destination '$transformedlabel'." }
-                $numericValue = Get-CastIfNumeric -Value $field.value -FieldDefinition $numericDestination[0] -CurrentVersion $numberTargetVersion
-                $field.value = $numericValue
-                Write-Host "Validated decimal text for Number target '$transformedlabel': $($field.value)"
-            } elseif ($destFieldType -eq "CheckBox"){
+            if ($destFieldType -eq "CheckBox"){
                 $precastValue=$field.value; $field.value = $(Get-CastIfBoolean $field.value -allowFuzzy $true) ?? $null
                 Write-Host "non-empty source val on CheckBox/Boolean target; Casting '$($precastValue)' as bool...$($field.value)"
             } elseif ($destFieldType -eq "Date"){
@@ -2270,7 +2894,12 @@ foreach ($originalasset in $sourceassets) {
     if ($CONSTANTS -and $CONSTANTS.Count -gt 0) {
         foreach ($c in $CONSTANTS) {
             if (-not ($transformedFields | Where-Object {$_.Keys | Where-Object { $_ -ieq $c.to_label }})) {
-                $transformedFields += @{ $c.to_label = (Sanitize-TransferValue -Value $c.literal) }
+                # Validate numeric constants before sanitization can unwrap a collection.
+                $constantValue = $c.literal
+                if (-not $numberFieldsByLabel.ContainsKey($c.to_label)) {
+                    $constantValue = Sanitize-TransferValue -Value $constantValue
+                }
+                $transformedFields += @{ $c.to_label = $constantValue }
             } else {
                 write-host "constant mapping for $($c.to_label) is configured but destination field already has a value from source mapping, skipping constant value assignment of $($c.literal)"
             }
@@ -2348,18 +2977,24 @@ foreach ($originalasset in $sourceassets) {
         AssetLayoutId   = $destassetlayout.id
     }
 
+    # Validate every Number value, including constants and programmatic meta mappings.
+    $transformedMap = Convert-FieldArrayToMap -FieldArray $transformedFields
+    Remove-InvalidTransferNumberValues -Map $transformedMap -NumberFields $numberFieldsByLabel -CurrentVersion $CurrentVersion
+
     # Merge on match if user-elected to do so, with source and dest field values combined according to selected merge mode (fill blanks, prefer source, concat)
     if ($null -ne $matchedmap -and $matchedmap.count -gt 0){
         write-host "Merging transformed fields with matched existing asset fields..."
-        $transformedMap = Convert-FieldArrayToMap $transformedFields 
+        Remove-InvalidTransferNumberValues -Map $matchedMap -NumberFields $numberFieldsByLabel -CurrentVersion $CurrentVersion
         $finalMap = Merge-HuduFieldMaps `
             -SourceMap $transformedMap -DestMap $matchedMap -LayoutFields $destassetlayout.fields -Mode $mergeMode `
             -StampProvenance:$true -SourceStamp "From $($sourceassetlayout.name) " -DestStamp   "Existing $($destassetlayout.name) "
-        $newAssetRequest["Fields"] = LabelValueMapToFields -Map $finalMap -LayoutFields $destassetlayout.fields
+        if ($finalMap.Count -gt 0) {
+            $newAssetRequest["Fields"] = @(LabelValueMapToFields -Map $finalMap -LayoutFields $destassetlayout.fields)
+        }
         $newAssetRequest["Id"]     = $match.id
-    } elseif ($transformedFields -and $transformedFields.count -gt 0){
-        $newAssetRequest["Fields"]=$transformedFields
-        write-host $($($transformedFields | convertto-json -depth 5).ToString())
+    } elseif ($transformedMap.Count -gt 0){
+        $newAssetRequest["Fields"] = @(LabelValueMapToFields -Map $transformedMap -LayoutFields $destassetlayout.fields)
+        write-host $($($newAssetRequest.Fields | convertto-json -depth 5).ToString())
     }
 
     # prepare any typical asset properties, falling back to a match if a match is present + configured for merge
@@ -2688,7 +3323,9 @@ function New-TransferReviewSummary {
     $lines += 'Direct Field Mappings'
     if (@($MappingEntries | Where-Object { $_.from -ne 'SMOOSH' }).Count -gt 0) {
         foreach ($entry in ($MappingEntries | Where-Object { $_.from -ne 'SMOOSH' })) {
-            $lines += '- ' + (Convert-MappingEntryToSummaryLine -Entry $entry)
+            $destField = $DestLayout.fields | Where-Object { $_.label -eq $entry.to } | Select-Object -First 1
+            $sourceField = $SourceLayout.fields | Where-Object { $_.label -eq $entry.from } | Select-Object -First 1
+            $lines += '- ' + (Convert-MappingEntryToSummaryLine -Entry $entry -DestField $destField -SourceField $sourceField)
         }
     } else {
         $lines += '- None'
@@ -2698,7 +3335,11 @@ function New-TransferReviewSummary {
     $lines += 'Constant Values'
     if (@($ConstantEntries).Count -gt 0) {
         foreach ($entry in $ConstantEntries) {
-            $lines += ('- {0} <= "{1}"' -f $entry.to_label, (Get-PreviewText -Value $entry.literal))
+            $constantLabel = [string]$entry.to_label
+            $destField = $DestLayout.fields | Where-Object { $_.label -eq $entry.to_label } | Select-Object -First 1
+            $typeDisplay = Get-LayoutFieldTypeDisplay -Field $destField
+            if ($typeDisplay -like 'Number:*') { $constantLabel += " [$typeDisplay]" }
+            $lines += ('- {0} <= "{1}"' -f $constantLabel, (Get-PreviewText -Value $entry.literal))
         }
     } else {
         $lines += '- None'
@@ -2772,6 +3413,10 @@ param (
     $targetLayout = Get-HuduASsetlayouts -name $targetLayoutName | select-object -first 1
     $sourceLayout = $sourcelayout.asset_layout ?? $sourcelayout
     $targetLayout = $targetLayout.asset_layout ?? $targetLayout
+
+    if ((Test-LayoutHasNumberFields $sourceLayout) -or (Test-LayoutHasNumberFields $targetLayout)) {
+        throw 'Number fields require the mapped transfer workflow for subtype validation. Use Only Modify Existing Assets there to preserve asset IDs.'
+    }
 
     $sourceLayoutID= $sourceLayout.id
     $targetLayoutId = $targetLayout.id
@@ -3348,6 +3993,7 @@ function Show-SourceAssetFilterDialog {
     $fieldCombo.Location = New-Object System.Drawing.Point(185,54)
     $fieldCombo.Size = New-Object System.Drawing.Size(540,24)
     $fieldCombo.DropDownStyle = 'DropDownList'
+    $fieldCombo.DropDownWidth = 720
     $form.Controls.Add($fieldCombo)
 
     $valueLabel = New-Object System.Windows.Forms.Label
@@ -3377,9 +4023,9 @@ function Show-SourceAssetFilterDialog {
 
     $fieldLookup = [ordered]@{}
     $fieldInfoByLabel = @{}
-    foreach ($field in ($SourceLayout.Fields | Where-Object { $_.label -and ($_.field_type ?? $_.type) -ne 'AssetTag' } | Sort-Object -Property label)) {
+    foreach ($field in ($SourceLayout.Fields | Where-Object { $_.label -and ($_.field_type ?? $_.type) -notin @('AssetTag','InstructionBlock') } | Sort-Object -Property label)) {
         $fieldType = [string]($field.field_type ?? $field.type ?? 'Text')
-        $label = '{0} [{1}]' -f $field.label, $fieldType
+        $label = '{0} [{1}]' -f $field.label, (Get-LayoutFieldTypeDisplay -Field $field)
         $fieldLookup[$label] = [string]$field.label
         $fieldInfoByLabel[[string]$field.label] = [pscustomobject]@{
             Label = [string]$field.label
@@ -3783,13 +4429,19 @@ function Show-MatchCriteriaDialog {
             continue
         }
 
-        $label = '{0} <= {1}' -f $destLabel, $sourceLabel
+        $sourceFieldInfo = $sourceFieldInfoByLabel[$sourceLabel]
+        $destFieldInfo = $destFieldInfoByLabel[$destLabel]
+        $sourceDisplay = $sourceLabel
+        $destDisplay = $destLabel
+        $sourceTypeDisplay = Get-LayoutFieldTypeDisplay -Field $sourceFieldInfo
+        $destTypeDisplay = Get-LayoutFieldTypeDisplay -Field $destFieldInfo
+        if ($sourceTypeDisplay -like 'Number:*') { $sourceDisplay += " [$sourceTypeDisplay]" }
+        if ($destTypeDisplay -like 'Number:*') { $destDisplay += " [$destTypeDisplay]" }
+        $label = '{0} <= {1}' -f $destDisplay, $sourceDisplay
         if ($matchOptions.Contains($label)) {
             continue
         }
 
-        $sourceFieldInfo = $sourceFieldInfoByLabel[$sourceLabel]
-        $destFieldInfo = $destFieldInfoByLabel[$destLabel]
         $matchOptions[$label] = [pscustomobject]@{
             Label             = $label
             SourceField       = $sourceLabel
@@ -3845,6 +4497,7 @@ function Show-MatchCriteriaDialog {
         $combo.Location = New-Object System.Drawing.Point(175,($y - 4))
         $combo.Size = New-Object System.Drawing.Size(420,24)
         $combo.DropDownStyle = 'DropDownList'
+        $combo.DropDownWidth = 860
         if (-not $row.Required) {
             [void]$combo.Items.Add($noneLabel)
         }
@@ -4014,6 +4667,11 @@ function Show-FieldMappingEditor {
         $cb.Location = New-Object System.Drawing.Point($X,$Y)
         $cb.Size = New-Object System.Drawing.Size($W,24)
         $cb.DropDownStyle = 'DropDownList'
+        $cb.DropDownWidth = [math]::Max($W, 650)
+        $cb.Add_SelectedIndexChanged({
+            param($sender, $eventArgs)
+            $fieldToolTip.SetToolTip($sender, [string]$sender.SelectedItem)
+        })
         foreach ($o in $Options) { [void]$cb.Items.Add($o) }
         if ($Default -and $cb.Items.Contains($Default)) {
             $cb.SelectedItem = $Default
@@ -4053,6 +4711,7 @@ function Show-FieldMappingEditor {
     }
 
     $destType  = [string]($DestField.field_type ?? $DestField.type)
+    $destTypeDisplay = Get-LayoutFieldTypeDisplay -Field $DestField
     $destLabel = [string]$DestField.label
     $required  = [bool]($DestField.required ?? $false)
     $listId    = $DestField.list_id
@@ -4087,6 +4746,10 @@ function Show-FieldMappingEditor {
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $form.BackColor = [System.Drawing.Color]::WhiteSmoke
     $form.Tag = $null
+    $fieldToolTip = New-Object System.Windows.Forms.ToolTip
+    $fieldToolTip.AutoPopDelay = 15000
+    $fieldToolTip.InitialDelay = 300
+    $fieldToolTip.ShowAlways = $true
     $titleLabel = New-Label -Text $destLabel -X 20 -Y 12 -W 640 -H 28
     $titleLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 12)
     $form.Controls.Add($titleLabel)
@@ -4105,7 +4768,12 @@ function Show-FieldMappingEditor {
     $summaryControl.ForeColor = [System.Drawing.Color]::DimGray
     $form.Controls.Add($summaryControl)
 
-    $tipLabel = New-Label -Text 'Tip: Use Source Field for a direct match, Constant Value for required defaults, and Skip only when the destination field is truly optional.' -X 20 -Y 80 -W 640 -H 36
+    $tipText = if ($destType -eq 'Number') {
+        'Number values use this destination subtype and its bounds. Invalid values are omitted; currency rounding is logged.'
+    } else {
+        'Tip: Use Source Field for a direct match, Constant Value for required defaults, and Skip only when the destination field is truly optional.'
+    }
+    $tipLabel = New-Label -Text $tipText -X 20 -Y 80 -W 640 -H 36
     $tipLabel.ForeColor = [System.Drawing.Color]::FromArgb(60, 90, 120)
     $form.Controls.Add($tipLabel)
 
@@ -4128,8 +4796,9 @@ function Show-FieldMappingEditor {
     $y += 32
 
     $form.Controls.Add((New-Label -Text "Destination Type:" -X 20 -Y $y))
-    $tbType = New-TextBox -X 210 -Y $y -Text $destType
+    $tbType = New-TextBox -X 210 -Y $y -Text $destTypeDisplay
     $tbType.ReadOnly = $true
+    $fieldToolTip.SetToolTip($tbType, $destTypeDisplay)
     $form.Controls.Add($tbType)
     $y += 32
 
@@ -4175,7 +4844,7 @@ function Show-FieldMappingEditor {
         }
 
         $optionLabel = [string]($sourceOption.label ?? $sourceOption.Label ?? $sourceOption.name ?? $sourceOption.Name)
-        $optionType = [string]($sourceOption.field_type ?? $sourceOption.type ?? $sourceOption.FieldType)
+        $optionType = Get-LayoutFieldTypeDisplay -Field $sourceOption -FallbackType ''
         Add-SourceOption -Label $optionLabel -FieldType $optionType
     }
     if ($AllowMeta -and -not ($sourceOptionLookup.Values -contains 'Meta')) {
@@ -5036,6 +5705,7 @@ function Show-FieldMappingEditor {
     $cancelButton.Add_Click({ $form.Close() })
 
     [void]$form.ShowDialog()
+    $fieldToolTip.Dispose()
 
     if ($null -ne $form.Tag) {
         return $form.Tag
@@ -5199,6 +5869,7 @@ function New-GuiJob {
         Job          = $null
         ApiKey       = ''
         BaseUrl      = ''
+        CurrentVersion = $null
     }
     $mapfile = Join-Path $script:Root 'mapping.ps1'
 
@@ -5254,8 +5925,7 @@ function New-GuiJob {
         }
 
         try {
-            Get-HuduModule
-            Set-HuduInstance -HuduBaseURL $normalizedBaseUrl -HuduAPIKey $apiKeyInputResult.Value
+            $state.CurrentVersion = Set-HuduModuleInitialized -HuduBaseURL $normalizedBaseUrl -HuduAPIKey $apiKeyInputResult.Value
 
             $state.BaseUrl = $normalizedBaseUrl
             $state.ApiKey  = $apiKeyInputResult.Value
@@ -5289,11 +5959,12 @@ function New-GuiJob {
         throw 'Source asset filter selection was cancelled.'
     }
 
-    $layoutToLayoutDirectPossible = $true
+    $layoutToLayoutDirectPossible = -not ((Test-LayoutHasNumberFields $sourceLayout) -or (Test-LayoutHasNumberFields $destLayout))
     $DirectTransferWanted = $false
-    foreach ($field in $sourceLayout.fields) {
+    foreach ($field in ($sourceLayout.fields | Where-Object { ($_.field_type ?? $_.type) -ne 'InstructionBlock' })) {
         $directMatch = $destLayout.fields | Where-Object {
-            $_.label -eq $field.label -and $_.field_type -eq $field.field_type
+            ($_.field_type ?? $_.type) -ne 'InstructionBlock' -and
+            $_.label -eq $field.label -and ($_.field_type ?? $_.type) -eq ($field.field_type ?? $field.type)
         } | Select-Object -First 1
 
         if (-not $directMatch) {
@@ -5348,7 +6019,7 @@ function New-GuiJob {
 
     $reviewFields = @(
         $destLayout.Fields |
-        Where-Object { ($_.field_type ?? $_.type) -ne 'AssetTag' } |
+        Where-Object { ($_.field_type ?? $_.type) -notin @('AssetTag','InstructionBlock') } |
         Sort-Object -Property label
     )
 
@@ -5361,11 +6032,15 @@ function New-GuiJob {
 
     $sourceFieldOptions = @(
         $sourceLayout.Fields |
-        Where-Object { $_.label -and ($_.field_type -ne 'AssetTag') } |
+        Where-Object { $_.label -and ($_.field_type ?? $_.type) -notin @('AssetTag','InstructionBlock') } |
         ForEach-Object {
             [pscustomobject]@{
                 label      = [string]$_.label
-                field_type = [string]($_.field_type)
+                field_type = [string]($_.field_type ?? $_.type)
+                number_type = $_.number_type
+                currency_code = $_.currency_code
+                min = $_.min
+                max = $_.max
             }
         }
     ) + [PSCustomObject]@{
@@ -5523,7 +6198,7 @@ function New-GuiJob {
         }
     }
 
-        $reviewedFieldCount = @($destLayout.Fields | Where-Object { ($_.field_type ?? $_.type) -ne 'AssetTag' }).Count
+        $reviewedFieldCount = $reviewFields.Count
         $configuredFieldCount = $mappingEntries.Count + $constantEntries.Count
         $skippedFieldCount = $skippedFieldLabels.Count
         $smooshTargetLabel = if ($null -ne $smooshTargetEntry) { $smooshTargetEntry.to } else { 'None' }
@@ -5565,6 +6240,7 @@ function New-GuiJob {
         $results = New-NonInteractiveLayoutTransfer `
             -HuduBaseURL $state.BaseUrl `
             -HuduAPIKey $state.ApiKey `
+            -CurrentVersion $state.CurrentVersion `
             -sourceassetlayout $sourceLayout `
             -destassetlayout $destLayout `
             -SmooshSourceLabels $smooshSourceLabels `
