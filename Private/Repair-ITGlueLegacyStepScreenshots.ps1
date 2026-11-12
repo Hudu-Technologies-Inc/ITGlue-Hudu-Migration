@@ -1,3 +1,5 @@
+#requires -Modules Microsoft.PowerShell.Utility
+
 <#
 .SYNOPSIS
     Optional repair of legacy ITGlue step screenshots in an existing migration.
