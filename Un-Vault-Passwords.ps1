@@ -7,7 +7,7 @@ if ([string]::IsNullOrWhiteSpace($resolvedITGlueExportPath)) {
 
 $sourceCSVpath = $vaultedCSVPath ?? $(Join-Path -Path $resolvedITGlueExportPath -ChildPath "vaulted")
 $combinedCSVPath = $(join-path -path $environmentSettings.MigrationLogs -childpath "combined.csv")
-Get-ChildItem -path $sourceCSVpath -Recurse -Filter *.csv | Import-Csv | Export-Csv $combinedCSVPath -NoTypeInformation
+Get-ChildItem -path $sourceCSVpath -Recurse -Filter *.csv | Import-Csv | Export-Csv $combinedCSVPath
 $unvaultedpasswords = Import-Csv -Path $combinedCSVPath
 $MigrationLogs = $MigrationLogs ?? $environmentSettings.MigrationLogs
 $MatchedPasswordsJson =  "$MigrationLogs\Passwords.json"
