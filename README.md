@@ -48,6 +48,15 @@ You'll want to make sure your Hudu instance is prepared for migration and that t
 
 Items marked with **!** require **JWT** authentication (ITGlue session token from your browser) and are intended for advanced users. Extracting a JWT requires web access and your browser’s developer tools. If you are unsure, skip these options.
 
+New contact layouts use native Email and Phone fields, both visible in the asset list.
+Email selection prefers the ITGlue primary email, then the first nonempty email.
+Phone selection prefers Direct, then Work, then other labels; within each preference,
+primary wins, followed by source order. Existing ITGlue notes and additional labeled
+emails/phones are preserved in the rich-text Notes field with `mailto:`/`tel:` links.
+Phone extensions are included in Notes, including the selected phone's extension.
+Existing layouts and already migrated contacts are not retroactively converted;
+completed contact phases are still skipped when resuming a migration.
+
 Number, percentage, and currency fields use decimal strings
 and version-aware validation. See [numeric field mapping and validation](docs/NumberFields.md)
 for currency overrides, manual-review behavior, and HuduAPI module recommendations.

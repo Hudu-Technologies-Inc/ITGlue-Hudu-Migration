@@ -903,46 +903,28 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Contacts.json")) {
             field_type   = 'Text'
             show_in_list = 'false'
             position     = 502}
-        $ConAssetFieldsMap = {
-            $AssetFields = @{
+    }
+    $ConAssetFieldsMap = {
+        $ContactCommunicationFields = Get-HuduContactCommunicationFields -Attributes $unmatchedImport."ITGObject".attributes
+        $AssetFields = @{
             'first name'   = $unmatchedImport."ITGObject".attributes."first-name"
             'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
             'title'        = $unmatchedImport."ITGObject".attributes."title"
             'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            # 'important'    = $unmatchedImport."ITGObject".attributes."important"
-            'notes'        = $unmatchedImport."ITGObject".attributes."notes"
-            'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
-            'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones" | convertto-html -fragment | out-string
-            'ITG Date Created'   = $unmatchedImport."ITGObject".attributes."created-at"
-            'ITG Date Last Updated'   = $unmatchedImport."ITGObject".attributes."updated-at"
-            'ITGlue ID'    = $unmatchedImport."ITGObject".id
-            }
-            $LocationAssetTagValue = Get-HuduLocationAssetTagValue -ITGLocationId $unmatchedImport."ITGObject".attributes.'location-id'
-            if ($LocationAssetTagValue) {
-                $AssetFields['location'] = $LocationAssetTagValue
-            }
-            $AssetFields
-        }
-    } else {
-        $ConAssetFieldsMap = {
-            $AssetFields = @{
-            'first name'   = $unmatchedImport."ITGObject".attributes."first-name"
-            'last name'    = $unmatchedImport."ITGObject".attributes."last-name"
-            'title'        = $unmatchedImport."ITGObject".attributes."title"
-            'contact type' = $unmatchedImport."ITGObject".attributes."contact-type-name"
-            # 'important'    = $unmatchedImport."ITGObject".attributes."important"
-            'notes'        = $unmatchedImport."ITGObject".attributes."notes"
-            'emails'       = $unmatchedImport."ITGObject".attributes."contact-emails" | convertto-html -fragment | out-string
-            'phones'       = $unmatchedImport."ITGObject".attributes."contact-phones"	| convertto-html -fragment | out-string
+            'notes'        = $ContactCommunicationFields.notes
+            'emails'       = $ContactCommunicationFields.emails
+            'phones'       = $ContactCommunicationFields.phones
             'ITG Date Created'   = $unmatchedImport."ITGObject".attributes."created-at"
             'ITG Date Last Updated'   = $unmatchedImport."ITGObject".attributes."updated-at"        
-            }
-            $LocationAssetTagValue = Get-HuduLocationAssetTagValue -ITGLocationId $unmatchedImport."ITGObject".attributes.'location-id'
-            if ($LocationAssetTagValue) {
-                $AssetFields['location'] = $LocationAssetTagValue
-            }
-            $AssetFields
         }
+        if ($settings.IncludeITGlueID -and $true -eq $settings.IncludeITGlueID) {
+            $AssetFields['ITGlue ID'] = $unmatchedImport."ITGObject".id
+        }
+        $LocationAssetTagValue = Get-HuduLocationAssetTagValue -ITGLocationId $unmatchedImport."ITGObject".attributes.'location-id'
+        if ($LocationAssetTagValue) {
+            $AssetFields['location'] = $LocationAssetTagValue
+        }
+        $AssetFields
     }
 
     $ConImportSplat = @{
