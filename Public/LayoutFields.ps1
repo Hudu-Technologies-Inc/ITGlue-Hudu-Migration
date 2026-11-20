@@ -267,14 +267,14 @@ function New-MigrationLayoutFields {
                 },
                 @{
                     label        = 'Emails'
-                    field_type   = 'RichText'
-                    show_in_list = 'false'
+                    field_type   = 'Email'
+                    show_in_list = 'true'
                     position     = 8
                 },
                 @{
                     label        = 'Phones'
-                    field_type   = 'RichText'
-                    show_in_list = 'false'
+                    field_type   = 'Phone'
+                    show_in_list = 'true'
                     position     = 9
                 },
                 @{
