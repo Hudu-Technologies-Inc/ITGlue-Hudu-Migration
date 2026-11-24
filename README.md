@@ -238,6 +238,16 @@ This override is a PowerShell variable, not a launcher or saved JSON setting.
 Offline equivalence and failure checks: `pwsh -NoProfile -File tests/ArticleLinkReplacement.Tests.ps1`.
 Add `-Benchmark` to time a synthetic workload against the serial repeated-lookup path.
 
+Article-body preparation records image validation/conversion failures in
+`ManualActions.json` and continues with the remaining images and articles. An
+article whose HTML cannot be prepared is recorded in `ArticleErrors.json` and is
+excluded from content commits. A resumed run checks each article's local HTML;
+missing or empty caches are rebuilt from the IT Glue export using the existing
+article IDs. Keep the original export available when resuming. Prepared articles
+retain their local content and do not repeat image uploads.
+
+Offline preparation/recovery checks: `pwsh -NoProfile -File tests/ArticleContentPreparation.Tests.ps1`.
+
 
 # Advanced / Other Use Cases
 

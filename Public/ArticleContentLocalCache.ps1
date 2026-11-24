@@ -75,10 +75,10 @@ function Set-HuduArticleLocalContent {
     )
 
     $contentDirectory = Get-HuduArticleLocalContentDirectory -MigrationLogsPath $MigrationLogsPath -DebugFolderPath $DebugFolderPath
-    $null = New-Item -Path $contentDirectory -ItemType Directory -Force
+    $null = New-Item -Path $contentDirectory -ItemType Directory -Force -ErrorAction Stop
 
     $contentPath = Get-HuduArticleLocalContentPath -Article $Article -MigrationLogsPath $MigrationLogsPath -DebugFolderPath $DebugFolderPath
-    Set-Content -LiteralPath $contentPath -Value ([string]$Content) -Encoding UTF8 -NoNewline
+    Set-Content -LiteralPath $contentPath -Value ([string]$Content) -Encoding UTF8 -NoNewline -ErrorAction Stop
 
     $Article | Add-Member -MemberType NoteProperty -Name LocalContentPath -Value $contentPath -Force
     $Article | Add-Member -MemberType NoteProperty -Name LocalContentPreparedAt -Value (Get-Date).ToString('o') -Force
