@@ -1595,7 +1595,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
             foreach ($assetUpdateRequest in @($AssetUpdateRequests)) {
                 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                 try {
-                    $UpdatedHuduAsset = (Set-HuduAsset -asset_id $assetUpdateRequest.AssetId -name $assetUpdateRequest.Name -company_id $assetUpdateRequest.CompanyId -asset_layout_id $assetUpdateRequest.AssetLayoutId -fields $assetUpdateRequest.Fields).asset
+                    $UpdatedHuduAsset = (Set-HuduAsset -asset_id $assetUpdateRequest.AssetId -name $assetUpdateRequest.Name -company_id $assetUpdateRequest.CompanyId -asset_layout_id $assetUpdateRequest.AssetLayoutId -fields $assetUpdateRequest.Fields -ErrorAction Stop).asset
                     $stopwatch.Stop()
                     [pscustomobject]@{
                         Status         = if ($UpdatedHuduAsset) { 'updated' } else { 'failed' }
@@ -1654,7 +1654,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         $assetUpdateFailed = @($AssetUpdateResults | Where-Object { $_.Status -ne 'updated' -or -not $_.Asset }).Count
         Write-Host "Flexible asset content update commits complete: $assetUpdateSucceeded/$($AssetUpdateRequests.Count) updated, $assetUpdateFailed failed." -ForegroundColor Cyan
         if ($assetUpdateFailed -gt 0) {
-            Write-Host "Flexible asset content population had $assetUpdateFailed failed commit(s). Review AssetContentCommitResults.json before trusting this section as complete." -ForegroundColor Red
+            Write-Host "Flexible asset content population had $assetUpdateFailed failed commit(s). Saved update payloads will be retried during wrap-up; remaining failures will be added to manual actions." -ForegroundColor Yellow
         }
 
         $AssetUpdateResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetContentCommitResults.json"
@@ -2361,6 +2361,12 @@ $null = Start-MigrationJob -Name "Wrap-Up - Layouts"
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
 if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitored per user-config"} else {$MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}}
 
+$null = Start-MigrationJob -Name "Wrap-Up - Asset Content Retry"
+try {
+    . "$PSScriptRoot\Public\Jobs\Invoke-AssetContentRetry.ps1"
+} finally {
+    $null = Complete-MigrationJob -Name "Wrap-Up - Asset Content Retry" -CompletedAt (Get-Date)
+}
 
 $null = Start-MigrationJob -Name "LinkReplacement"
 . "$PSScriptRoot\Public\Jobs\Invoke-InitialLinkReplacements.ps1"
