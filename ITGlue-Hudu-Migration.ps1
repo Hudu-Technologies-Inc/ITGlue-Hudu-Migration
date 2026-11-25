@@ -2466,6 +2466,15 @@ $GlobalProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object 
 $CompanyProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedure -and $_.HuduProcedure.company_id }).Count
 $ProcessRunsMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedureRun -and $_.HuduProcedureRun.id }).Count
 
+$MigratedArticleCount = @($MatchedArticles | Where-Object { [int]($_.HuduID) -gt 0 }).Count
+# ImageMap counts distinct mapped source paths, not every image occurrence in article HTML.
+$ArticleImageCount = if ($ImportArticles -eq $true) { $ImageMap.Count ?? 0 } else { 0 }
+$ArticleImagesPerArticle = if ($ImportArticles -eq $true -and $MigratedArticleCount -gt 0) {
+    [math]::Round($ArticleImageCount / $MigratedArticleCount, 2)
+} else {
+    'N/A'
+}
+
 $migratedItems = [ordered]@{
     'Companies Migrated'                         = Get-SafeCount $($MatchedCompanies | where-object {[int]($_.HuduID) -gt 0})
     'Locations Migrated'                         = Get-SafeCount $($MatchedLocations | where-object {[int]($_.HuduID) -gt 0})
@@ -2475,7 +2484,9 @@ $migratedItems = [ordered]@{
     'Contacts Migrated'                          = Get-SafeCount $($MatchedContacts | where-object {[int]($_.HuduID) -gt 0})
     'Layouts Migrated'                           = Get-SafeCount $($MatchedLayouts | where-object {[int]($_.HuduID) -gt 0})
     'Assets Migrated'                            = Get-SafeCount $($MatchedAssets | where-object {[int]($_.HuduID) -gt 0})
-    'Articles Migrated'                          = Get-SafeCount $($MatchedArticles | where-object {[int]($_.HuduID) -gt 0})
+    'Articles Migrated'                          = $MigratedArticleCount
+    'Article Images Mapped'                      = $ArticleImageCount
+    'Mapped Images Per Article'                 = $ArticleImagesPerArticle
     'Standalone Image Articles Converted To Photos' = Get-SafeCount $($MatchedArticles | Where-Object { $true -eq $_.StandaloneImageArticlePhotoCreated })
     'Passwords Migrated'                         = Get-SafeCount $MatchedPasswords
     'Password Folders Migrated'                  = Get-SafeCount $($MatchedPasswordFolders | where-object {[int]($_.HuduPasswordFolder.ID) -gt 0})
