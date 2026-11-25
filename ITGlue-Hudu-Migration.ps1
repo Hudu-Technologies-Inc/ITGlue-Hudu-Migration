@@ -1595,7 +1595,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
             foreach ($assetUpdateRequest in @($AssetUpdateRequests)) {
                 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
                 try {
-                    $UpdatedHuduAsset = (Set-HuduAsset -asset_id $assetUpdateRequest.AssetId -name $assetUpdateRequest.Name -company_id $assetUpdateRequest.CompanyId -asset_layout_id $assetUpdateRequest.AssetLayoutId -fields $assetUpdateRequest.Fields).asset
+                    $UpdatedHuduAsset = (Set-HuduAsset -asset_id $assetUpdateRequest.AssetId -name $assetUpdateRequest.Name -company_id $assetUpdateRequest.CompanyId -asset_layout_id $assetUpdateRequest.AssetLayoutId -fields $assetUpdateRequest.Fields -ErrorAction Stop).asset
                     $stopwatch.Stop()
                     [pscustomobject]@{
                         Status         = if ($UpdatedHuduAsset) { 'updated' } else { 'failed' }
@@ -1654,7 +1654,7 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Assets.json")) {
         $assetUpdateFailed = @($AssetUpdateResults | Where-Object { $_.Status -ne 'updated' -or -not $_.Asset }).Count
         Write-Host "Flexible asset content update commits complete: $assetUpdateSucceeded/$($AssetUpdateRequests.Count) updated, $assetUpdateFailed failed." -ForegroundColor Cyan
         if ($assetUpdateFailed -gt 0) {
-            Write-Host "Flexible asset content population had $assetUpdateFailed failed commit(s). Review AssetContentCommitResults.json before trusting this section as complete." -ForegroundColor Red
+            Write-Host "Flexible asset content population had $assetUpdateFailed failed commit(s). Saved update payloads will be retried during wrap-up; remaining failures will be added to manual actions." -ForegroundColor Yellow
         }
 
         $AssetUpdateResults | ConvertTo-Json -depth 75 | Out-File "$MigrationLogs\AssetContentCommitResults.json"
@@ -1735,13 +1735,27 @@ Start-PreloadedRelationDataJob -RelationType Articles -ItgObjects @($MatchedArti
 ############################### Documents / Articles Bodies ###############################
 
 #Check for Articles Resume
-if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
+$articleContentResumeFound = $ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")
+if ($articleContentResumeFound) {
     Write-Host "Loading Article Content Migration"
     $MatchedArticles = Get-Content "$MigrationLogs\Articles.json" -raw | Out-String | ConvertFrom-Json -depth 100
-} else {
-	
-    if ($ImportArticles -eq $true) {
+}
+
+# A snapshot can contain stubs whose body preparation failed or never ran.
+# Keep valid local HTML and retry only missing/empty caches when resuming.
+$articleBodyCandidates = @($MatchedArticles | Where-Object { $_ })
+if ($articleContentResumeFound) {
+    $articleBodyCandidates = @($articleBodyCandidates | Where-Object {
+        $cachedArticleFile = if (-not [string]::IsNullOrWhiteSpace([string]$_.LocalContentPath)) {
+            Get-Item -LiteralPath $_.LocalContentPath -ErrorAction SilentlyContinue
+        }
+        -not ($cachedArticleFile -is [System.IO.FileInfo] -and $cachedArticleFile.Length -gt 0)
+    })
+}
+
+    if ($ImportArticles -eq $true -and $articleBodyCandidates.Count -gt 0) {
         $null = Start-MigrationJob -Name "ArticleContents"
+        Write-Host "Preparing local HTML for $($articleBodyCandidates.Count) article(s)." -ForegroundColor Cyan
 
         $articleAttachmentRoot = Join-Path $ITGlueExportPath 'attachments/documents'
         $Attachfiles = @(if (Test-Path -LiteralPath $articleAttachmentRoot) { Get-ChildItem -LiteralPath $articleAttachmentRoot -Recurse })
@@ -1750,10 +1764,11 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
         # Now do the actual work of populating the content of articles
         $articleBodyProgressId = 32
         $articleBodyImageProgressId = 33
-        $articleBodyTotal = @($MatchedArticles).Count
+        $articleBodyTotal = $articleBodyCandidates.Count
         $articleBodyIndex = 0
         $ArticleErrors = try {
-            foreach ($Article in $MatchedArticles) {
+            foreach ($Article in $articleBodyCandidates) {
+                try {
                 $articleBodyIndex++
                 if ($articleBodyTotal -gt 0) {
                     $articleBodyPercent = [math]::Min(99, [math]::Floor(($articleBodyIndex / $articleBodyTotal) * 100))
@@ -1776,8 +1791,8 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
 				
                 $InFile = $Article.FullPath
 				
-                $html = New-Object -ComObject "HTMLFile"
-                $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw
+                $rawsource = Get-Content -encoding UTF8 -LiteralPath $InFile -Raw -ErrorAction Stop
+                $html = New-Object -ComObject "HTMLFile" -ErrorAction Stop
                 if ($null -eq $Article.PSObject.Properties['SourceImages']) {
                     $Article | Add-Member -NotePropertyName SourceImages -NotePropertyValue @(Get-ITGlueArticleSourceImages -Content $rawsource)
                 }
@@ -1864,10 +1879,35 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
                     if ($imagePath -and (Test-Path $imagePath -ErrorAction SilentlyContinue)) {
                         write-verbose "File present at purported image path: $imagePath... checking for image..."
 
-                            $imageType = Invoke-ImageTest $imagePath
+                            try {
+                                $imageType = Invoke-ImageTest $imagePath -ErrorAction Stop
+                                if ($imageType) {
+                                    write-verbose "$imagePath appears to contain image... normalizing..."
+                                    # Stop on copy/conversion errors inside this helper too.
+                                    $imageInfo = & {
+                                        $ErrorActionPreference = 'Stop'
+                                        Normalize-And-ConvertImage -InputPath $imagePath
+                                    }
+                                }
+                            } catch {
+                                $imagePreparationError = $_.Exception.Message
+                                Write-Warning "Could not prepare image '$imagePath' in article '$($Article.Name)': $imagePreparationError. Continuing with the remaining images."
+                                $ManualLog = [PSCustomObject]@{
+                                    Document_Name = $Article.Name
+                                    Type          = "Article - Image"
+                                    Company_Name  = $Article.Company.CompanyName
+                                    HuduID        = $Article.HuduID
+                                    Field_Name    = "Image"
+                                    Notes         = "Image validation or conversion failed"
+                                    Action        = "Manually upload this image and update the article image URL"
+                                    Data          = "Image: $imagePath; Error: $imagePreparationError"
+                                    Hudu_URL      = $Article.HuduObject.url
+                                    ITG_URL       = "$ITGURL/$($Article.ITGLocator)"
+                                }
+                                $null = $ManualActions.add($ManualLog)
+                                continue
+                            }
                             if ($imageType) {
-                                write-verbose "$imagePath appears to contain image... normalizing..."
-                                $imageInfo = Normalize-And-ConvertImage -InputPath $imagePath
                                 write-verbose "$imagePath => $($imageInfo.FinalPath)"
 
                                 $imagePath = $imageInfo.FinalPath ?? $imagePath
@@ -1986,6 +2026,15 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
             Write-Host "$($Article.name) local article HTML prepared at $localContentPath" -ForegroundColor Green
 		
             $Article.Imported = "Content-Prepared-Locally"
+                } catch {
+                    Write-Warning "Failed to prepare local HTML for article '$($Article.Name)' from '$($Article.FullPath)': $($_.Exception.Message). Continuing with the remaining articles."
+                    [PSCustomObject]@{
+                        ErrorType       = 'Article Content Preparation Failed'
+                        Details         = $_.Exception.Message
+                        InFile          = $Article.FullPath
+                        MigrationObject = $Article
+                    }
+                }
 			
             }
         } finally {
@@ -1999,10 +2048,6 @@ if ($ResumeFound -eq $true -and (Test-Path "$MigrationLogs\Articles.json")) {
         Write-TimedMessage -Timeout 3 -Message "Snapshot Point: Articles Created Continue?" -DefaultResponse "continue to Passwords, please."
 
     }
-
-}
-
-
 
 ############################### Passwords ###############################
 
@@ -2316,6 +2361,12 @@ $null = Start-MigrationJob -Name "Wrap-Up - Layouts"
 foreach ($layout in Get-HuduAssetLayouts) {write-host "setting $($(Set-HuduAssetLayout -id $layout.id -Active $true).asset_layout.name) as active" }
 if ($true -eq $DisableWebsiteMonitoring) {write-host "leaving websites unmonitored per user-config"} else {$MatchedWebsites.HuduObject | Where-Object {$_.id -and $_.id -gt 0} | Foreach-Object {write-host "Enabling advanced monitoring features for $($(Set-HuduWebsite -id $_.id -EnableDMARC 'true' -EnableDKIM 'true' -EnableSPF 'true' -DisableDNS 'false' -DisableSSL 'false' -DisableWhois 'false' -Paused 'false').name)" -ForegroundColor DarkCyan}}
 
+$null = Start-MigrationJob -Name "Wrap-Up - Asset Content Retry"
+try {
+    . "$PSScriptRoot\Public\Jobs\Invoke-AssetContentRetry.ps1"
+} finally {
+    $null = Complete-MigrationJob -Name "Wrap-Up - Asset Content Retry" -CompletedAt (Get-Date)
+}
 
 $null = Start-MigrationJob -Name "LinkReplacement"
 . "$PSScriptRoot\Public\Jobs\Invoke-InitialLinkReplacements.ps1"
@@ -2415,6 +2466,15 @@ $GlobalProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object 
 $CompanyProcessTemplatesMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedure -and $_.HuduProcedure.company_id }).Count
 $ProcessRunsMigrated = @($MatchedChecklistsForSummary | Where-Object { $_.HuduProcedureRun -and $_.HuduProcedureRun.id }).Count
 
+$MigratedArticleCount = @($MatchedArticles | Where-Object { [int]($_.HuduID) -gt 0 }).Count
+# ImageMap counts distinct mapped source paths, not every image occurrence in article HTML.
+$ArticleImageCount = if ($ImportArticles -eq $true) { $ImageMap.Count ?? 0 } else { 0 }
+$ArticleImagesPerArticle = if ($ImportArticles -eq $true -and $MigratedArticleCount -gt 0) {
+    [math]::Round($ArticleImageCount / $MigratedArticleCount, 2)
+} else {
+    'N/A'
+}
+
 $migratedItems = [ordered]@{
     'Companies Migrated'                         = Get-SafeCount $($MatchedCompanies | where-object {[int]($_.HuduID) -gt 0})
     'Locations Migrated'                         = Get-SafeCount $($MatchedLocations | where-object {[int]($_.HuduID) -gt 0})
@@ -2424,7 +2484,9 @@ $migratedItems = [ordered]@{
     'Contacts Migrated'                          = Get-SafeCount $($MatchedContacts | where-object {[int]($_.HuduID) -gt 0})
     'Layouts Migrated'                           = Get-SafeCount $($MatchedLayouts | where-object {[int]($_.HuduID) -gt 0})
     'Assets Migrated'                            = Get-SafeCount $($MatchedAssets | where-object {[int]($_.HuduID) -gt 0})
-    'Articles Migrated'                          = Get-SafeCount $($MatchedArticles | where-object {[int]($_.HuduID) -gt 0})
+    'Articles Migrated'                          = $MigratedArticleCount
+    'Article Images Mapped'                      = $ArticleImageCount
+    'Mapped Images Per Article'                 = $ArticleImagesPerArticle
     'Standalone Image Articles Converted To Photos' = Get-SafeCount $($MatchedArticles | Where-Object { $true -eq $_.StandaloneImageArticlePhotoCreated })
     'Passwords Migrated'                         = Get-SafeCount $MatchedPasswords
     'Password Folders Migrated'                  = Get-SafeCount $($MatchedPasswordFolders | where-object {[int]($_.HuduPasswordFolder.ID) -gt 0})

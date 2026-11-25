@@ -10,7 +10,7 @@ function Assert-LinkOrchestration {
     $script:checks++
 }
 
-$helperNames = @('Invoke-InitialLinkReplacements.ps1', 'Invoke-LinkReplacement.ps1', 'Invoke-ArticleContentCommit.ps1', 'Invoke-AssetRichTextLinkReplacement.ps1')
+$helperNames = @('Invoke-AssetContentRetry.ps1', 'Invoke-InitialLinkReplacements.ps1', 'Invoke-LinkReplacement.ps1', 'Invoke-ArticleContentCommit.ps1', 'Invoke-AssetRichTextLinkReplacement.ps1')
 foreach ($name in $helperNames) {
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot "Public/Jobs/$name"), [ref]$tokens, [ref]$errors)
@@ -31,6 +31,7 @@ try {
     $MigrationLogs = Join-Path $fixtureRoot 'logs'
     $null = [IO.Directory]::CreateDirectory($MigrationLogs)
     $phaseScripts = @{
+        'Public/Jobs/Invoke-AssetContentRetry.ps1' = 'Add-PhaseEvent AssetRetry'
         'Public/Jobs/Invoke-InitialLinkReplacements.ps1' = 'Add-PhaseEvent Initial'
         'Add-HuduAttachmentsViaAPI.ps1' = 'Add-PhaseEvent Attachments'
         'Public/Jobs/Invoke-LinkReplacement.ps1' = @'
@@ -86,13 +87,14 @@ Assert-LinkOrchestration ($AttachmentUrlMapForReplacement.source -eq 'target' -a
             } catch {
                 Assert-LinkOrchestration ($failCommit -and $_.Exception.Message -eq 'simulated commit failure') "Unexpected orchestration failure: $($_.Exception.Message)"
             }
-            $expectedJobs = @('Wrap-Up - Layouts', 'LinkReplacement', 'Wrap-Up - Attachments', 'Wrap-Up - Article Link Replacement', 'Wrap-Up - Article Content Commit')
+            $expectedJobs = @('Wrap-Up - Layouts', 'Wrap-Up - Asset Content Retry', 'LinkReplacement', 'Wrap-Up - Attachments', 'Wrap-Up - Article Link Replacement', 'Wrap-Up - Article Content Commit')
             if (-not $failCommit) { $expectedJobs += 'Wrap-Up - Asset Link Replacement' }
             Assert-LinkOrchestration (($script:MigrationJobTimeline.Job -join '|') -ceq ($expectedJobs -join '|')) 'Main job tracking has missing, duplicated, or reordered phases.'
             Assert-LinkOrchestration (@($script:MigrationJobTimeline | Where-Object { $null -eq $_.FinishedAt }).Count -eq 0) 'A job was left running after completion or the commit failure.'
-            $expectedPhases = if ($failCommit) { 'Layouts,Initial,Attachments,ArticleStage,ArticleCommit' } else { 'Layouts,Websites,Initial,Attachments,ArticleStage,ArticleCommit,AssetLinks' }
+            $expectedPhases = if ($failCommit) { 'Layouts,AssetRetry,Initial,Attachments,ArticleStage,ArticleCommit' } else { 'Layouts,Websites,AssetRetry,Initial,Attachments,ArticleStage,ArticleCommit,AssetLinks' }
             Assert-LinkOrchestration (($events.Phase -join ',') -ceq $expectedPhases) 'Phase order or the website monitoring setting changed.'
             $expectedJobByPhase = @{
+                AssetRetry = 'Wrap-Up - Asset Content Retry'
                 Layouts = 'Wrap-Up - Layouts'; Websites = 'Wrap-Up - Layouts'; Initial = 'LinkReplacement'
                 Attachments = 'Wrap-Up - Attachments'; ArticleStage = 'Wrap-Up - Article Link Replacement'
                 ArticleCommit = 'Wrap-Up - Article Content Commit'; AssetLinks = 'Wrap-Up - Asset Link Replacement'
